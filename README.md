@@ -10,9 +10,9 @@ Language server for [SysML v2](https://www.omg.org/sysml/sysmlv2/) (and KerML). 
 - [x] Completion
 - [x] Go to definition
 - [x] Find references
-- [ ] Document symbols / outline
-- [ ] Code actions
-- [ ] Formatting
+- [x] Document symbols / outline
+- [x] Code actions
+- [x] Formatting
 
 ## Editor features (VS Code extension)
 

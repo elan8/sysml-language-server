@@ -40,6 +40,33 @@ fn span_to_position(span: pest::Span<'_>, source: &str) -> SourcePosition {
     }
 }
 
+/// Convert a byte offset in source to (line, character). 0-based.
+fn byte_offset_to_line_char(source: &str, byte_offset: usize) -> (u32, u32) {
+    let mut current_pos = 0usize;
+    for (line_num, line_str) in source.lines().enumerate() {
+        let line_len = line_str.len() + 1;
+        if current_pos + line_len > byte_offset {
+            return (line_num as u32, (byte_offset - current_pos) as u32);
+        }
+        current_pos += line_len;
+    }
+    let line_count = source.lines().count().max(1);
+    let last_line_len = source.lines().last().map(|s| s.len()).unwrap_or(0);
+    ((line_count - 1) as u32, last_line_len as u32)
+}
+
+/// Convert a Pest span to SourceRange (start and end line/character).
+fn span_to_source_range(span: pest::Span<'_>, source: &str) -> SourceRange {
+    let (start_line, start_character) = byte_offset_to_line_char(source, span.start());
+    let (end_line, end_character) = byte_offset_to_line_char(source, span.end());
+    SourceRange {
+        start_line,
+        start_character,
+        end_line,
+        end_character,
+    }
+}
+
 #[derive(pest_derive::Parser)]
 #[grammar = "grammar.pest"]
 pub struct SysMLParser;
@@ -76,7 +103,8 @@ fn parse_document(pairs: Pairs<'_, Rule>, source: &str) -> Result<SysMLDocument>
                 }
             }
             Rule::package => {
-                match parse_package(pair.clone().into_inner(), source) {
+                let span = pair.as_span();
+                match parse_package(pair.clone().into_inner(), source, span) {
                     Ok(pkg) => packages.push(pkg),
                     Err(e) => return Err(e),
                 }
@@ -114,8 +142,8 @@ fn parse_document(pairs: Pairs<'_, Rule>, source: &str) -> Result<SysMLDocument>
                 }
             }
             Rule::part_usage => {
-                // Handle part_usage directly at document level
-                match parse_part_usage(pair.clone().into_inner(), source) {
+                let span = pair.as_span();
+                match parse_part_usage(pair.clone().into_inner(), source, span) {
                     Ok(mut part_usage) => {
                         let mut combined = pending_metadata.clone();
                         combined.append(&mut part_usage.metadata);
@@ -127,8 +155,8 @@ fn parse_document(pairs: Pairs<'_, Rule>, source: &str) -> Result<SysMLDocument>
                 }
             }
             Rule::part_def => {
-                // Handle part_def directly at document level
-                match parse_part_def(pair.clone().into_inner(), source) {
+                let span = pair.as_span();
+                match parse_part_def(pair.clone().into_inner(), source, span) {
                     Ok(mut part_def) => {
                         let mut combined = pending_metadata.clone();
                         combined.append(&mut part_def.metadata);
@@ -158,6 +186,7 @@ fn parse_document(pairs: Pairs<'_, Rule>, source: &str) -> Result<SysMLDocument>
         packages.push(Package {
             name: "".to_string(), // Empty name indicates top-level members
             name_position: None,
+            range: None,
             is_library: false,
             imports: Vec::new(),
             members: top_level_members,
@@ -193,7 +222,7 @@ fn parse_import(pairs: Pairs<'_, Rule>, _source: &str) -> Result<Import> {
     Ok(Import { visibility, path, wildcard })
 }
 
-fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
+fn parse_package(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<Package> {
     let mut is_library = false;
     let mut name = String::new();
     let mut name_position = None;
@@ -260,7 +289,8 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
             }
             Rule::part_def => {
                 debug!("parse_package: Found part_def directly, parsing...");
-                match parse_part_def(pair.clone().into_inner(), source) {
+                let member_span = pair.as_span();
+                match parse_part_def(pair.clone().into_inner(), source, member_span) {
                     Ok(mut part_def) => {
                         let mut combined_metadata = pending_metadata.clone();
                         combined_metadata.append(&mut part_def.metadata);
@@ -276,7 +306,8 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
             }
             Rule::part_usage => {
                 debug!("parse_package: Found part_usage directly, parsing...");
-                match parse_part_usage(pair.clone().into_inner(), source) {
+                let member_span = pair.as_span();
+                match parse_part_usage(pair.clone().into_inner(), source, member_span) {
                     Ok(mut part_usage) => {
                         let mut combined_metadata = pending_metadata.clone();
                         combined_metadata.append(&mut part_usage.metadata);
@@ -293,7 +324,8 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
             Rule::requirement_def => {
                 debug!("parse_package: Found requirement_def directly, parsing...");
                 let requirement_def_full_text = pair.as_str();
-                match parse_requirement_def(pair.clone().into_inner(), requirement_def_full_text, source) {
+                let member_span = pair.as_span();
+                match parse_requirement_def(pair.clone().into_inner(), requirement_def_full_text, source, member_span) {
                     Ok(req_def) => {
                         members.push(Member::RequirementDef(req_def));
                     },
@@ -305,7 +337,8 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
             }
             Rule::requirement_usage => {
                 debug!("parse_package: Found requirement_usage directly, parsing...");
-                match parse_requirement_usage(pair.clone().into_inner(), source) {
+                let member_span = pair.as_span();
+                match parse_requirement_usage(pair.clone().into_inner(), source, member_span) {
                     Ok(req_usage) => {
                         members.push(Member::RequirementUsage(req_usage));
                     },
@@ -317,7 +350,8 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
             }
             Rule::action_def => {
                 debug!("parse_package: Found action_def directly, parsing...");
-                match parse_action_def(pair.clone().into_inner(), source) {
+                let member_span = pair.as_span();
+                match parse_action_def(pair.clone().into_inner(), source, member_span) {
                     Ok(action_def) => {
                         members.push(Member::ActionDef(action_def));
                     },
@@ -329,7 +363,8 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
             }
             Rule::connection_usage => {
                 debug!("parse_package: Found connection_usage directly, parsing...");
-                match parse_connection_usage(pair.clone().into_inner()) {
+                let conn_span = pair.as_span();
+                match parse_connection_usage(pair.clone().into_inner(), source, conn_span) {
                     Ok(conn) => {
                         members.push(Member::ConnectionUsage(conn));
                     },
@@ -363,39 +398,43 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
         return Err(ParseError::ParseError("Package name is required".to_string()));
     }
     
-    Ok(Package { name, name_position, is_library, imports, members })
+    Ok(Package {
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        is_library,
+        imports,
+        members,
+    })
 }
 
 fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
     if let Some(pair) = pairs.next() {
         let rule = pair.as_rule();
+        let span = pair.as_span();
         trace!("parse_member: Matched rule {:?}, text: {:?}", rule, pair.as_str());
         match rule {
             Rule::part_def => {
                 debug!("parse_member: Parsing part_def");
-                Ok(Member::PartDef(parse_part_def(pair.into_inner(), source)?))
+                Ok(Member::PartDef(parse_part_def(pair.into_inner(), source, span)?))
             },
-            Rule::part_usage => Ok(Member::PartUsage(parse_part_usage(pair.into_inner(), source)?)),
-            Rule::attribute_def => Ok(Member::AttributeDef(parse_attribute_def(pair.into_inner(), source)?)),
-            Rule::attribute_usage => Ok(Member::AttributeUsage(parse_attribute_usage(pair.into_inner(), source)?)),
-            Rule::port_def => Ok(Member::PortDef(parse_port_def(pair.into_inner(), source)?)),
-            Rule::port_usage => Ok(Member::PortUsage(parse_port_usage(pair.into_inner(), source)?)),
-            Rule::connection_usage => Ok(Member::ConnectionUsage(parse_connection_usage(pair.into_inner())?)),
-            Rule::interface_def => Ok(Member::InterfaceDef(parse_interface_def(pair.into_inner(), source)?)),
-            Rule::item_def => Ok(Member::ItemDef(parse_item_def(pair.into_inner(), source)?)),
-            Rule::item_usage => Ok(Member::ItemUsage(parse_item_usage(pair.into_inner(), source)?)),
+            Rule::part_usage => Ok(Member::PartUsage(parse_part_usage(pair.into_inner(), source, span)?)),
+            Rule::attribute_def => Ok(Member::AttributeDef(parse_attribute_def(pair.into_inner(), source, span)?)),
+            Rule::attribute_usage => Ok(Member::AttributeUsage(parse_attribute_usage(pair.into_inner(), source, span)?)),
+            Rule::port_def => Ok(Member::PortDef(parse_port_def(pair.into_inner(), source, span)?)),
+            Rule::port_usage => Ok(Member::PortUsage(parse_port_usage(pair.into_inner(), source, span)?)),
+            Rule::connection_usage => Ok(Member::ConnectionUsage(parse_connection_usage(pair.into_inner(), source, span)?)),
+            Rule::interface_def => Ok(Member::InterfaceDef(parse_interface_def(pair.into_inner(), source, span)?)),
+            Rule::item_def => Ok(Member::ItemDef(parse_item_def(pair.into_inner(), source, span)?)),
+            Rule::item_usage => Ok(Member::ItemUsage(parse_item_usage(pair.into_inner(), source, span)?)),
             Rule::requirement_def => {
                 let full_text = pair.as_str();
-                Ok(Member::RequirementDef(parse_requirement_def(pair.into_inner(), full_text, source)?))
+                Ok(Member::RequirementDef(parse_requirement_def(pair.into_inner(), full_text, source, span)?))
             },
-            Rule::requirement_usage => Ok(Member::RequirementUsage(parse_requirement_usage(pair.into_inner(), source)?)),
-            Rule::requirement_references => Ok(Member::RequirementUsage(parse_requirement_references(pair.into_inner(), source)?)),
-            Rule::action_def => Ok(Member::ActionDef(parse_action_def(pair.into_inner(), source)?)),
-            Rule::package => {
-                // We need source for parse_package, but we don't have it in parse_member
-                // For now, pass empty string - this will be fixed when we pass source through the call chain
-                Ok(Member::Package(parse_package(pair.into_inner(), "")?))
-            },
+            Rule::requirement_usage => Ok(Member::RequirementUsage(parse_requirement_usage(pair.into_inner(), source, span)?)),
+            Rule::requirement_references => Ok(Member::RequirementUsage(parse_requirement_references(pair.into_inner(), source, span)?)),
+            Rule::action_def => Ok(Member::ActionDef(parse_action_def(pair.into_inner(), source, span)?)),
+            Rule::package => Ok(Member::Package(parse_package(pair.into_inner(), source, span)?)),
             Rule::language_extension => {
                 // Language extension like #fmeaspec requirement req1 { ... }
                 // Parse the member inside the language extension
@@ -465,6 +504,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
                     metadata: Vec::new(), // Nested part defs don't have metadata at this level
                     name: format!("_unparsed_{:?}", pair.as_rule()),
                     name_position: None,
+                    range: None,
                     is_abstract: false,
                     specializes: None,
                     type_ref: None,
@@ -480,7 +520,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
     }
 }
 
-fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartDef> {
+fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<PartDef> {
     let mut name = String::new();
     let mut name_position = None;
     let mut is_abstract = false;
@@ -546,32 +586,38 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartDef> {
                 }
             }
             Rule::part_usage => {
-                if let Ok(part_usage) = parse_part_usage(pair.clone().into_inner(), source) {
+                let inner_span = pair.as_span();
+                if let Ok(part_usage) = parse_part_usage(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::PartUsage(part_usage));
                 }
             }
             Rule::port_usage => {
-                if let Ok(port_usage) = parse_port_usage(pair.clone().into_inner(), source) {
+                let inner_span = pair.as_span();
+                if let Ok(port_usage) = parse_port_usage(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::PortUsage(port_usage));
                 }
             }
             Rule::connection_usage => {
-                if let Ok(conn_usage) = parse_connection_usage(pair.clone().into_inner()) {
+                let inner_span = pair.as_span();
+                if let Ok(conn_usage) = parse_connection_usage(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::ConnectionUsage(conn_usage));
                 }
             }
             Rule::requirement_usage => {
-                if let Ok(req_usage) = parse_requirement_usage(pair.clone().into_inner(), source) {
+                let inner_span = pair.as_span();
+                if let Ok(req_usage) = parse_requirement_usage(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::RequirementUsage(req_usage));
                 }
             }
             Rule::attribute_def => {
-                if let Ok(attr_def) = parse_attribute_def(pair.clone().into_inner(), source) {
+                let inner_span = pair.as_span();
+                if let Ok(attr_def) = parse_attribute_def(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::AttributeDef(attr_def));
                 }
             }
             Rule::part_def => {
-                if let Ok(nested_part_def) = parse_part_def(pair.clone().into_inner(), source) {
+                let inner_span = pair.as_span();
+                if let Ok(nested_part_def) = parse_part_def(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::PartDef(nested_part_def));
                 }
             }
@@ -617,10 +663,21 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartDef> {
         }
     }
     
-    Ok(PartDef { name, name_position, is_abstract, specializes, type_ref, multiplicity, ordered, metadata, members })
+    Ok(PartDef {
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        is_abstract,
+        specializes,
+        type_ref,
+        multiplicity,
+        ordered,
+        metadata,
+        members,
+    })
 }
 
-fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartUsage> {
+fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<PartUsage> {
     let mut name = None;
     let mut name_position = None;
     let mut specializes = None;
@@ -695,22 +752,26 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartUsage> {
                 }
             }
             Rule::attribute_def => {
-                if let Ok(attr_def) = parse_attribute_def(pair.clone().into_inner(), source) {
+                let inner_span = pair.as_span();
+                if let Ok(attr_def) = parse_attribute_def(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::AttributeDef(attr_def));
                 }
             }
             Rule::part_usage => {
-                if let Ok(part_usage) = parse_part_usage(pair.clone().into_inner(), source) {
+                let inner_span = pair.as_span();
+                if let Ok(part_usage) = parse_part_usage(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::PartUsage(part_usage));
                 }
             }
             Rule::connection_usage => {
-                if let Ok(conn_usage) = parse_connection_usage(pair.clone().into_inner()) {
+                let inner_span = pair.as_span();
+                if let Ok(conn_usage) = parse_connection_usage(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::ConnectionUsage(conn_usage));
                 }
             }
             Rule::port_usage => {
-                if let Ok(port_usage) = parse_port_usage(pair.clone().into_inner(), source) {
+                let inner_span = pair.as_span();
+                if let Ok(port_usage) = parse_port_usage(pair.clone().into_inner(), source, inner_span) {
                     members.push(Member::PortUsage(port_usage));
                 }
             }
@@ -750,7 +811,20 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartUsage> {
         }
     }
     
-    Ok(PartUsage { name, name_position, specializes, type_ref, multiplicity, ordered, redefines, subsets, value, metadata, members })
+    Ok(PartUsage {
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        specializes,
+        type_ref,
+        multiplicity,
+        ordered,
+        redefines,
+        subsets,
+        value,
+        metadata,
+        members,
+    })
 }
 
 /// Parse a metadata annotation (e.g., @Layer(name = "02_SystemContext"))
@@ -791,7 +865,7 @@ fn parse_metadata_annotation(pair: Pair<'_, Rule>) -> Result<MetadataAnnotation>
     Ok(MetadataAnnotation { name, attributes })
 }
 
-fn parse_attribute_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<AttributeDef> {
+fn parse_attribute_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<AttributeDef> {
     let mut name = String::new();
     let mut visibility = None;
     let mut specializes = None;
@@ -905,22 +979,23 @@ fn parse_attribute_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<Attribute
     }
     
     debug!("parse_attribute_def: Final result - name='{}', default_value={:?}", name, default_value);
-    Ok(AttributeDef { 
-        name, 
-        visibility, 
-        specializes, 
-        type_ref, 
-        multiplicity, 
-        redefines, 
-        default_value, 
+    Ok(AttributeDef {
+        name,
+        visibility,
+        specializes,
+        type_ref,
+        multiplicity,
+        redefines,
+        default_value,
         members,
         name_position,
         type_ref_position,
         default_value_position,
+        range: Some(span_to_source_range(span, source)),
     })
 }
 
-fn parse_attribute_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<AttributeUsage> {
+fn parse_attribute_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<AttributeUsage> {
     let mut name = String::new();
     let mut name_position = None;
     let mut visibility = None;
@@ -992,10 +1067,22 @@ fn parse_attribute_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<Attribu
         }
     }
     
-    Ok(AttributeUsage { name, name_position, visibility, specializes, type_ref, multiplicity, redefines, subsets, value, members })
+    Ok(AttributeUsage {
+        name,
+        name_position,
+        visibility,
+        specializes,
+        type_ref,
+        multiplicity,
+        redefines,
+        subsets,
+        value,
+        members,
+        range: Some(span_to_source_range(span, source)),
+    })
 }
 
-fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortDef> {
+fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<PortDef> {
     let mut name = String::new();
     let mut name_position = None;
     let mut specializes = None;
@@ -1136,6 +1223,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortDef> {
     Ok(PortDef {
         name,
         name_position,
+        range: Some(span_to_source_range(span, source)),
         specializes,
         type_ref,
         connector_name,
@@ -1168,7 +1256,7 @@ fn parse_pin_map_entry(pairs: Pairs<'_, Rule>) -> Option<PinMapEntry> {
     Some(PinMapEntry { pin, signal })
 }
 
-fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
+fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<PortUsage> {
     let mut name = None;
     let mut name_position = None;
     let mut type_ref = None;
@@ -1292,6 +1380,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
     Ok(PortUsage {
         name,
         name_position,
+        range: Some(span_to_source_range(span, source)),
         type_ref,
         connector_name,
         pin_map: pin_map_opt,
@@ -1300,7 +1389,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
     })
 }
 
-fn parse_connection_usage(pairs: Pairs<'_, Rule>) -> Result<ConnectionUsage> {
+fn parse_connection_usage(pairs: Pairs<'_, Rule>, file_source: &str, span: pest::Span<'_>) -> Result<ConnectionUsage> {
     let mut source = String::new();
     let mut target = String::new();
     let mut identifiers: Vec<String> = Vec::new();
@@ -1380,7 +1469,13 @@ fn parse_connection_usage(pairs: Pairs<'_, Rule>) -> Result<ConnectionUsage> {
     }
     
     debug!("parse_connection_usage: source='{}', target='{}'", source, target);
-    Ok(ConnectionUsage { name: None, name_position: None, source, target })
+    Ok(ConnectionUsage {
+        name: None,
+        name_position: None,
+        range: Some(span_to_source_range(span, file_source)),
+        source,
+        target,
+    })
 }
 
 /// Parse bind_statement inner pairs: "bind" ~ logical ~ "=" ~ physical ~ ("{" ... "}" | ";")
@@ -1597,7 +1692,7 @@ fn parse_requires_statement(pairs: Pairs<'_, Rule>, _source: &str) -> Result<Req
     Ok(RequiresStatement { capability, execution_kind })
 }
 
-fn parse_interface_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<InterfaceDef> {
+fn parse_interface_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<InterfaceDef> {
     let mut name = String::new();
     let mut name_position = None;
     let mut specializes = None;
@@ -1638,13 +1733,14 @@ fn parse_interface_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<Interface
     Ok(InterfaceDef {
         name,
         name_position,
+        range: Some(span_to_source_range(span, source)),
         specializes,
         metadata,
         members,
     })
 }
 
-fn parse_item_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<ItemDef> {
+fn parse_item_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<ItemDef> {
     let mut name = String::new();
     let mut name_position = None;
     let mut specializes = None;
@@ -1686,13 +1782,14 @@ fn parse_item_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<ItemDef> {
     Ok(ItemDef {
         name,
         name_position,
+        range: Some(span_to_source_range(span, source)),
         specializes,
         metadata,
         members,
     })
 }
 
-fn parse_item_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<ItemUsage> {
+fn parse_item_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<ItemUsage> {
     let mut direction = ItemDirection::In;
     let mut name = String::new();
     let mut name_position = None;
@@ -1727,10 +1824,17 @@ fn parse_item_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<ItemUsage> {
         }
     }
     
-    Ok(ItemUsage { direction, name, name_position, type_ref, multiplicity })
+    Ok(ItemUsage {
+        direction,
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        type_ref,
+        multiplicity,
+    })
 }
 
-fn parse_requirement_def(pairs: Pairs<'_, Rule>, full_text: &str, source: &str) -> Result<RequirementDef> {
+fn parse_requirement_def(pairs: Pairs<'_, Rule>, full_text: &str, source: &str, span: pest::Span<'_>) -> Result<RequirementDef> {
     let mut name = String::new();
     let mut name_position = None;
     let mut specializes = None;
@@ -1828,10 +1932,16 @@ fn parse_requirement_def(pairs: Pairs<'_, Rule>, full_text: &str, source: &str) 
         members.push(Member::DocComment(crate::ast::DocComment { text: doc_comment_text }));
     }
     
-    Ok(RequirementDef { name, name_position, specializes, members })
+    Ok(RequirementDef {
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        specializes,
+        members,
+    })
 }
 
-fn parse_requirement_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<RequirementUsage> {
+fn parse_requirement_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<RequirementUsage> {
     let mut name = String::new();
     let mut name_position = None;
     let mut type_ref = None;
@@ -1875,10 +1985,17 @@ fn parse_requirement_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<Requi
         }
     }
     
-    Ok(RequirementUsage { name, name_position, type_ref, redefines, members })
+    Ok(RequirementUsage {
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        type_ref,
+        redefines,
+        members,
+    })
 }
 
-fn parse_requirement_references(pairs: Pairs<'_, Rule>, source: &str) -> Result<RequirementUsage> {
+fn parse_requirement_references(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<RequirementUsage> {
     let mut name = String::new();
     let mut name_position = None;
     let mut members = Vec::new();
@@ -1905,10 +2022,17 @@ fn parse_requirement_references(pairs: Pairs<'_, Rule>, source: &str) -> Result<
         }
     }
     
-    Ok(RequirementUsage { name, name_position, type_ref: None, redefines: None, members })
+    Ok(RequirementUsage {
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        type_ref: None,
+        redefines: None,
+        members,
+    })
 }
 
-fn parse_action_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<ActionDef> {
+fn parse_action_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<ActionDef> {
     let mut name = String::new();
     let mut name_position = None;
     
@@ -1928,7 +2052,12 @@ fn parse_action_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<ActionDef> {
     }
     
     debug!("parse_action_def: Returning ActionDef with name: {}", name);
-    Ok(ActionDef { name, name_position, body: Vec::new() })
+    Ok(ActionDef {
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        body: Vec::new(),
+    })
 }
 
 fn parse_multiplicity_str(text: &str) -> Option<Multiplicity> {
@@ -2374,7 +2503,8 @@ part user : Actor;
         let input = "port power : Power { connector JST-XH-2; pin 1 = '12V'; pin 2 = GND; }";
         let mut pairs = SysMLParser::parse(Rule::port_usage, input).expect("parse port_usage");
         let pair = pairs.next().expect("one pair");
-        let port = parse_port_usage(pair.into_inner(), input).expect("parse_port_usage");
+        let span = pair.as_span();
+        let port = parse_port_usage(pair.into_inner(), input, span).expect("parse_port_usage");
         assert_eq!(port.name.as_deref(), Some("power"));
         assert_eq!(port.connector_name.as_deref(), Some("JST-XH-2"));
         let pm = port.pin_map.as_ref().expect("pin_map");

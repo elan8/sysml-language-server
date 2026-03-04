@@ -16,6 +16,19 @@ pub struct SourcePosition {
     pub length: u32,
 }
 
+/// Full source range (start and end position)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SourceRange {
+    /// Start line (0-based)
+    pub start_line: u32,
+    /// Start character (0-based)
+    pub start_character: u32,
+    /// End line (0-based)
+    pub end_line: u32,
+    /// End character (0-based)
+    pub end_character: u32,
+}
+
 /// Root document node representing a complete SysML v2 file
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SysMLDocument {
@@ -51,6 +64,9 @@ pub struct Package {
     /// Source position of the package name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the package (from start to closing brace)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Whether this is a library package
     pub is_library: bool,
     /// Imports within this package
@@ -177,6 +193,9 @@ pub struct PartDef {
     /// Source position of the part name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the part def
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Whether this is abstract
     pub is_abstract: bool,
     /// Type specialization (after :>)
@@ -201,6 +220,9 @@ pub struct PartUsage {
     /// Source position of the part name (when present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the part usage
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Type specialization (after :>)
     pub specializes: Option<String>,
     /// Type reference (after :)
@@ -249,6 +271,9 @@ pub struct AttributeDef {
     /// Source position of the default value (if present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_value_position: Option<SourcePosition>,
+    /// Full source range of the attribute def
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
 }
 
 /// An attribute usage
@@ -275,6 +300,9 @@ pub struct AttributeUsage {
     pub value: Option<Expression>,
     /// Members
     pub members: Vec<Member>,
+    /// Full source range of the attribute usage
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
 }
 
 /// Pin map entry: connector pin number -> interface signal name (for physical ports).
@@ -292,6 +320,9 @@ pub struct PortDef {
     /// Source position of the port name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the port def
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Type specialization (after :>)
     pub specializes: Option<String>,
     /// Type reference (after :)
@@ -315,6 +346,9 @@ pub struct PortUsage {
     /// Source position of the port name (when present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the port usage
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Type reference
     pub type_ref: Option<String>,
     /// Optional connector reference (physical ports)
@@ -336,6 +370,9 @@ pub struct InterfaceDef {
     /// Source position of the interface name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the interface def
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Type specialization (after :>)
     pub specializes: Option<String>,
     /// Metadata annotations (e.g., @Tag(value = "x"))
@@ -353,6 +390,9 @@ pub struct ConnectionUsage {
     /// Source position of the connection name (when present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the connection usage
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Source port
     pub source: String,
     /// Target port
@@ -367,6 +407,9 @@ pub struct ItemDef {
     /// Source position of the item name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the item def
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Type specialization (after :>)
     pub specializes: Option<String>,
     /// Metadata annotations (e.g. @DacKind("Message") for DAC round-trip)
@@ -393,6 +436,9 @@ pub struct ItemUsage {
     /// Source position of the item name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the item usage
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Type reference
     pub type_ref: Option<String>,
     /// Multiplicity
@@ -407,6 +453,9 @@ pub struct RequirementDef {
     /// Source position of the requirement name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the requirement def
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Type specialization (after :>)
     pub specializes: Option<String>,
     /// Members
@@ -421,6 +470,9 @@ pub struct RequirementUsage {
     /// Source position of the requirement name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the requirement usage
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Type reference
     pub type_ref: Option<String>,
     /// Redefines clause
@@ -437,6 +489,9 @@ pub struct ActionDef {
     /// Source position of the action name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name_position: Option<SourcePosition>,
+    /// Full source range of the action def
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
     /// Action body (statements)
     pub body: Vec<Statement>,
 }

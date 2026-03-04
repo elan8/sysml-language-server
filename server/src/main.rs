@@ -49,8 +49,9 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use language::{
-    collect_definition_ranges, collect_named_elements, completion_prefix, find_reference_ranges,
-    keyword_doc, line_prefix_at_position, sysml_keywords, word_at_position,
+    collect_definition_ranges, collect_document_symbols, collect_named_elements, completion_prefix,
+    find_reference_ranges, format_document, keyword_doc, line_prefix_at_position,
+    suggest_wrap_in_package, sysml_keywords, word_at_position,
 };
 
 #[derive(Debug, Default)]
@@ -81,6 +82,9 @@ impl LanguageServer for Backend {
                 completion_provider: Some(CompletionOptions::default()),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                document_symbol_provider: Some(OneOf::Left(true)),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -297,6 +301,59 @@ impl LanguageServer for Backend {
         }
 
         Ok(Some(locations))
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+        let state = self.state.read().await;
+        let text = match state.documents.get(&uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+        drop(state);
+
+        let doc = match kerml_parser::parse_sysml(&text) {
+            Ok(d) => d,
+            Err(_) => return Ok(None),
+        };
+        let symbols = collect_document_symbols(&doc);
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+    }
+
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri.clone();
+        let state = self.state.read().await;
+        let text = match state.documents.get(&uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+        drop(state);
+
+        let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+        if let Some(action) = suggest_wrap_in_package(&text, &uri) {
+            actions.push(CodeActionOrCommand::CodeAction(action));
+        }
+        Ok(Some(actions))
+    }
+
+    async fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+        let state = self.state.read().await;
+        let text = match state.documents.get(&uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+        drop(state);
+        Ok(Some(format_document(&text, &params.options)))
     }
 }
 

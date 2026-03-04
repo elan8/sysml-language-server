@@ -1,8 +1,11 @@
 //! Helpers for hover and completion: position/word resolution, keywords, and AST name collection.
 //! Also provides definition/reference ranges for Go to definition and Find references.
 
-use kerml_parser::ast::{Member, SourcePosition, SysMLDocument};
-use tower_lsp::lsp_types::{Position, Range};
+use kerml_parser::ast::{Member, SourcePosition, SourceRange, SysMLDocument};
+use tower_lsp::lsp_types::{
+    CodeAction, DocumentSymbol, FormattingOptions, OneOf, OptionalVersionedTextDocumentIdentifier,
+    Position, Range, SymbolKind, TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
+};
 
 /// Converts (line, character) to byte offset in `text`. LSP uses 0-based line and character.
 #[allow(dead_code)] // used by tests and for future LSP features (e.g. range resolution)
@@ -131,6 +134,14 @@ pub fn source_position_to_range(pos: &SourcePosition) -> Range {
     Range::new(
         Position::new(pos.line, pos.character),
         Position::new(pos.line, pos.character + pos.length),
+    )
+}
+
+/// Converts AST source range (start/end line and character) to an LSP Range.
+pub fn source_range_to_range(r: &SourceRange) -> Range {
+    Range::new(
+        Position::new(r.start_line, r.start_character),
+        Position::new(r.end_line, r.end_character),
     )
 }
 
@@ -281,6 +292,451 @@ pub fn find_reference_ranges(source: &str, name: &str) -> Vec<Range> {
     ranges
 }
 
+/// Collects document symbols (outline) from the AST. Uses AST `range` when present for full extent, else name range for both.
+pub fn collect_document_symbols(doc: &SysMLDocument) -> Vec<DocumentSymbol> {
+    let mut out = Vec::new();
+    for pkg in &doc.packages {
+        if let Some(sym) = document_symbol_from_package(pkg) {
+            out.push(sym);
+        }
+    }
+    out
+}
+
+fn document_symbol_from_package(pkg: &kerml_parser::ast::Package) -> Option<DocumentSymbol> {
+    let name = if pkg.name.is_empty() {
+        "(top level)"
+    } else {
+        pkg.name.as_str()
+    };
+    let selection_range = pkg
+        .name_position
+        .as_ref()
+        .map(source_position_to_range)
+        .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+    let range = pkg
+        .range
+        .as_ref()
+        .map(source_range_to_range)
+        .unwrap_or(selection_range);
+    let children = document_symbols_from_members(&pkg.members);
+    Some(DocumentSymbol {
+        name: name.to_string(),
+        detail: Some("package".to_string()),
+        kind: SymbolKind::MODULE,
+        tags: None,
+        deprecated: None,
+        range,
+        selection_range,
+        children: if children.is_empty() { None } else { Some(children) },
+    })
+}
+
+fn document_symbols_from_members(members: &[Member]) -> Vec<DocumentSymbol> {
+    let mut out = Vec::new();
+    for m in members {
+        if let Some(sym) = document_symbol_from_member(m) {
+            out.push(sym);
+        }
+    }
+    out
+}
+
+fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
+    use kerml_parser::ast::Member as M;
+    match member {
+        M::PartDef(p) => {
+            let selection_range = p
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = p
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let children = document_symbols_from_members(&p.members);
+            Some(DocumentSymbol {
+                name: p.name.clone(),
+                detail: Some("part def".to_string()),
+                kind: SymbolKind::CLASS,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::PartUsage(p) => {
+            let name = p.name.as_deref().unwrap_or("(anonymous)");
+            let selection_range = p
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = p
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let children = document_symbols_from_members(&p.members);
+            Some(DocumentSymbol {
+                name: name.to_string(),
+                detail: Some("part".to_string()),
+                kind: SymbolKind::VARIABLE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::AttributeDef(a) => {
+            let selection_range = a
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = a
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            Some(DocumentSymbol {
+                name: a.name.clone(),
+                detail: Some("attribute def".to_string()),
+                kind: SymbolKind::PROPERTY,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: None,
+            })
+        }
+        M::AttributeUsage(a) => {
+            let selection_range = a
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = a
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            Some(DocumentSymbol {
+                name: a.name.clone(),
+                detail: Some("attribute".to_string()),
+                kind: SymbolKind::PROPERTY,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: None,
+            })
+        }
+        M::PortDef(p) => {
+            let selection_range = p
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = p
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let children = document_symbols_from_members(&p.members);
+            Some(DocumentSymbol {
+                name: p.name.clone(),
+                detail: Some("port def".to_string()),
+                kind: SymbolKind::INTERFACE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::PortUsage(p) => {
+            let name = p.name.as_deref().unwrap_or("(anonymous)");
+            let selection_range = p
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = p
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let children = document_symbols_from_members(&p.members);
+            Some(DocumentSymbol {
+                name: name.to_string(),
+                detail: Some("port".to_string()),
+                kind: SymbolKind::INTERFACE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::InterfaceDef(i) => {
+            let selection_range = i
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = i
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let children = document_symbols_from_members(&i.members);
+            Some(DocumentSymbol {
+                name: i.name.clone(),
+                detail: Some("interface".to_string()),
+                kind: SymbolKind::INTERFACE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::ConnectionUsage(c) => {
+            let name = c.name.as_deref().unwrap_or("(connection)");
+            let selection_range = c
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = c
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            Some(DocumentSymbol {
+                name: name.to_string(),
+                detail: Some("connection".to_string()),
+                kind: SymbolKind::VARIABLE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: None,
+            })
+        }
+        M::ItemDef(i) => {
+            let selection_range = i
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = i
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let children = document_symbols_from_members(&i.members);
+            Some(DocumentSymbol {
+                name: i.name.clone(),
+                detail: Some("item def".to_string()),
+                kind: SymbolKind::CONSTANT,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::ItemUsage(i) => {
+            let selection_range = i
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = i
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            Some(DocumentSymbol {
+                name: i.name.clone(),
+                detail: Some("item".to_string()),
+                kind: SymbolKind::CONSTANT,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: None,
+            })
+        }
+        M::RequirementDef(r) => {
+            let selection_range = r
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = r
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let children = document_symbols_from_members(&r.members);
+            Some(DocumentSymbol {
+                name: r.name.clone(),
+                detail: Some("requirement def".to_string()),
+                kind: SymbolKind::STRING,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::RequirementUsage(r) => {
+            let selection_range = r
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = r
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            Some(DocumentSymbol {
+                name: r.name.clone(),
+                detail: Some("requirement".to_string()),
+                kind: SymbolKind::STRING,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: None,
+            })
+        }
+        M::ActionDef(a) => {
+            let selection_range = a
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = a
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            Some(DocumentSymbol {
+                name: a.name.clone(),
+                detail: Some("action def".to_string()),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: None,
+            })
+        }
+        M::Package(p) => document_symbol_from_package(p),
+        _ => None,
+    }
+}
+
+/// Formats the whole document: trim trailing whitespace per line, single trailing newline, indent by brace depth.
+pub fn format_document(source: &str, options: &FormattingOptions) -> Vec<TextEdit> {
+    let lines: Vec<&str> = source.lines().collect();
+    if lines.is_empty() {
+        let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+        return vec![TextEdit {
+            range,
+            new_text: "\n".to_string(),
+        }];
+    }
+    let indent_unit = if options.insert_spaces {
+        " ".repeat(options.tab_size as usize)
+    } else {
+        "\t".to_string()
+    };
+    let mut depth: i32 = 0;
+    let mut formatted_lines: Vec<String> = Vec::with_capacity(lines.len());
+    for line in &lines {
+        let trimmed = line.trim();
+        let mut open_braces = 0i32;
+        let mut close_braces = 0i32;
+        for ch in trimmed.chars() {
+            match ch {
+                '{' => open_braces += 1,
+                '}' => close_braces += 1,
+                _ => {}
+            }
+        }
+        // Closing braces indent at the depth they close (before subtracting)
+        let indent_depth = (depth - close_braces).max(0);
+        depth += open_braces - close_braces;
+        let indent = indent_unit.repeat(indent_depth as usize);
+        let content = if trimmed.is_empty() {
+            String::new()
+        } else {
+            format!("{}{}", indent, trimmed)
+        };
+        formatted_lines.push(content);
+    }
+    let new_text = if formatted_lines.is_empty() {
+        "\n".to_string()
+    } else {
+        format!("{}\n", formatted_lines.join("\n"))
+    };
+    let last_line = (lines.len() - 1) as u32;
+    let last_char = lines.last().map(|l| l.len()).unwrap_or(0) as u32;
+    let range = Range::new(Position::new(0, 0), Position::new(last_line, last_char));
+    vec![TextEdit { range, new_text }]
+}
+
+/// Suggests a "Wrap in package" code action when the document has top-level members (one package with empty name and members).
+pub fn suggest_wrap_in_package(source: &str, uri: &Url) -> Option<CodeAction> {
+    let doc = kerml_parser::parse_sysml(source).ok()?;
+    let packages = &doc.packages;
+    if packages.len() != 1 {
+        return None;
+    }
+    let pkg = &packages[0];
+    if !pkg.name.is_empty() || pkg.members.is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = source.lines().collect();
+    let last_line = lines.len().saturating_sub(1) as u32;
+    let last_char = lines.last().map(|l| l.len()).unwrap_or(0) as u32;
+    let range = Range::new(Position::new(0, 0), Position::new(last_line, last_char));
+    let new_text = format!("package Generated {{\n{}\n}}\n", source.trim_end());
+    let edit = WorkspaceEdit {
+        changes: None,
+        document_changes: Some(tower_lsp::lsp_types::DocumentChanges::Edits(vec![
+            TextDocumentEdit {
+                text_document: OptionalVersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version: None,
+                },
+                edits: vec![OneOf::Left(TextEdit { range, new_text })],
+            },
+        ])),
+        change_annotations: None,
+    };
+    Some(CodeAction {
+        title: "Wrap in package".to_string(),
+        kind: Some(tower_lsp::lsp_types::CodeActionKind::REFACTOR),
+        diagnostics: None,
+        edit: Some(edit),
+        command: None,
+        is_preferred: None,
+        disabled: None,
+        data: None,
+    })
+}
+
 /// Collects all named elements from the document for hover/completion: (name, short_description).
 pub fn collect_named_elements(doc: &SysMLDocument) -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -411,6 +867,7 @@ fn collect_from_member(member: &Member, out: &mut Vec<(String, String)>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tower_lsp::lsp_types::Url;
 
     #[test]
     fn test_position_to_byte_offset() {
@@ -491,12 +948,14 @@ mod tests {
             packages: vec![kerml_parser::ast::Package {
                 name: "P".to_string(),
                 name_position: None,
+                range: None,
                 is_library: false,
                 imports: vec![],
                 members: vec![
                     Member::PartDef(kerml_parser::ast::PartDef {
                         name: "Engine".to_string(),
                         name_position: None,
+                        range: None,
                         is_abstract: false,
                         specializes: None,
                         type_ref: None,
@@ -583,5 +1042,117 @@ mod tests {
         // "foo" in "foo bar" must match
         let ranges = find_reference_ranges("foo bar", "foo");
         assert_eq!(ranges.len(), 1);
+    }
+
+    #[test]
+    fn test_collect_document_symbols_empty() {
+        let doc = SysMLDocument::default();
+        let symbols = collect_document_symbols(&doc);
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn test_collect_document_symbols_package() {
+        let text = "package P { }";
+        let doc = kerml_parser::parse_sysml(text).expect("parse");
+        let symbols = collect_document_symbols(&doc);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "P");
+        assert_eq!(symbols[0].detail.as_deref(), Some("package"));
+        assert_eq!(symbols[0].kind, SymbolKind::MODULE);
+    }
+
+    #[test]
+    fn test_collect_document_symbols_nested() {
+        let text = "package P { part def Engine { } }";
+        let doc = kerml_parser::parse_sysml(text).expect("parse");
+        let symbols = collect_document_symbols(&doc);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "P");
+        let children = symbols[0].children.as_ref().expect("children");
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "Engine");
+        assert_eq!(children[0].detail.as_deref(), Some("part def"));
+        assert_eq!(children[0].kind, SymbolKind::CLASS);
+    }
+
+    #[test]
+    fn test_suggest_wrap_in_package_empty() {
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let action = suggest_wrap_in_package("", &uri);
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_suggest_wrap_in_package_named_package() {
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let action = suggest_wrap_in_package("package P { }", &uri);
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_suggest_wrap_in_package_unwrapped_member() {
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let source = "part def X { }";
+        let action = suggest_wrap_in_package(source, &uri).expect("one code action");
+        assert!(action.title.contains("Wrap"));
+        let edit = action.edit.expect("has edit");
+        let doc_edits = edit.document_changes.as_ref().expect("document_changes");
+        use tower_lsp::lsp_types::DocumentChanges;
+        let edits = match doc_edits {
+            DocumentChanges::Edits(v) => v,
+            _ => panic!("expected Edits"),
+        };
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].edits.len(), 1);
+        let text_edit = match &edits[0].edits[0] {
+            tower_lsp::lsp_types::OneOf::Left(te) => te,
+            _ => panic!("expected TextEdit"),
+        };
+        assert_eq!(
+            text_edit.new_text,
+            "package Generated {\npart def X { }\n}\n"
+        );
+    }
+
+    #[test]
+    fn test_format_document_empty() {
+        let options = tower_lsp::lsp_types::FormattingOptions {
+            tab_size: 4,
+            insert_spaces: true,
+            ..Default::default()
+        };
+        let edits = format_document("", &options);
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, "\n");
+    }
+
+    #[test]
+    fn test_format_document_trim_trailing_whitespace() {
+        let options = tower_lsp::lsp_types::FormattingOptions {
+            tab_size: 4,
+            insert_spaces: true,
+            ..Default::default()
+        };
+        let edits = format_document("package P {   \n  part def X { }  \n", &options);
+        assert_eq!(edits.len(), 1);
+        assert!(edits[0].new_text.contains("package P {"));
+        assert!(edits[0].new_text.contains("part def X { }"));
+        assert!(!edits[0].new_text.contains("   \n"));
+        assert!(!edits[0].new_text.contains("  \n"));
+    }
+
+    #[test]
+    fn test_format_document_indent_by_braces() {
+        let options = tower_lsp::lsp_types::FormattingOptions {
+            tab_size: 2,
+            insert_spaces: true,
+            ..Default::default()
+        };
+        let source = "package P {\npart def X {\n}\n}\n";
+        let edits = format_document(source, &options);
+        assert_eq!(edits.len(), 1);
+        let expected = "package P {\n  part def X {\n  }\n}\n";
+        assert_eq!(edits[0].new_text, expected);
     }
 }
