@@ -16,7 +16,7 @@ Language server for [SysML v2](https://www.omg.org/sysml/sysmlv2/) (and KerML). 
 
 ## Editor features (VS Code extension)
 
-- [ ] Syntax highlighting (TextMate grammar for `.sysml` / `.kerml`)
+- [x] Syntax highlighting (TextMate grammar for `.sysml` / `.kerml`)
 
 ## Components
 
