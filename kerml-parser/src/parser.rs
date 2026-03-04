@@ -1,4 +1,8 @@
-//! Pest-based parser for SysML v2 grammar
+//! Pest-based parser for SysML v2 grammar.
+//!
+//! Parses input via the `document` rule in the Pest grammar, then walks
+//! pairs to build the AST (packages, members, etc.). Source positions are converted
+//! from byte offsets to line/character for LSP and diagnostics.
 
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
@@ -71,7 +75,7 @@ fn span_to_source_range(span: pest::Span<'_>, source: &str) -> SourceRange {
 #[grammar = "grammar.pest"]
 pub struct SysMLParser;
 
-/// Parse SysML v2 source text into an AST
+/// Parses SysML v2 source text into a [SysMLDocument](crate::ast::SysMLDocument) AST.
 pub fn parse_sysml(input: &str) -> Result<SysMLDocument> {
     let mut pairs = SysMLParser::parse(Rule::document, input)
         .map_err(|e| ParseError::PestError(format!("{}", e)))?;
@@ -80,7 +84,7 @@ pub fn parse_sysml(input: &str) -> Result<SysMLDocument> {
     if let Some(document_pair) = pairs.next() {
         parse_document(document_pair.into_inner(), input)
     } else {
-        Err(ParseError::ParseError("Empty document".to_string()))
+        Err(ParseError::Message("Empty document".to_string()))
     }
 }
 
@@ -395,7 +399,7 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> 
     debug!("parse_package: Final package '{}' has {} members", name, members.len());
     
     if name.is_empty() {
-        return Err(ParseError::ParseError("Package name is required".to_string()));
+        return Err(ParseError::Message("Package name is required".to_string()));
     }
     
     Ok(Package {
@@ -513,10 +517,10 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
                     members: Vec::new(),
                 }))
             }
-            _ => Err(ParseError::ParseError(format!("Unknown member type: {:?}", pair.as_rule())))
+            _ => Err(ParseError::Message(format!("Unknown member type: {:?}", pair.as_rule())))
         }
     } else {
-        Err(ParseError::ParseError("Empty member".to_string()))
+        Err(ParseError::Message("Empty member".to_string()))
     }
 }
 
@@ -1082,310 +1086,166 @@ fn parse_attribute_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<
     })
 }
 
-fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<PortDef> {
-    let mut name = String::new();
-    let mut name_position = None;
-    let mut specializes = None;
-    let mut type_ref = None;
-    let mut connector_name = None;
-    let mut pin_map = Vec::new();
-    let mut members = Vec::new();
-    let mut next_is_specialization = false;
-    let mut next_is_type = false;
+/// Mutable state accumulated while parsing a port definition.
+struct PortDefAccumulator {
+    name: String,
+    name_position: Option<SourcePosition>,
+    specializes: Option<String>,
+    type_ref: Option<String>,
+    members: Vec<Member>,
+    metadata: Vec<MetadataAnnotation>,
+    next_is_specialization: bool,
+    next_is_type: bool,
+}
 
-    let mut metadata = Vec::new();
-
-    fn process_port_def_pair(
-        pair: pest::iterators::Pair<'_, Rule>,
-        name: &mut String,
-        name_position: &mut Option<SourcePosition>,
-        specializes: &mut Option<String>,
-        type_ref: &mut Option<String>,
-        connector_name: &mut Option<String>,
-        pin_map: &mut Vec<PinMapEntry>,
-        members: &mut Vec<Member>,
-        metadata: &mut Vec<MetadataAnnotation>,
-        next_is_specialization: &mut bool,
-        next_is_type: &mut bool,
-        source: &str,
-    ) {
-        match pair.as_rule() {
-            Rule::metadata_annotation => {
-                if let Ok(meta) = parse_metadata_annotation(pair.clone()) {
-                    metadata.push(meta);
-                }
+/// Processes one pair from a port definition (metadata, name, member, port_body, or `:>`/`:`).
+fn process_port_def_pair(
+    pair: pest::iterators::Pair<'_, Rule>,
+    acc: &mut PortDefAccumulator,
+    source: &str,
+) {
+    match pair.as_rule() {
+        Rule::metadata_annotation => {
+            if let Ok(meta) = parse_metadata_annotation(pair.clone()) {
+                acc.metadata.push(meta);
             }
-            Rule::name => {
-                let text = pair.as_str();
-                if name.is_empty() {
-                    *name = text.to_string();
-                    *name_position = Some(span_to_position(pair.as_span(), source));
-                } else if *next_is_specialization {
-                    *specializes = Some(text.to_string());
-                    *next_is_specialization = false;
-                } else if *next_is_type {
-                    *type_ref = Some(text.to_string());
-                    *next_is_type = false;
-                }
+        }
+        Rule::name => {
+            let text = pair.as_str();
+            if acc.name.is_empty() {
+                acc.name = text.to_string();
+                acc.name_position = Some(span_to_position(pair.as_span(), source));
+            } else if acc.next_is_specialization {
+                acc.specializes = Some(text.to_string());
+                acc.next_is_specialization = false;
+            } else if acc.next_is_type {
+                acc.type_ref = Some(text.to_string());
+                acc.next_is_type = false;
             }
-            Rule::connector_ref => {
+        }
+        Rule::member => {
+            if let Ok(member) = parse_member(pair.into_inner(), source) {
+                acc.members.push(member);
+            }
+        }
+        Rule::port_body => {
+            for inner in pair.into_inner() {
+                process_port_def_pair(inner, acc, source);
+            }
+        }
+        _ => {
+            let text = pair.as_str();
+            if text == ":>" {
+                acc.next_is_specialization = true;
+            } else if text == ":" && !acc.next_is_specialization {
+                acc.next_is_type = true;
+            } else {
                 for inner in pair.into_inner() {
-                    match inner.as_rule() {
-                        Rule::name
-                        | Rule::identifier
-                        | Rule::qualified_name
-                        | Rule::string_literal => {
-                            *connector_name = Some(inner.as_str().to_string());
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Rule::pin_map_entry => {
-                if let Some(entry) = parse_pin_map_entry(pair.into_inner()) {
-                    pin_map.push(entry);
-                }
-            }
-            Rule::member => {
-                if let Ok(member) = parse_member(pair.into_inner(), source) {
-                    members.push(member);
-                }
-            }
-            Rule::port_body => {
-                for inner in pair.into_inner() {
-                    process_port_def_pair(
-                        inner,
-                        name,
-                        name_position,
-                        specializes,
-                        type_ref,
-                        connector_name,
-                        pin_map,
-                        members,
-                        metadata,
-                        next_is_specialization,
-                        next_is_type,
-                        source,
-                    );
-                }
-            }
-            _ => {
-                let text = pair.as_str();
-                if text == ":>" {
-                    *next_is_specialization = true;
-                } else if text == ":" && !*next_is_specialization {
-                    *next_is_type = true;
-                } else {
-                    for inner in pair.into_inner() {
-                        process_port_def_pair(
-                            inner,
-                            name,
-                            name_position,
-                            specializes,
-                            type_ref,
-                            connector_name,
-                            pin_map,
-                            members,
-                            metadata,
-                            next_is_specialization,
-                            next_is_type,
-                            source,
-                        );
-                    }
+                    process_port_def_pair(inner, acc, source);
                 }
             }
         }
     }
+}
 
-    for pair in pairs {
-        process_port_def_pair(
-            pair,
-            &mut name,
-            &mut name_position,
-            &mut specializes,
-            &mut type_ref,
-            &mut connector_name,
-            &mut pin_map,
-            &mut members,
-            &mut metadata,
-            &mut next_is_specialization,
-            &mut next_is_type,
-            source,
-        );
-    }
-
-    let pin_map_opt = if pin_map.is_empty() {
-        None
-    } else {
-        Some(pin_map)
+fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<PortDef> {
+    let mut acc = PortDefAccumulator {
+        name: String::new(),
+        name_position: None,
+        specializes: None,
+        type_ref: None,
+        members: Vec::new(),
+        metadata: Vec::new(),
+        next_is_specialization: false,
+        next_is_type: false,
     };
+    for pair in pairs {
+        process_port_def_pair(pair, &mut acc, source);
+    }
     Ok(PortDef {
-        name,
-        name_position,
+        name: acc.name,
+        name_position: acc.name_position,
         range: Some(span_to_source_range(span, source)),
-        specializes,
-        type_ref,
-        connector_name,
-        pin_map: pin_map_opt,
-        metadata,
-        members,
+        specializes: acc.specializes,
+        type_ref: acc.type_ref,
+        metadata: acc.metadata,
+        members: acc.members,
     })
 }
 
-fn parse_pin_map_entry(pairs: Pairs<'_, Rule>) -> Option<PinMapEntry> {
-    let mut pin = None;
-    let mut signal = None;
-    for pair in pairs {
-        match pair.as_rule() {
-            Rule::integer => {
-                let s = pair.as_str();
-                pin = s.parse().ok();
+/// Mutable state accumulated while parsing a port usage.
+struct PortUsageAccumulator {
+    name: Option<String>,
+    name_position: Option<SourcePosition>,
+    type_ref: Option<String>,
+    members: Vec<Member>,
+    metadata: Vec<MetadataAnnotation>,
+    next_is_type: bool,
+}
+
+/// Processes one pair from a port usage (metadata, name/identifier, member, port_body, or `:`).
+fn process_port_usage_pair(
+    pair: pest::iterators::Pair<'_, Rule>,
+    acc: &mut PortUsageAccumulator,
+    source: &str,
+) {
+    match pair.as_rule() {
+        Rule::metadata_annotation => {
+            if let Ok(meta) = parse_metadata_annotation(pair.clone()) {
+                acc.metadata.push(meta);
             }
-            Rule::name | Rule::identifier | Rule::qualified_name => {
-                signal = Some(pair.as_str().to_string());
+        }
+        Rule::name | Rule::identifier => {
+            let text = pair.as_str();
+            if acc.name.is_none() {
+                acc.name = Some(text.to_string());
+                acc.name_position = Some(span_to_position(pair.as_span(), source));
+            } else if acc.next_is_type {
+                acc.type_ref = Some(text.to_string());
+                acc.next_is_type = false;
             }
-            Rule::string_literal => {
-                signal = Some(pair.as_str().trim_matches('\'').to_string());
+        }
+        Rule::member => {
+            if let Ok(member) = parse_member(pair.into_inner(), source) {
+                acc.members.push(member);
             }
-            _ => {}
+        }
+        Rule::port_body => {
+            for inner in pair.into_inner() {
+                process_port_usage_pair(inner, acc, source);
+            }
+        }
+        _ => {
+            if pair.as_str() == ":" {
+                acc.next_is_type = true;
+            } else {
+                for inner in pair.into_inner() {
+                    process_port_usage_pair(inner, acc, source);
+                }
+            }
         }
     }
-    let pin = pin?;
-    let signal = signal.unwrap_or_default();
-    Some(PinMapEntry { pin, signal })
 }
 
 fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<PortUsage> {
-    let mut name = None;
-    let mut name_position = None;
-    let mut type_ref = None;
-    let mut connector_name = None;
-    let mut pin_map = Vec::new();
-    let mut members = Vec::new();
-    let mut metadata = Vec::new();
-    let mut next_is_type = false;
-
-    fn process_port_usage_pair(
-        pair: pest::iterators::Pair<'_, Rule>,
-        name: &mut Option<String>,
-        name_position: &mut Option<SourcePosition>,
-        type_ref: &mut Option<String>,
-        connector_name: &mut Option<String>,
-        pin_map: &mut Vec<PinMapEntry>,
-        members: &mut Vec<Member>,
-        metadata: &mut Vec<MetadataAnnotation>,
-        next_is_type: &mut bool,
-        source: &str,
-    ) {
-        match pair.as_rule() {
-            Rule::metadata_annotation => {
-                if let Ok(meta) = parse_metadata_annotation(pair.clone()) {
-                    metadata.push(meta);
-                }
-            }
-            Rule::name | Rule::identifier => {
-                let text = pair.as_str();
-                if name.is_none() {
-                    *name = Some(text.to_string());
-                    *name_position = Some(span_to_position(pair.as_span(), source));
-                } else if *next_is_type {
-                    *type_ref = Some(text.to_string());
-                    *next_is_type = false;
-                }
-            }
-            Rule::connector_ref => {
-                for inner in pair.into_inner() {
-                    match inner.as_rule() {
-                        Rule::name
-                        | Rule::identifier
-                        | Rule::qualified_name
-                        | Rule::string_literal => {
-                            *connector_name = Some(inner.as_str().to_string());
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Rule::pin_map_entry => {
-                if let Some(entry) = parse_pin_map_entry(pair.into_inner()) {
-                    pin_map.push(entry);
-                }
-            }
-            Rule::member => {
-                if let Ok(member) = parse_member(pair.into_inner(), source) {
-                    members.push(member);
-                }
-            }
-            Rule::port_body => {
-                for inner in pair.into_inner() {
-                    process_port_usage_pair(
-                        inner,
-                        name,
-                        name_position,
-                        type_ref,
-                        connector_name,
-                        pin_map,
-                        members,
-                        metadata,
-                        next_is_type,
-                        source,
-                    );
-                }
-            }
-            _ => {
-                if pair.as_str() == ":" {
-                    *next_is_type = true;
-                } else {
-                    for inner in pair.into_inner() {
-                        process_port_usage_pair(
-                            inner,
-                            name,
-                            name_position,
-                            type_ref,
-                            connector_name,
-                            pin_map,
-                            members,
-                            metadata,
-                            next_is_type,
-                            source,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    for pair in pairs {
-        process_port_usage_pair(
-            pair,
-            &mut name,
-            &mut name_position,
-            &mut type_ref,
-            &mut connector_name,
-            &mut pin_map,
-            &mut members,
-            &mut metadata,
-            &mut next_is_type,
-            source,
-        );
-    }
-
-    let pin_map_opt = if pin_map.is_empty() {
-        None
-    } else {
-        Some(pin_map)
+    let mut acc = PortUsageAccumulator {
+        name: None,
+        name_position: None,
+        type_ref: None,
+        members: Vec::new(),
+        metadata: Vec::new(),
+        next_is_type: false,
     };
+    for pair in pairs {
+        process_port_usage_pair(pair, &mut acc, source);
+    }
     Ok(PortUsage {
-        name,
-        name_position,
+        name: acc.name,
+        name_position: acc.name_position,
         range: Some(span_to_source_range(span, source)),
-        type_ref,
-        connector_name,
-        pin_map: pin_map_opt,
-        metadata,
-        members,
+        type_ref: acc.type_ref,
+        metadata: acc.metadata,
+        members: acc.members,
     })
 }
 
@@ -1634,14 +1494,13 @@ fn parse_provides_statement(pairs: Pairs<'_, Rule>, _source: &str) -> Result<Pro
                 // Recurse into optional group ("=" ~ name) to pick up second name
                 for inner in pair.into_inner() {
                     let t = inner.as_str().trim().trim_matches('\'');
-                    if inner.as_rule() == Rule::name
+                    if (inner.as_rule() == Rule::name
                         || inner.as_rule() == Rule::identifier
                         || inner.as_rule() == Rule::qualified_name
-                        || inner.as_rule() == Rule::string_literal
+                        || inner.as_rule() == Rule::string_literal)
+                        && !t.is_empty()
                     {
-                        if !t.is_empty() {
-                            names.push(t.to_string());
-                        }
+                        names.push(t.to_string());
                     }
                 }
             }
@@ -1670,14 +1529,13 @@ fn parse_requires_statement(pairs: Pairs<'_, Rule>, _source: &str) -> Result<Req
             _ => {
                 for inner in pair.into_inner() {
                     let t = inner.as_str().trim().trim_matches('\'');
-                    if inner.as_rule() == Rule::name
+                    if (inner.as_rule() == Rule::name
                         || inner.as_rule() == Rule::identifier
                         || inner.as_rule() == Rule::qualified_name
-                        || inner.as_rule() == Rule::string_literal
+                        || inner.as_rule() == Rule::string_literal)
+                        && !t.is_empty()
                     {
-                        if !t.is_empty() {
-                            names.push(t.to_string());
-                        }
+                        names.push(t.to_string());
                     }
                 }
             }
@@ -2485,66 +2343,15 @@ part user : Actor;
     }
 
     #[test]
-    fn test_connector_ref_parses() {
-        let input = "connector JST-XH-2;";
-        let mut pairs = SysMLParser::parse(Rule::connector_ref, input).expect("parse connector_ref");
-        let pair = pairs.next().expect("one pair");
-        assert_eq!(pair.as_rule(), Rule::connector_ref);
-        let name = pair
-            .into_inner()
-            .find(|p| matches!(p.as_rule(), Rule::name | Rule::identifier | Rule::qualified_name))
-            .map(|p| p.as_str().to_string());
-        assert_eq!(name.as_deref(), Some("JST-XH-2"));
-    }
-
-    #[test]
-    fn test_port_with_connector_and_pin_map_direct() {
-        // Parse port_usage in isolation to verify connector/pin_map parsing
-        let input = "port power : Power { connector JST-XH-2; pin 1 = '12V'; pin 2 = GND; }";
+    fn test_port_usage_sysml_v2() {
+        // SysML v2 compliant: port body contains only members (no connector/pin_map)
+        let input = "port power : Power { }";
         let mut pairs = SysMLParser::parse(Rule::port_usage, input).expect("parse port_usage");
         let pair = pairs.next().expect("one pair");
         let span = pair.as_span();
         let port = parse_port_usage(pair.into_inner(), input, span).expect("parse_port_usage");
         assert_eq!(port.name.as_deref(), Some("power"));
-        assert_eq!(port.connector_name.as_deref(), Some("JST-XH-2"));
-        let pm = port.pin_map.as_ref().expect("pin_map");
-        assert_eq!(pm.len(), 2);
-        assert_eq!((pm[0].pin, pm[0].signal.as_str()), (1, "12V"));
-        assert_eq!((pm[1].pin, pm[1].signal.as_str()), (2, "GND"));
-    }
-
-    #[test]
-    fn test_port_with_connector_and_pin_map_inside_part_def() {
-        let input = r#"
-package Test {
-    part def Board {
-        port power : Power {
-            connector JST-XH-2;
-            pin 1 = '12V';
-            pin 2 = GND;
-        }
-    }
-}
-"#;
-        let doc = parse_sysml(input).expect("parse");
-        let part_def = doc.packages[0]
-            .members
-            .iter()
-            .find_map(|m| if let Member::PartDef(p) = m { Some(p) } else { None })
-            .expect("PartDef");
-        let port = part_def
-            .members
-            .iter()
-            .find_map(|m| if let Member::PortUsage(p) = m { Some(p) } else { None })
-            .expect("PortUsage");
-        assert_eq!(port.name.as_deref(), Some("power"));
-        assert_eq!(port.connector_name.as_deref(), Some("JST-XH-2"), "connector_name should be set");
-        let pm = port.pin_map.as_ref().expect("pin_map");
-        assert_eq!(pm.len(), 2);
-        assert_eq!(pm[0].pin, 1);
-        assert_eq!(pm[0].signal, "12V");
-        assert_eq!(pm[1].pin, 2);
-        assert_eq!(pm[1].signal, "GND");
+        assert!(port.members.is_empty());
     }
 }
 

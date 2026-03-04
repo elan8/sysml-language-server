@@ -22,6 +22,7 @@ Language server for [SysML v2](https://www.omg.org/sysml/sysmlv2/) (and KerML). 
 
 - **Rust server** (`server/`): LSP binary `sysml-language-server` (stdio).
 - **VS Code extension** (`vscode/`): TypeScript client that spawns the server.
+- **kerml-parser** (`kerml-parser/`): Parses SysML v2 textual notation (aligned with the [SysML v2 Release](https://github.com/Systems-Modeling/SysML-v2-Release) validation suite). The parser does not claim full OMG spec compliance.
 
 ## Building
 
@@ -42,6 +43,20 @@ cd vscode
 npm install
 npm run compile
 ```
+
+## Validation tests (SysML v2 suite)
+
+The parser can run tests over the official [SysML v2 Release](https://github.com/Systems-Modeling/SysML-v2-Release) validation files. CI clones the release and runs these tests. Locally, either:
+
+- Clone the release and set the environment variable to its root:
+  ```bash
+  git clone --depth 1 https://github.com/Systems-Modeling/SysML-v2-Release.git -b 2026-01 /path/to/SysML-v2-Release-2026-01
+  export SYSML_V2_RELEASE_DIR=/path/to/SysML-v2-Release-2026-01
+  cargo test -p kerml-parser
+  ```
+- Or place a clone at `temp/SysML-v2-Release-2026-01` (relative to the repo root); then `cargo test -p kerml-parser` will use it automatically.
+
+If the validation directory is not present, the validation test is skipped.
 
 ## Testing the extension (F5)
 

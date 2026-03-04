@@ -11,19 +11,11 @@ pub enum ParseError {
     /// Pest parsing error
     #[error("Parse error: {0}")]
     PestError(String),
-    
-    /// Invalid syntax error
-    #[error("Invalid syntax: {0}")]
-    InvalidSyntax(String),
-    
-    /// Unexpected token error
-    #[error("Unexpected token: {0}")]
-    UnexpectedToken(String),
-    
-    /// General parse error
+
+    /// General parse / semantic error message
     #[error("Parse error: {0}")]
-    ParseError(String),
-    
+    Message(String),
+
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

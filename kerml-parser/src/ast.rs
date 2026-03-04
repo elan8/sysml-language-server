@@ -305,13 +305,6 @@ pub struct AttributeUsage {
     pub range: Option<SourceRange>,
 }
 
-/// Pin map entry: connector pin number -> interface signal name (for physical ports).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PinMapEntry {
-    pub pin: u32,
-    pub signal: String,
-}
-
 /// Port definition
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PortDef {
@@ -327,10 +320,6 @@ pub struct PortDef {
     pub specializes: Option<String>,
     /// Type reference (after :)
     pub type_ref: Option<String>,
-    /// Optional connector reference (physical ports)
-    pub connector_name: Option<String>,
-    /// Optional pin map (when connector is set)
-    pub pin_map: Option<Vec<PinMapEntry>>,
     /// Metadata annotations (e.g., @Tag(value = "x"))
     #[serde(default)]
     pub metadata: Vec<MetadataAnnotation>,
@@ -351,10 +340,6 @@ pub struct PortUsage {
     pub range: Option<SourceRange>,
     /// Type reference
     pub type_ref: Option<String>,
-    /// Optional connector reference (physical ports)
-    pub connector_name: Option<String>,
-    /// Optional pin map (when connector is set)
-    pub pin_map: Option<Vec<PinMapEntry>>,
     /// Metadata annotations (e.g., @Tag(value = "x"))
     #[serde(default)]
     pub metadata: Vec<MetadataAnnotation>,

@@ -372,12 +372,8 @@ render = {
 
 // Port definition - metadata is optional
 // Supports qualified_name in type position
-// Connector reference inside port body (e.g. "connector JST-XH-2;")
-connector_ref = { "connector" ~ name ~ ";" }
-// Pin map entry inside port body (e.g. "pin 1 = power_12v;" or "pin 2 = 'GND';")
-pin_map_entry = { "pin" ~ integer ~ "=" ~ (name | string_literal) ~ ";" }
-// Port body: connector, pin_map, and other members (named so parser can handle it explicitly)
-port_body = { (connector_ref | pin_map_entry | member)* }
+// Port body: members only (SysML v2 compliant; no connector/pin_map extensions)
+port_body = { member* }
 
 port_def = {
     "port" ~ "def" ~ name ~

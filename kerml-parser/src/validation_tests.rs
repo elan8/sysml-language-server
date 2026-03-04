@@ -25,17 +25,22 @@ fn init_test_logger() {
     })();
 }
 
-/// Get the path to the validation directory
+/// Environment variable for the root of a SysML-v2-Release clone (directory that contains `sysml/`).
+/// Used by CI; if unset, falls back to `temp/SysML-v2-Release-2026-01` under workspace root.
+pub const SYSML_V2_RELEASE_DIR_ENV: &str = "SYSML_V2_RELEASE_DIR";
+
+/// Get the path to the validation directory (SysML v2 Release `sysml/src/validation`).
 fn validation_dir() -> PathBuf {
-    // CARGO_MANIFEST_DIR is kerml-parser, so go up one level to workspace root
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("temp")
-        .join("SysML-v2-Release-2026-01")
-        .join("sysml")
-        .join("src")
-        .join("validation")
+    let root = std::env::var_os(SYSML_V2_RELEASE_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("temp")
+                .join("SysML-v2-Release-2026-01")
+        });
+    root.join("sysml").join("src").join("validation")
 }
 
 /// Find all .sysml files in a directory recursively
@@ -81,7 +86,7 @@ mod tests {
         
         if !validation_path.exists() {
             debug!("Validation directory not found: {:?}", validation_path);
-            debug!("Skipping validation tests. Make sure SysML-v2-Release-2026-01 is in temp/");
+            debug!("Skipping validation tests. Clone https://github.com/Systems-Modeling/SysML-v2-Release and set {} to its root, or place a clone in temp/SysML-v2-Release-2026-01", super::SYSML_V2_RELEASE_DIR_ENV);
             return;
         }
         
