@@ -1,0 +1,30 @@
+[package]
+name = "kerml-parser"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "SysML v2 (KerML) parser using Pest"
+
+[lib]
+name = "kerml_parser"
+path = "src/lib.rs"
+
+[dependencies]
+pest = "2.7"
+pest_derive = "2.7"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = "1.0"
+log = "0.4"
+
+[dev-dependencies]
+pest = "2.7"
+simplelog = "0.12"
+
+
+
+
+
+
+

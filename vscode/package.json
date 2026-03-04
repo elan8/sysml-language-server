@@ -1,0 +1,67 @@
+{
+  "name": "sysml-language-server",
+  "displayName": "SysML Language Server",
+  "description": "LSP client for SysML v2 (KerML) via sysml-language-server",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/elan8/sysml-language-server.git"
+  },
+  "homepage": "https://github.com/elan8/sysml-language-server#readme",
+  "bugs": {
+    "url": "https://github.com/elan8/sysml-language-server/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:sysml",
+    "onLanguage:kerml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "sysml",
+        "aliases": ["SysML", "SysML v2"],
+        "extensions": [".sysml"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "kerml",
+        "aliases": ["KerML", "Kernel Modeling Language"],
+        "extensions": [".kerml"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "title": "SysML Language Server",
+      "properties": {
+        "sysml-language-server.serverPath": {
+          "type": "string",
+          "default": "sysml-language-server",
+          "description": "Path to the sysml-language-server binary (or 'sysml-language-server' if on PATH)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "~5.6.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0",
+    "vscode-languageserver-protocol": "^3.17.0"
+  }
+}
