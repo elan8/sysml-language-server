@@ -9,6 +9,16 @@
         "--extensionDevelopmentPath=${workspaceFolder}"
       ],
       "outFiles": ["${workspaceFolder}/out/**/*.js"]
+    },
+    {
+      "name": "Extension Tests",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--extensionTestsPath=${workspaceFolder}/out/test/suite/extension.test.js"
+      ],
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     }
   ]
 }

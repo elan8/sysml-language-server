@@ -58,6 +58,40 @@ The parser can run tests over the official [SysML v2 Release](https://github.com
 
 If the validation directory is not present, the validation test is skipped.
 
+## Running tests
+
+### Rust (parser + server)
+
+From the repository root:
+
+```bash
+cargo test
+```
+
+This runs all workspace tests, including:
+
+- **kerml-parser**: unit and validation tests.
+- **sysml-language-server**: unit tests in `language.rs` and LSP integration tests in `server/tests/lsp_integration.rs` (spawns the server binary and sends initialize, didOpen, hover, completion, definition, diagnostics over stdio).
+
+To run only the LSP integration tests:
+
+```bash
+cargo test -p sysml-language-server --test lsp_integration
+```
+
+### VS Code extension tests
+
+Extension tests run inside a downloaded VS Code instance (Extension Development Host). From the repo root:
+
+```bash
+cd vscode
+npm install
+npm run compile
+npm test
+```
+
+**Note:** Running extension tests from the command line is only supported when no other instance of VS Code is running (or use VS Code Insiders for development and run tests from the stable CLI). Tests that require the language server (hover, go-to-definition) only assert when the `sysml-language-server` binary is on your PATH; otherwise they skip. In CI, the server is built and added to PATH before `npm test`.
+
 ## Testing the extension (F5)
 
 1. Build the Rust server: `cargo build` (debug) or `cargo build --release`.
