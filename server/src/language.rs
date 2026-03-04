@@ -1,6 +1,8 @@
 //! Helpers for hover and completion: position/word resolution, keywords, and AST name collection.
+//! Also provides definition/reference ranges for Go to definition and Find references.
 
-use kerml_parser::ast::{Member, SysMLDocument};
+use kerml_parser::ast::{Member, SourcePosition, SysMLDocument};
+use tower_lsp::lsp_types::{Position, Range};
 
 /// Converts (line, character) to byte offset in `text`. LSP uses 0-based line and character.
 #[allow(dead_code)] // used by tests and for future LSP features (e.g. range resolution)
@@ -122,6 +124,161 @@ pub fn keyword_doc(keyword: &str) -> Option<&'static str> {
         _ => return None,
     };
     Some(doc)
+}
+
+/// Converts AST source position (line, character, length) to an LSP Range.
+pub fn source_position_to_range(pos: &SourcePosition) -> Range {
+    Range::new(
+        Position::new(pos.line, pos.character),
+        Position::new(pos.line, pos.character + pos.length),
+    )
+}
+
+/// Collects for each defined name in the document the LSP range of its definition (from AST name_position).
+pub fn collect_definition_ranges(doc: &SysMLDocument) -> Vec<(String, Range)> {
+    let mut out = Vec::new();
+    for pkg in &doc.packages {
+        collect_definition_ranges_from_package(pkg, &mut out);
+    }
+    out
+}
+
+fn collect_definition_ranges_from_package(
+    pkg: &kerml_parser::ast::Package,
+    out: &mut Vec<(String, Range)>,
+) {
+    if !pkg.name.is_empty() {
+        if let Some(ref pos) = pkg.name_position {
+            out.push((pkg.name.clone(), source_position_to_range(pos)));
+        }
+    }
+    for m in &pkg.members {
+        collect_definition_ranges_from_member(m, out);
+    }
+}
+
+fn collect_definition_ranges_from_member(member: &Member, out: &mut Vec<(String, Range)>) {
+    use kerml_parser::ast::Member as M;
+    match member {
+        M::PartDef(p) => {
+            if let Some(ref pos) = p.name_position {
+                out.push((p.name.clone(), source_position_to_range(pos)));
+            }
+            for m in &p.members {
+                collect_definition_ranges_from_member(m, out);
+            }
+        }
+        M::PartUsage(p) => {
+            if let (Some(ref name), Some(ref pos)) = (&p.name, &p.name_position) {
+                out.push((name.clone(), source_position_to_range(pos)));
+            }
+            for m in &p.members {
+                collect_definition_ranges_from_member(m, out);
+            }
+        }
+        M::AttributeDef(a) => {
+            if let Some(ref pos) = a.name_position {
+                out.push((a.name.clone(), source_position_to_range(pos)));
+            }
+        }
+        M::AttributeUsage(a) => {
+            if let Some(ref pos) = a.name_position {
+                out.push((a.name.clone(), source_position_to_range(pos)));
+            }
+        }
+        M::PortDef(p) => {
+            if let Some(ref pos) = p.name_position {
+                out.push((p.name.clone(), source_position_to_range(pos)));
+            }
+        }
+        M::PortUsage(p) => {
+            if let (Some(ref name), Some(ref pos)) = (&p.name, &p.name_position) {
+                out.push((name.clone(), source_position_to_range(pos)));
+            }
+            for m in &p.members {
+                collect_definition_ranges_from_member(m, out);
+            }
+        }
+        M::InterfaceDef(i) => {
+            if let Some(ref pos) = i.name_position {
+                out.push((i.name.clone(), source_position_to_range(pos)));
+            }
+            for m in &i.members {
+                collect_definition_ranges_from_member(m, out);
+            }
+        }
+        M::ConnectionUsage(c) => {
+            if let (Some(ref name), Some(ref pos)) = (&c.name, &c.name_position) {
+                out.push((name.clone(), source_position_to_range(pos)));
+            }
+        }
+        M::ItemDef(i) => {
+            if let Some(ref pos) = i.name_position {
+                out.push((i.name.clone(), source_position_to_range(pos)));
+            }
+        }
+        M::ItemUsage(i) => {
+            if let Some(ref pos) = i.name_position {
+                out.push((i.name.clone(), source_position_to_range(pos)));
+            }
+        }
+        M::RequirementDef(r) => {
+            if let Some(ref pos) = r.name_position {
+                out.push((r.name.clone(), source_position_to_range(pos)));
+            }
+            for m in &r.members {
+                collect_definition_ranges_from_member(m, out);
+            }
+        }
+        M::RequirementUsage(r) => {
+            if let Some(ref pos) = r.name_position {
+                out.push((r.name.clone(), source_position_to_range(pos)));
+            }
+        }
+        M::ActionDef(a) => {
+            if let Some(ref pos) = a.name_position {
+                out.push((a.name.clone(), source_position_to_range(pos)));
+            }
+        }
+        M::Package(p) => collect_definition_ranges_from_package(p, out),
+        _ => {}
+    }
+}
+
+/// Returns all LSP ranges in `source` where `name` appears as a whole word (word boundaries).
+pub fn find_reference_ranges(source: &str, name: &str) -> Vec<Range> {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '-'
+    }
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let mut ranges = Vec::new();
+    for (line_no, line) in source.lines().enumerate() {
+        let line_utf8 = line;
+        let mut search_start = 0;
+        while let Some(off) = line_utf8[search_start..].find(name) {
+            let start = search_start + off;
+            let end = start + name.len();
+            let before_ok = start == 0
+                || !line_utf8[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_ident_char);
+            let after_ok = end >= line_utf8.len()
+                || !line_utf8[end..].chars().next().is_some_and(is_ident_char);
+            if before_ok && after_ok {
+                let start_char = line_utf8[..start].chars().count() as u32;
+                let end_char = start_char + name.chars().count() as u32;
+                ranges.push(Range::new(
+                    Position::new(line_no as u32, start_char),
+                    Position::new(line_no as u32, end_char),
+                ));
+            }
+            search_start = end;
+        }
+    }
+    ranges
 }
 
 /// Collects all named elements from the document for hover/completion: (name, short_description).
@@ -333,11 +490,13 @@ mod tests {
             imports: vec![],
             packages: vec![kerml_parser::ast::Package {
                 name: "P".to_string(),
+                name_position: None,
                 is_library: false,
                 imports: vec![],
                 members: vec![
                     Member::PartDef(kerml_parser::ast::PartDef {
                         name: "Engine".to_string(),
+                        name_position: None,
                         is_abstract: false,
                         specializes: None,
                         type_ref: None,
@@ -354,5 +513,75 @@ mod tests {
         let names: Vec<_> = el.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"P"));
         assert!(names.contains(&"Engine"));
+    }
+
+    #[test]
+    fn test_source_position_to_range() {
+        use kerml_parser::ast::SourcePosition;
+        let pos = SourcePosition {
+            line: 0,
+            character: 2,
+            length: 5,
+        };
+        let range = source_position_to_range(&pos);
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 2);
+        assert_eq!(range.end.line, 0);
+        assert_eq!(range.end.character, 7);
+    }
+
+    #[test]
+    fn test_collect_definition_ranges_empty() {
+        let doc = SysMLDocument::default();
+        let ranges = collect_definition_ranges(&doc);
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_collect_definition_ranges_package() {
+        let text = "package P { }";
+        let doc = kerml_parser::parse_sysml(text).expect("parse");
+        let ranges = collect_definition_ranges(&doc);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].0, "P");
+    }
+
+    #[test]
+    fn test_collect_definition_ranges_part_def() {
+        let text = "part def Engine { }";
+        let doc = kerml_parser::parse_sysml(text).expect("parse");
+        let ranges = collect_definition_ranges(&doc);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].0, "Engine");
+    }
+
+    #[test]
+    fn test_find_reference_ranges_empty() {
+        let ranges = find_reference_ranges("hello world", "foo");
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_find_reference_ranges_once() {
+        let ranges = find_reference_ranges("hello foo world", "foo");
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start.character, 6);
+        assert_eq!(ranges[0].end.character, 9);
+    }
+
+    #[test]
+    fn test_find_reference_ranges_multiple() {
+        let ranges = find_reference_ranges("foo bar foo baz foo", "foo");
+        assert_eq!(ranges.len(), 3);
+    }
+
+    #[test]
+    fn test_find_reference_ranges_word_boundary() {
+        // "foo" in "foobar" must not match
+        let ranges = find_reference_ranges("foobar", "foo");
+        assert!(ranges.is_empty());
+        // "foo" in "foo bar" must match
+        let ranges = find_reference_ranges("foo bar", "foo");
+        assert_eq!(ranges.len(), 1);
     }
 }

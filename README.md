@@ -8,8 +8,8 @@ Language server for [SysML v2](https://www.omg.org/sysml/sysmlv2/) (and KerML). 
 - [x] Diagnostics (parse errors from KerML)
 - [x] Hover
 - [x] Completion
-- [ ] Go to definition
-- [ ] Find references
+- [x] Go to definition
+- [x] Find references
 - [ ] Document symbols / outline
 - [ ] Code actions
 - [ ] Formatting

@@ -157,6 +157,7 @@ fn parse_document(pairs: Pairs<'_, Rule>, source: &str) -> Result<SysMLDocument>
     if !top_level_members.is_empty() && packages.is_empty() {
         packages.push(Package {
             name: "".to_string(), // Empty name indicates top-level members
+            name_position: None,
             is_library: false,
             imports: Vec::new(),
             members: top_level_members,
@@ -195,6 +196,7 @@ fn parse_import(pairs: Pairs<'_, Rule>, _source: &str) -> Result<Import> {
 fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
     let mut is_library = false;
     let mut name = String::new();
+    let mut name_position = None;
     let mut imports = Vec::new();
     let mut members = Vec::new();
     
@@ -228,6 +230,7 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
             Rule::package_name | Rule::name | Rule::qualified_name | Rule::identifier | Rule::string_literal => {
                 if name.is_empty() {
                     name = pair.as_str().trim_matches('\'').trim_matches('"').to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                     debug!("parse_package: Set package name to: {}", name);
                     // If we've seen "standard" or "library" before the name, mark as library
                     if seen_standard || seen_library {
@@ -360,7 +363,7 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str) -> Result<Package> {
         return Err(ParseError::ParseError("Package name is required".to_string()));
     }
     
-    Ok(Package { name, is_library, imports, members })
+    Ok(Package { name, name_position, is_library, imports, members })
 }
 
 fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
@@ -461,6 +464,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
                 Ok(Member::PartDef(PartDef {
                     metadata: Vec::new(), // Nested part defs don't have metadata at this level
                     name: format!("_unparsed_{:?}", pair.as_rule()),
+                    name_position: None,
                     is_abstract: false,
                     specializes: None,
                     type_ref: None,
@@ -478,6 +482,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
 
 fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartDef> {
     let mut name = String::new();
+    let mut name_position = None;
     let mut is_abstract = false;
     let mut specializes = None;
     let mut type_ref = None;
@@ -504,6 +509,7 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartDef> {
                 let text = pair.as_str().trim_matches('\'');
                 if !seen_name {
                     name = text.to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                     seen_name = true;
                     debug!("parse_part_def: Set name to: {}", name);
                 } else if next_is_specialization {
@@ -611,11 +617,12 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartDef> {
         }
     }
     
-    Ok(PartDef { name, is_abstract, specializes, type_ref, multiplicity, ordered, metadata, members })
+    Ok(PartDef { name, name_position, is_abstract, specializes, type_ref, multiplicity, ordered, metadata, members })
 }
 
 fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartUsage> {
     let mut name = None;
+    let mut name_position = None;
     let mut specializes = None;
     let mut type_ref = None;
     let mut multiplicity = None;
@@ -646,6 +653,7 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartUsage> {
                 let text = pair.as_str().trim_matches('\'');
                 if !seen_name {
                     name = Some(text.to_string());
+                    name_position = Some(span_to_position(pair.as_span(), source));
                     seen_name = true;
                     debug!("parse_part_usage: Set name to: {:?}", name);
                 } else if next_is_specialization {
@@ -742,7 +750,7 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PartUsage> {
         }
     }
     
-    Ok(PartUsage { name, specializes, type_ref, multiplicity, ordered, redefines, subsets, value, metadata, members })
+    Ok(PartUsage { name, name_position, specializes, type_ref, multiplicity, ordered, redefines, subsets, value, metadata, members })
 }
 
 /// Parse a metadata annotation (e.g., @Layer(name = "02_SystemContext"))
@@ -914,6 +922,7 @@ fn parse_attribute_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<Attribute
 
 fn parse_attribute_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<AttributeUsage> {
     let mut name = String::new();
+    let mut name_position = None;
     let mut visibility = None;
     let mut specializes = None;
     let mut type_ref = None;
@@ -934,6 +943,7 @@ fn parse_attribute_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<Attribu
                 let text = pair.as_str().trim_matches('\'');
                 if name.is_empty() {
                     name = text.to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                 } else if next_is_specialization {
                     specializes = Some(text.to_string());
                     next_is_specialization = false;
@@ -982,11 +992,12 @@ fn parse_attribute_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<Attribu
         }
     }
     
-    Ok(AttributeUsage { name, visibility, specializes, type_ref, multiplicity, redefines, subsets, value, members })
+    Ok(AttributeUsage { name, name_position, visibility, specializes, type_ref, multiplicity, redefines, subsets, value, members })
 }
 
 fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortDef> {
     let mut name = String::new();
+    let mut name_position = None;
     let mut specializes = None;
     let mut type_ref = None;
     let mut connector_name = None;
@@ -1000,6 +1011,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortDef> {
     fn process_port_def_pair(
         pair: pest::iterators::Pair<'_, Rule>,
         name: &mut String,
+        name_position: &mut Option<SourcePosition>,
         specializes: &mut Option<String>,
         type_ref: &mut Option<String>,
         connector_name: &mut Option<String>,
@@ -1020,6 +1032,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortDef> {
                 let text = pair.as_str();
                 if name.is_empty() {
                     *name = text.to_string();
+                    *name_position = Some(span_to_position(pair.as_span(), source));
                 } else if *next_is_specialization {
                     *specializes = Some(text.to_string());
                     *next_is_specialization = false;
@@ -1057,6 +1070,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortDef> {
                     process_port_def_pair(
                         inner,
                         name,
+                        name_position,
                         specializes,
                         type_ref,
                         connector_name,
@@ -1080,6 +1094,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortDef> {
                         process_port_def_pair(
                             inner,
                             name,
+                            name_position,
                             specializes,
                             type_ref,
                             connector_name,
@@ -1100,6 +1115,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortDef> {
         process_port_def_pair(
             pair,
             &mut name,
+            &mut name_position,
             &mut specializes,
             &mut type_ref,
             &mut connector_name,
@@ -1119,6 +1135,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortDef> {
     };
     Ok(PortDef {
         name,
+        name_position,
         specializes,
         type_ref,
         connector_name,
@@ -1153,6 +1170,7 @@ fn parse_pin_map_entry(pairs: Pairs<'_, Rule>) -> Option<PinMapEntry> {
 
 fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
     let mut name = None;
+    let mut name_position = None;
     let mut type_ref = None;
     let mut connector_name = None;
     let mut pin_map = Vec::new();
@@ -1163,6 +1181,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
     fn process_port_usage_pair(
         pair: pest::iterators::Pair<'_, Rule>,
         name: &mut Option<String>,
+        name_position: &mut Option<SourcePosition>,
         type_ref: &mut Option<String>,
         connector_name: &mut Option<String>,
         pin_map: &mut Vec<PinMapEntry>,
@@ -1181,6 +1200,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
                 let text = pair.as_str();
                 if name.is_none() {
                     *name = Some(text.to_string());
+                    *name_position = Some(span_to_position(pair.as_span(), source));
                 } else if *next_is_type {
                     *type_ref = Some(text.to_string());
                     *next_is_type = false;
@@ -1215,6 +1235,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
                     process_port_usage_pair(
                         inner,
                         name,
+                        name_position,
                         type_ref,
                         connector_name,
                         pin_map,
@@ -1233,6 +1254,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
                         process_port_usage_pair(
                             inner,
                             name,
+                            name_position,
                             type_ref,
                             connector_name,
                             pin_map,
@@ -1251,6 +1273,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
         process_port_usage_pair(
             pair,
             &mut name,
+            &mut name_position,
             &mut type_ref,
             &mut connector_name,
             &mut pin_map,
@@ -1268,6 +1291,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<PortUsage> {
     };
     Ok(PortUsage {
         name,
+        name_position,
         type_ref,
         connector_name,
         pin_map: pin_map_opt,
@@ -1356,7 +1380,7 @@ fn parse_connection_usage(pairs: Pairs<'_, Rule>) -> Result<ConnectionUsage> {
     }
     
     debug!("parse_connection_usage: source='{}', target='{}'", source, target);
-    Ok(ConnectionUsage { name: None, source, target })
+    Ok(ConnectionUsage { name: None, name_position: None, source, target })
 }
 
 /// Parse bind_statement inner pairs: "bind" ~ logical ~ "=" ~ physical ~ ("{" ... "}" | ";")
@@ -1575,6 +1599,7 @@ fn parse_requires_statement(pairs: Pairs<'_, Rule>, _source: &str) -> Result<Req
 
 fn parse_interface_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<InterfaceDef> {
     let mut name = String::new();
+    let mut name_position = None;
     let mut specializes = None;
     let mut members = Vec::new();
     let mut metadata = Vec::new();
@@ -1586,6 +1611,7 @@ fn parse_interface_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<Interface
                 let text = pair.as_str();
                 if name.is_empty() {
                     name = text.to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                 } else if next_is_specialization {
                     specializes = Some(text.to_string());
                     next_is_specialization = false;
@@ -1611,6 +1637,7 @@ fn parse_interface_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<Interface
 
     Ok(InterfaceDef {
         name,
+        name_position,
         specializes,
         metadata,
         members,
@@ -1619,6 +1646,7 @@ fn parse_interface_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<Interface
 
 fn parse_item_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<ItemDef> {
     let mut name = String::new();
+    let mut name_position = None;
     let mut specializes = None;
     let mut members = Vec::new();
     let mut metadata = Vec::new();
@@ -1631,6 +1659,7 @@ fn parse_item_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<ItemDef> {
                 let text = pair.as_str();
                 if name.is_empty() {
                     name = text.to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                 } else if next_is_specialization {
                     specializes = Some(text.to_string());
                     next_is_specialization = false;
@@ -1656,15 +1685,17 @@ fn parse_item_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<ItemDef> {
 
     Ok(ItemDef {
         name,
+        name_position,
         specializes,
         metadata,
         members,
     })
 }
 
-fn parse_item_usage(pairs: Pairs<'_, Rule>, _source: &str) -> Result<ItemUsage> {
+fn parse_item_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<ItemUsage> {
     let mut direction = ItemDirection::In;
     let mut name = String::new();
+    let mut name_position = None;
     let mut type_ref = None;
     let mut multiplicity = None;
     let mut next_is_type = false;
@@ -1675,6 +1706,7 @@ fn parse_item_usage(pairs: Pairs<'_, Rule>, _source: &str) -> Result<ItemUsage> 
                 let text = pair.as_str();
                 if name.is_empty() {
                     name = text.to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                 } else if next_is_type {
                     type_ref = Some(text.to_string());
                     next_is_type = false;
@@ -1695,11 +1727,12 @@ fn parse_item_usage(pairs: Pairs<'_, Rule>, _source: &str) -> Result<ItemUsage> 
         }
     }
     
-    Ok(ItemUsage { direction, name, type_ref, multiplicity })
+    Ok(ItemUsage { direction, name, name_position, type_ref, multiplicity })
 }
 
 fn parse_requirement_def(pairs: Pairs<'_, Rule>, full_text: &str, source: &str) -> Result<RequirementDef> {
     let mut name = String::new();
+    let mut name_position = None;
     let mut specializes = None;
     let mut members = Vec::new();
     let mut next_is_specialization = false;
@@ -1716,6 +1749,7 @@ fn parse_requirement_def(pairs: Pairs<'_, Rule>, full_text: &str, source: &str) 
                 let text = pair.as_str().trim_matches('\'');
                 if name.is_empty() {
                     name = text.to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                     debug!("parse_requirement_def: Set name to: {}", name);
                 } else if next_is_specialization {
                     specializes = Some(text.to_string());
@@ -1794,11 +1828,12 @@ fn parse_requirement_def(pairs: Pairs<'_, Rule>, full_text: &str, source: &str) 
         members.push(Member::DocComment(crate::ast::DocComment { text: doc_comment_text }));
     }
     
-    Ok(RequirementDef { name, specializes, members })
+    Ok(RequirementDef { name, name_position, specializes, members })
 }
 
 fn parse_requirement_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<RequirementUsage> {
     let mut name = String::new();
+    let mut name_position = None;
     let mut type_ref = None;
     let mut redefines = None;
     let mut members = Vec::new();
@@ -1814,6 +1849,7 @@ fn parse_requirement_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<Requi
                 let text = pair.as_str().trim_matches('\'');
                 if name.is_empty() {
                     name = text.to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                     debug!("parse_requirement_usage: Set name to: {}", name);
                 } else if next_is_type {
                     type_ref = Some(text.to_string());
@@ -1839,11 +1875,12 @@ fn parse_requirement_usage(pairs: Pairs<'_, Rule>, source: &str) -> Result<Requi
         }
     }
     
-    Ok(RequirementUsage { name, type_ref, redefines, members })
+    Ok(RequirementUsage { name, name_position, type_ref, redefines, members })
 }
 
 fn parse_requirement_references(pairs: Pairs<'_, Rule>, source: &str) -> Result<RequirementUsage> {
     let mut name = String::new();
+    let mut name_position = None;
     let mut members = Vec::new();
     
     debug!("parse_requirement_references: Starting to parse");
@@ -1855,6 +1892,7 @@ fn parse_requirement_references(pairs: Pairs<'_, Rule>, source: &str) -> Result<
                 let text = pair.as_str().trim_matches('\'');
                 if name.is_empty() {
                     name = text.to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                     debug!("parse_requirement_references: Set name to: {}", name);
                 }
             }
@@ -1867,17 +1905,19 @@ fn parse_requirement_references(pairs: Pairs<'_, Rule>, source: &str) -> Result<
         }
     }
     
-    Ok(RequirementUsage { name, type_ref: None, redefines: None, members })
+    Ok(RequirementUsage { name, name_position, type_ref: None, redefines: None, members })
 }
 
-fn parse_action_def(pairs: Pairs<'_, Rule>, _source: &str) -> Result<ActionDef> {
+fn parse_action_def(pairs: Pairs<'_, Rule>, source: &str) -> Result<ActionDef> {
     let mut name = String::new();
+    let mut name_position = None;
     
     for pair in pairs {
         match pair.as_rule() {
             Rule::identifier | Rule::string_literal => {
                 if name.is_empty() {
                     name = pair.as_str().to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
                     debug!("parse_action_def: Found name: {}", name);
                 }
             }
@@ -1888,7 +1928,7 @@ fn parse_action_def(pairs: Pairs<'_, Rule>, _source: &str) -> Result<ActionDef> 
     }
     
     debug!("parse_action_def: Returning ActionDef with name: {}", name);
-    Ok(ActionDef { name, body: Vec::new() })
+    Ok(ActionDef { name, name_position, body: Vec::new() })
 }
 
 fn parse_multiplicity_str(text: &str) -> Option<Multiplicity> {

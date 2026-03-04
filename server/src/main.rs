@@ -49,8 +49,8 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use language::{
-    collect_named_elements, completion_prefix, keyword_doc, line_prefix_at_position,
-    sysml_keywords, word_at_position,
+    collect_definition_ranges, collect_named_elements, completion_prefix, find_reference_ranges,
+    keyword_doc, line_prefix_at_position, sysml_keywords, word_at_position,
 };
 
 #[derive(Debug, Default)]
@@ -79,6 +79,8 @@ impl LanguageServer for Backend {
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions::default()),
+                definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -220,6 +222,81 @@ impl LanguageServer for Backend {
         }
 
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let state = self.state.read().await;
+        let text = match state.documents.get(&uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+        drop(state);
+
+        let (_, _, _, word) = match word_at_position(&text, pos.line, pos.character) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        if language::sysml_keywords().contains(&word.as_str()) {
+            return Ok(None);
+        }
+
+        let doc = match kerml_parser::parse_sysml(&text) {
+            Ok(d) => d,
+            Err(_) => return Ok(None),
+        };
+        let defs = collect_definition_ranges(&doc);
+        if let Some((_, range)) = defs.into_iter().find(|(name, _)| name == &word) {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location { uri, range })));
+        }
+        Ok(None)
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let pos = params.text_document_position.position;
+        let include_declaration = params.context.include_declaration;
+        let state = self.state.read().await;
+        let text = match state.documents.get(&uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+        drop(state);
+
+        let (_, _, _, word) = match word_at_position(&text, pos.line, pos.character) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        let def_range = kerml_parser::parse_sysml(&text)
+            .ok()
+            .and_then(|doc| {
+                collect_definition_ranges(&doc)
+                    .into_iter()
+                    .find(|(name, _)| name == &word)
+                    .map(|(_, r)| r)
+            });
+
+        let mut locations: Vec<Location> = find_reference_ranges(&text, &word)
+            .into_iter()
+            .map(|range| Location {
+                uri: uri.clone(),
+                range,
+            })
+            .collect();
+
+        if !include_declaration {
+            if let Some(def_range) = def_range {
+                locations.retain(|loc| loc.range != def_range);
+            }
+        }
+
+        Ok(Some(locations))
     }
 }
 
