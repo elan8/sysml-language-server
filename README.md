@@ -6,8 +6,8 @@ Language server for [SysML v2](https://www.omg.org/sysml/sysmlv2/) (and KerML). 
 
 - [x] Text sync (open / change / close)
 - [x] Diagnostics (parse errors from KerML)
-- [ ] Hover
-- [ ] Completion
+- [x] Hover
+- [x] Completion
 - [ ] Go to definition
 - [ ] Find references
 - [ ] Document symbols / outline

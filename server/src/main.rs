@@ -1,5 +1,7 @@
 //! SysML v2 language server (LSP over stdio).
 
+mod language;
+
 use std::sync::Arc;
 use tower_lsp::lsp_types::Range;
 
@@ -46,6 +48,11 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+use language::{
+    collect_named_elements, completion_prefix, keyword_doc, line_prefix_at_position,
+    sysml_keywords, word_at_position,
+};
+
 #[derive(Debug, Default)]
 struct ServerState {
     /// Open documents: URI -> content.
@@ -70,6 +77,8 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::INCREMENTAL,
                 )),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
+                completion_provider: Some(CompletionOptions::default()),
                 ..ServerCapabilities::default()
             },
         })
@@ -124,6 +133,93 @@ impl LanguageServer for Backend {
         self.client
             .publish_diagnostics(params.text_document.uri, vec![], None)
             .await;
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let state = self.state.read().await;
+        let text = match state.documents.get(&uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+        drop(state);
+
+        let (line, char_start, char_end, word) = match word_at_position(
+            &text,
+            pos.line,
+            pos.character,
+        ) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        let range = Range::new(
+            Position::new(line, char_start),
+            Position::new(line, char_end),
+        );
+
+        if let Some(doc) = keyword_doc(&word) {
+            return Ok(Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(doc.to_string())),
+                range: Some(range),
+            }));
+        }
+
+        if let Ok(ast) = kerml_parser::parse_sysml(&text) {
+            let elements = collect_named_elements(&ast);
+            if let Some((_, desc)) = elements.into_iter().find(|(name, _)| name == &word) {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Scalar(MarkedString::String(desc)),
+                    range: Some(range),
+                }));
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        let state = self.state.read().await;
+        let text = match state.documents.get(&uri) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+        drop(state);
+
+        let line_prefix = line_prefix_at_position(&text, pos.line, pos.character);
+        let prefix = completion_prefix(&line_prefix);
+
+        let mut items = Vec::new();
+
+        for kw in sysml_keywords() {
+            if prefix.is_empty() || kw.starts_with(prefix) {
+                items.push(CompletionItem {
+                    label: (*kw).to_string(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: keyword_doc(kw).map(String::from),
+                    ..Default::default()
+                });
+            }
+        }
+
+        if let Ok(ast) = kerml_parser::parse_sysml(&text) {
+            let elements = collect_named_elements(&ast);
+            for (name, desc) in elements {
+                if prefix.is_empty() || name.starts_with(prefix) {
+                    items.push(CompletionItem {
+                        label: name.clone(),
+                        kind: Some(CompletionItemKind::REFERENCE),
+                        detail: Some(desc),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        Ok(Some(CompletionResponse::Array(items)))
     }
 }
 
