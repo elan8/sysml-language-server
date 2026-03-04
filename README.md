@@ -10,12 +10,13 @@ Language server for [SysML v2](https://www.omg.org/sysml/sysmlv2/) (and KerML). 
 - [x] Completion
 - [x] Go to definition
 - [x] Find references
+- [x] Rename (workspace-wide)
 - [x] Document symbols / outline
 - [x] Workspace symbol search
 - [x] Code actions
 - [x] Formatting
 
-The server is **workspace-aware**: hover, completion, go to definition, find references, and workspace symbol search use all `.sysml` and `.kerml` files in the workspace (from workspace folders or root URI). The workspace is indexed on startup and kept in sync via open/close and file watcher events.
+The server is **workspace-aware**: hover, completion, go to definition, find references, rename, and workspace symbol search use all `.sysml` and `.kerml` files in the workspace (from workspace folders or root URI). The workspace is indexed on startup and kept in sync via open/close and file watcher events.
 
 ## Editor features (VS Code extension)
 

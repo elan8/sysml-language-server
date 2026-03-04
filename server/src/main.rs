@@ -113,6 +113,10 @@ impl LanguageServer for Backend {
                 completion_provider: Some(CompletionOptions::default()),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                })),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
@@ -458,6 +462,79 @@ impl LanguageServer for Backend {
         }
 
         Ok(Some(locations))
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri;
+        let pos = params.position;
+        let state = self.state.read().await;
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
+            None => return Ok(None),
+        };
+        let (line, char_start, char_end, word) = match word_at_position(&text, pos.line, pos.character) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+        if language::sysml_keywords().contains(&word.as_str()) {
+            return Ok(None);
+        }
+        let range = Range::new(
+            Position::new(line, char_start),
+            Position::new(line, char_end),
+        );
+        Ok(Some(PrepareRenameResponse::Range(range)))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let pos = params.text_document_position.position;
+        let new_name = params.new_name;
+        let state = self.state.read().await;
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
+            None => return Ok(None),
+        };
+        let (_, _, _, word) = match word_at_position(&text, pos.line, pos.character) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+        if language::sysml_keywords().contains(&word.as_str()) {
+            return Ok(None);
+        }
+
+        let mut locations: Vec<Location> = Vec::new();
+        for (u, entry) in state.index.iter() {
+            for range in find_reference_ranges(&entry.content, &word) {
+                locations.push(Location {
+                    uri: u.clone(),
+                    range,
+                });
+            }
+        }
+
+        if locations.is_empty() {
+            return Ok(Some(WorkspaceEdit::default()));
+        }
+
+        let mut changes: std::collections::HashMap<Url, Vec<TextEdit>> = std::collections::HashMap::new();
+        for loc in locations {
+            changes
+                .entry(loc.uri.clone())
+                .or_default()
+                .push(TextEdit {
+                    range: loc.range,
+                    new_text: new_name.clone(),
+                });
+        }
+        Ok(Some(WorkspaceEdit {
+            changes: Some(changes),
+            document_changes: None,
+            change_annotations: None,
+        }))
     }
 
     async fn document_symbol(
