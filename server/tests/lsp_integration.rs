@@ -1,8 +1,13 @@
 //! Integration tests for the LSP server: spawn the binary and drive it over stdio with JSON-RPC.
 //!
 //! Run with: `cargo test -p sysml-language-server --test lsp_integration`
+//!
+//! Workspace awareness: `lsp_workspace_scan_goto_definition` uses a temp dir and proves the
+//! server loads files from disk (scan). When `SYSML_V2_RELEASE_DIR` is set,
+//! `lsp_workspace_scan_sysml_release` runs and validates indexing of the OMG SysML v2 repo.
 
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -351,6 +356,317 @@ fn lsp_diagnostics_on_invalid_sysml() {
         }
     }
     assert!(got_diagnostics, "invalid SysML should produce at least one diagnostic");
+
+    let _ = child.kill();
+}
+
+/// Cross-file goto definition: symbol defined in file_def.sysml, used in file_use.sysml.
+#[test]
+fn lsp_cross_file_goto_definition() {
+    let mut child = spawn_server();
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = child.stdout.take().expect("stdout");
+
+    let uri_def = "file:///workspace/def.sysml";
+    let uri_use = "file:///workspace/use.sysml";
+    let content_def = "package P { part def Engine; }";
+    let content_use = "package Q { part e : Engine; }";
+
+    let init_id = next_id();
+    let init_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": init_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": "file:///workspace",
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "0.1.0" }
+        }
+    });
+    send_message(&mut stdin, &init_req.to_string());
+    let _ = read_message(&mut stdout).expect("init response");
+
+    let initialized = serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} });
+    send_message(&mut stdin, &initialized.to_string());
+
+    // Open both documents so the index has both (definition in def, usage in use)
+    let did_open_def = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": { "uri": uri_def, "languageId": "sysml", "version": 1, "text": content_def }
+        }
+    });
+    send_message(&mut stdin, &did_open_def.to_string());
+    let did_open_use = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": { "uri": uri_use, "languageId": "sysml", "version": 1, "text": content_use }
+        }
+    });
+    send_message(&mut stdin, &did_open_use.to_string());
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    // Go to definition on "Engine" in use.sysml (position at "Engine" in "part e : Engine")
+    let def_id = next_id();
+    let def_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": def_id,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": uri_use },
+            "position": { "line": 0, "character": 22 }
+        }
+    });
+    send_message(&mut stdin, &def_req.to_string());
+    let def_resp = read_response(&mut stdout, def_id).expect("definition response");
+    let def_json: serde_json::Value = serde_json::from_str(&def_resp).expect("parse definition response");
+    assert_eq!(def_json["id"], def_id);
+    let result = &def_json["result"];
+    let uri = result["uri"].as_str().expect("definition should return location with uri");
+    assert!(
+        uri.contains("def.sysml"),
+        "goto_definition should resolve to def.sysml, got uri: {}",
+        uri
+    );
+
+    let _ = child.kill();
+}
+
+/// Cross-file references: find references to a symbol defined in one file and used in another.
+#[test]
+fn lsp_cross_file_references() {
+    let mut child = spawn_server();
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = child.stdout.take().expect("stdout");
+
+    let uri_def = "file:///refs/def.sysml";
+    let uri_use = "file:///refs/use.sysml";
+    let content_def = "package P { part def Widget; }";
+    let content_use = "package Q { part w : Widget; }";
+
+    let init_id = next_id();
+    let init_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": init_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": "file:///refs",
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "0.1.0" }
+        }
+    });
+    send_message(&mut stdin, &init_req.to_string());
+    let _ = read_message(&mut stdout).expect("init response");
+
+    let initialized = serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} });
+    send_message(&mut stdin, &initialized.to_string());
+
+    let did_open_def = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": { "uri": uri_def, "languageId": "sysml", "version": 1, "text": content_def }
+        }
+    });
+    send_message(&mut stdin, &did_open_def.to_string());
+    let did_open_use = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": { "uri": uri_use, "languageId": "sysml", "version": 1, "text": content_use }
+        }
+    });
+    send_message(&mut stdin, &did_open_use.to_string());
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    // Find references at "Widget" in use.sysml (include_declaration = true -> def + use)
+    let ref_id = next_id();
+    let ref_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": ref_id,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": uri_use },
+            "position": { "line": 0, "character": 21 },
+            "context": { "includeDeclaration": true }
+        }
+    });
+    send_message(&mut stdin, &ref_req.to_string());
+    let ref_resp = read_response(&mut stdout, ref_id).expect("references response");
+    let ref_json: serde_json::Value = serde_json::from_str(&ref_resp).expect("parse references response");
+    assert_eq!(ref_json["id"], ref_id);
+    let locs = ref_json["result"].as_array().expect("references should return array");
+    let uris: Vec<String> = locs
+        .iter()
+        .filter_map(|l| l["uri"].as_str().map(String::from))
+        .collect();
+    assert!(
+        uris.iter().any(|u| u.contains("def.sysml")),
+        "references should include def.sysml: {:?}",
+        uris
+    );
+    assert!(
+        uris.iter().any(|u| u.contains("use.sysml")),
+        "references should include use.sysml: {:?}",
+        uris
+    );
+
+    let _ = child.kill();
+}
+
+/// Workspace scan: definition file exists only on disk; we never didOpen it.
+/// Proves the server indexes files from the workspace root and goto_definition resolves across them.
+#[test]
+fn lsp_workspace_scan_goto_definition() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let root: PathBuf = temp.path().canonicalize().expect("canonical root");
+
+    std::fs::write(root.join("def.sysml"), "package P { part def Engine; }").expect("write def");
+    std::fs::write(root.join("use.sysml"), "package Q { part e : Engine; }").expect("write use");
+
+    let root_uri = url::Url::from_file_path(&root).expect("root uri");
+    let uri_use = url::Url::from_file_path(root.join("use.sysml")).expect("use uri");
+
+    let mut child = spawn_server();
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = child.stdout.take().expect("stdout");
+
+    let init_id = next_id();
+    let init_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": init_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": root_uri.as_str(),
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "0.1.0" }
+        }
+    });
+    send_message(&mut stdin, &init_req.to_string());
+    let _ = read_message(&mut stdout).expect("init response");
+
+    let initialized = serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} });
+    send_message(&mut stdin, &initialized.to_string());
+
+    // Wait for workspace scan to index def.sysml and use.sysml from disk
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Open only the file that contains the usage; def.sysml is only in the index from the scan
+    let did_open_use = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": uri_use.as_str(),
+                "languageId": "sysml",
+                "version": 1,
+                "text": "package Q { part e : Engine; }"
+            }
+        }
+    });
+    send_message(&mut stdin, &did_open_use.to_string());
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let def_id = next_id();
+    let def_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": def_id,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": { "uri": uri_use.as_str() },
+            "position": { "line": 0, "character": 22 }
+        }
+    });
+    send_message(&mut stdin, &def_req.to_string());
+    let def_resp = read_response(&mut stdout, def_id).expect("definition response");
+    let def_json: serde_json::Value = serde_json::from_str(&def_resp).expect("parse definition response");
+    assert_eq!(def_json["id"], def_id);
+    let result = &def_json["result"];
+    let uri = result["uri"].as_str().expect("definition should return location with uri");
+    assert!(
+        uri.contains("def.sysml"),
+        "goto_definition must resolve to def.sysml (loaded by workspace scan), got uri: {}",
+        uri
+    );
+
+    let _ = child.kill();
+}
+
+/// When SYSML_V2_RELEASE_DIR is set, index that folder and assert workspace/symbol finds symbols.
+/// Validates workspace awareness against the official OMG SysML v2 repo.
+const SYSML_V2_RELEASE_DIR_ENV: &str = "SYSML_V2_RELEASE_DIR";
+
+#[test]
+fn lsp_workspace_scan_sysml_release() {
+    let release_root = match std::env::var_os(SYSML_V2_RELEASE_DIR_ENV) {
+        Some(v) => PathBuf::from(v),
+        None => {
+            eprintln!(
+                "Skipping lsp_workspace_scan_sysml_release: set {} to the SysML-v2-Release clone root",
+                SYSML_V2_RELEASE_DIR_ENV
+            );
+            return;
+        }
+    };
+    if !release_root.is_dir() {
+        eprintln!("Skipping: {} is not a directory", release_root.display());
+        return;
+    }
+
+    let root_uri = match url::Url::from_file_path(&release_root) {
+        Ok(u) => u,
+        Err(_) => {
+            eprintln!("Skipping: cannot build file URL for {}", release_root.display());
+            return;
+        }
+    };
+
+    let mut child = spawn_server();
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = child.stdout.take().expect("stdout");
+
+    let init_id = next_id();
+    let init_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": init_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": root_uri.as_str(),
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "0.1.0" }
+        }
+    });
+    send_message(&mut stdin, &init_req.to_string());
+    let _ = read_message(&mut stdout).expect("init response");
+
+    let initialized = serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} });
+    send_message(&mut stdin, &initialized.to_string());
+
+    // Allow time for scanning a large repo
+    std::thread::sleep(std::time::Duration::from_secs(3));
+
+    let sym_id = next_id();
+    let sym_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": sym_id,
+        "method": "workspace/symbol",
+        "params": { "query": "Part" }
+    });
+    send_message(&mut stdin, &sym_req.to_string());
+    let sym_resp = read_response(&mut stdout, sym_id).expect("workspace/symbol response");
+    let sym_json: serde_json::Value = serde_json::from_str(&sym_resp).expect("parse workspace/symbol response");
+    assert_eq!(sym_json["id"], sym_id);
+    let results = sym_json["result"].as_array().expect("workspace/symbol returns array");
+    assert!(
+        !results.is_empty(),
+        "workspace/symbol over SysML-v2-Release should return at least one symbol for query 'Part'"
+    );
 
     let _ = child.kill();
 }

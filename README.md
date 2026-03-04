@@ -11,8 +11,11 @@ Language server for [SysML v2](https://www.omg.org/sysml/sysmlv2/) (and KerML). 
 - [x] Go to definition
 - [x] Find references
 - [x] Document symbols / outline
+- [x] Workspace symbol search
 - [x] Code actions
 - [x] Formatting
+
+The server is **workspace-aware**: hover, completion, go to definition, find references, and workspace symbol search use all `.sysml` and `.kerml` files in the workspace (from workspace folders or root URI). The workspace is indexed on startup and kept in sync via open/close and file watcher events.
 
 ## Editor features (VS Code extension)
 
@@ -71,7 +74,7 @@ cargo test
 This runs all workspace tests, including:
 
 - **kerml-parser**: unit and validation tests.
-- **sysml-language-server**: unit tests in `language.rs` and LSP integration tests in `server/tests/lsp_integration.rs` (spawns the server binary and sends initialize, didOpen, hover, completion, definition, diagnostics over stdio).
+- **sysml-language-server**: unit tests in `language.rs` and LSP integration tests in `server/tests/lsp_integration.rs` (spawns the server binary and sends initialize, didOpen, hover, completion, definition, references, diagnostics over stdio). These include workspace-awareness tests: `lsp_workspace_scan_goto_definition` (temp dir with files on disk; proves the workspace scan is used) and `lsp_workspace_scan_sysml_release` (optional: when `SYSML_V2_RELEASE_DIR` is set, indexes the [SysML-v2-Release](https://github.com/Systems-Modeling/SysML-v2-Release) clone and asserts workspace/symbol returns results).
 
 To run only the LSP integration tests:
 

@@ -3,8 +3,9 @@
 
 use kerml_parser::ast::{Member, SourcePosition, SourceRange, SysMLDocument};
 use tower_lsp::lsp_types::{
-    CodeAction, DocumentSymbol, FormattingOptions, OneOf, OptionalVersionedTextDocumentIdentifier,
-    Position, Range, SymbolKind, TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
+    CodeAction, DocumentSymbol, FormattingOptions, Location, OneOf,
+    OptionalVersionedTextDocumentIdentifier, Position, Range, SymbolInformation, SymbolKind,
+    TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
 };
 
 /// Converts (line, character) to byte offset in `text`. LSP uses 0-based line and character.
@@ -300,6 +301,39 @@ pub fn collect_document_symbols(doc: &SysMLDocument) -> Vec<DocumentSymbol> {
             out.push(sym);
         }
     }
+    out
+}
+
+/// Flattens document symbols into workspace symbol list with the given file URI.
+pub fn document_symbols_to_workspace_symbols(
+    uri: &Url,
+    symbols: &[DocumentSymbol],
+) -> Vec<SymbolInformation> {
+    let mut out = Vec::new();
+    fn flatten(
+        uri: &Url,
+        symbols: &[DocumentSymbol],
+        container: Option<&str>,
+        out: &mut Vec<SymbolInformation>,
+    ) {
+        for s in symbols {
+            out.push(SymbolInformation {
+                name: s.name.clone(),
+                kind: s.kind,
+                tags: s.tags.clone(),
+                deprecated: s.deprecated,
+                location: Location {
+                    uri: uri.clone(),
+                    range: s.range,
+                },
+                container_name: container.map(String::from),
+            });
+            if let Some(ref children) = s.children {
+                flatten(uri, children, Some(&s.name), out);
+            }
+        }
+    }
+    flatten(uri, symbols, None, &mut out);
     out
 }
 

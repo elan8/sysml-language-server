@@ -2,6 +2,7 @@
 
 mod language;
 
+use kerml_parser::ast::SysMLDocument;
 use std::sync::Arc;
 use tower_lsp::lsp_types::Range;
 
@@ -47,17 +48,36 @@ use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+use walkdir::WalkDir;
 
 use language::{
     collect_definition_ranges, collect_document_symbols, collect_named_elements, completion_prefix,
-    find_reference_ranges, format_document, keyword_doc, line_prefix_at_position,
-    suggest_wrap_in_package, sysml_keywords, word_at_position,
+    document_symbols_to_workspace_symbols, find_reference_ranges, format_document, keyword_doc,
+    line_prefix_at_position, suggest_wrap_in_package, sysml_keywords, word_at_position,
 };
 
-#[derive(Debug, Default)]
+/// Per-file index entry: content and optional parsed AST (invalidated when content changes).
+#[derive(Debug)]
+struct IndexEntry {
+    content: String,
+    parsed: Option<SysMLDocument>,
+}
+
+#[derive(Debug)]
 struct ServerState {
-    /// Open documents: URI -> content.
-    documents: std::collections::HashMap<tower_lsp::lsp_types::Url, String>,
+    /// Workspace root URIs from initialize (workspace_folders or root_uri).
+    workspace_roots: Vec<Url>,
+    /// One source of truth: URI -> (content, parsed). Open docs and workspace-scanned files.
+    index: std::collections::HashMap<Url, IndexEntry>,
+}
+
+impl Default for ServerState {
+    fn default() -> Self {
+        Self {
+            workspace_roots: Vec::new(),
+            index: std::collections::HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -68,7 +88,18 @@ struct Backend {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        let roots: Vec<Url> = params
+            .workspace_folders
+            .as_ref()
+            .filter(|f| !f.is_empty())
+            .map(|folders| folders.iter().map(|f| f.uri.clone()).collect())
+            .or_else(|| params.root_uri.as_ref().map(|u| vec![u.clone()]))
+            .unwrap_or_default();
+        {
+            let mut state = self.state.write().await;
+            state.workspace_roots = roots;
+        }
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "sysml-language-server".to_string(),
@@ -83,6 +114,7 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
@@ -94,6 +126,54 @@ impl LanguageServer for Backend {
         self.client
             .log_message(MessageType::INFO, "sysml-language-server initialized")
             .await;
+        let state = Arc::clone(&self.state);
+        let roots = state.read().await.workspace_roots.clone();
+        if roots.is_empty() {
+            return;
+        }
+        tokio::spawn(async move {
+            let entries: Vec<(Url, String)> = tokio::task::spawn_blocking(move || {
+                let mut out = Vec::new();
+                for root in roots {
+                    let path = match root.to_file_path() {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+                    for entry in WalkDir::new(path)
+                        .follow_links(false)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
+                        if !entry.file_type().is_file() {
+                            continue;
+                        }
+                        let ext = entry.path().extension().and_then(|e| e.to_str());
+                        if ext != Some("sysml") && ext != Some("kerml") {
+                            continue;
+                        }
+                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                            if let Ok(uri) = Url::from_file_path(entry.path()) {
+                                out.push((uri, content));
+                            }
+                        }
+                    }
+                }
+                out
+            })
+            .await
+            .unwrap_or_default();
+            let mut st = state.write().await;
+            for (uri, content) in entries {
+                let parsed = kerml_parser::parse_sysml(&content).ok();
+                st.index.insert(
+                    uri,
+                    IndexEntry {
+                        content,
+                        parsed,
+                    },
+                );
+            }
+        });
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -103,9 +183,16 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         let text = params.text_document.text;
+        let parsed = kerml_parser::parse_sysml(&text).ok();
         {
             let mut state = self.state.write().await;
-            state.documents.insert(uri.clone(), text.clone());
+            state.index.insert(
+                uri.clone(),
+                IndexEntry {
+                    content: text.clone(),
+                    parsed,
+                },
+            );
         }
         self.publish_diagnostics_for_document(uri, &text).await;
     }
@@ -114,43 +201,70 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         {
             let mut state = self.state.write().await;
-            if let Some(text) = state.documents.get_mut(&uri) {
+            if let Some(entry) = state.index.get_mut(&uri) {
                 for change in params.content_changes {
                     if let Some(range) = change.range {
-                        if let Some(new_text) = apply_incremental_change(text, &range, &change.text)
+                        if let Some(new_text) =
+                            apply_incremental_change(&entry.content, &range, &change.text)
                         {
-                            *text = new_text;
+                            entry.content = new_text;
                         }
                     } else {
-                        *text = change.text;
+                        entry.content = change.text;
                     }
                 }
+                entry.parsed = kerml_parser::parse_sysml(&entry.content).ok();
             }
         }
         let state = self.state.read().await;
-        let text = state.documents.get(&uri).cloned().unwrap_or_default();
+        let text = state
+            .index
+            .get(&uri)
+            .map(|e| e.content.as_str())
+            .unwrap_or("");
+        let text = text.to_string();
         drop(state);
         self.publish_diagnostics_for_document(uri, &text).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let mut state = self.state.write().await;
-        state.documents.remove(&params.text_document.uri);
+        // Keep index entry (last known content) so workspace features still see it until watch/scan.
         self.client
             .publish_diagnostics(params.text_document.uri, vec![], None)
             .await;
     }
 
+    async fn did_change_watched_files(
+        &self,
+        params: tower_lsp::lsp_types::DidChangeWatchedFilesParams,
+    ) {
+        use tower_lsp::lsp_types::FileChangeType;
+        let mut state = self.state.write().await;
+        for event in params.changes {
+            if event.typ == FileChangeType::CREATED || event.typ == FileChangeType::CHANGED {
+                if let Ok(path) = event.uri.to_file_path() {
+                    if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                        let parsed = kerml_parser::parse_sysml(&content).ok();
+                        state.index.insert(
+                            event.uri.clone(),
+                            IndexEntry { content, parsed },
+                        );
+                    }
+                }
+            } else if event.typ == FileChangeType::DELETED {
+                state.index.remove(&event.uri);
+            }
+        }
+    }
+
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        let uri = params.text_document_position_params.text_document.uri;
+        let uri = params.text_document_position_params.text_document.uri.clone();
         let pos = params.text_document_position_params.position;
         let state = self.state.read().await;
-        let text = match state.documents.get(&uri) {
-            Some(t) => t.clone(),
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
             None => return Ok(None),
         };
-        drop(state);
-
         let (line, char_start, char_end, word) = match word_at_position(
             &text,
             pos.line,
@@ -172,13 +286,35 @@ impl LanguageServer for Backend {
             }));
         }
 
-        if let Ok(ast) = kerml_parser::parse_sysml(&text) {
-            let elements = collect_named_elements(&ast);
-            if let Some((_, desc)) = elements.into_iter().find(|(name, _)| name == &word) {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Scalar(MarkedString::String(desc)),
-                    range: Some(range),
-                }));
+        // Current file first, then rest of index (workspace-aware).
+        if let Some(entry) = state.index.get(&uri) {
+            if let Some(ref ast) = entry.parsed {
+                let elements = collect_named_elements(ast);
+                if let Some((_, desc)) = elements.into_iter().find(|(name, _)| name == &word) {
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Scalar(MarkedString::String(desc)),
+                        range: Some(range),
+                    }));
+                }
+            }
+        }
+        for (u, entry) in state.index.iter() {
+            if *u == uri {
+                continue;
+            }
+            if let Some(ref ast) = entry.parsed {
+                let elements = collect_named_elements(ast);
+                if let Some((_, desc)) = elements.into_iter().find(|(name, _)| name == &word) {
+                    let location_note = format!("Defined in {}", u.path());
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Scalar(MarkedString::String(format!(
+                            "{}\n\n{}",
+                            desc,
+                            location_note
+                        ))),
+                        range: Some(range),
+                    }));
+                }
             }
         }
 
@@ -189,12 +325,10 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
         let state = self.state.read().await;
-        let text = match state.documents.get(&uri) {
-            Some(t) => t.clone(),
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
             None => return Ok(None),
         };
-        drop(state);
-
         let line_prefix = line_prefix_at_position(&text, pos.line, pos.character);
         let prefix = completion_prefix(&line_prefix);
 
@@ -211,16 +345,19 @@ impl LanguageServer for Backend {
             }
         }
 
-        if let Ok(ast) = kerml_parser::parse_sysml(&text) {
-            let elements = collect_named_elements(&ast);
-            for (name, desc) in elements {
-                if prefix.is_empty() || name.starts_with(prefix) {
-                    items.push(CompletionItem {
-                        label: name.clone(),
-                        kind: Some(CompletionItemKind::REFERENCE),
-                        detail: Some(desc),
-                        ..Default::default()
-                    });
+        let mut seen = std::collections::HashSet::<String>::new();
+        for entry in state.index.values() {
+            if let Some(ref ast) = entry.parsed {
+                let elements = collect_named_elements(ast);
+                for (name, desc) in elements {
+                    if (prefix.is_empty() || name.starts_with(prefix)) && seen.insert(name.clone()) {
+                        items.push(CompletionItem {
+                            label: name,
+                            kind: Some(CompletionItemKind::REFERENCE),
+                            detail: Some(desc),
+                            ..Default::default()
+                        });
+                    }
                 }
             }
         }
@@ -232,15 +369,13 @@ impl LanguageServer for Backend {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let uri = params.text_document_position_params.text_document.uri;
+        let uri = params.text_document_position_params.text_document.uri.clone();
         let pos = params.text_document_position_params.position;
         let state = self.state.read().await;
-        let text = match state.documents.get(&uri) {
-            Some(t) => t.clone(),
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
             None => return Ok(None),
         };
-        drop(state);
-
         let (_, _, _, word) = match word_at_position(&text, pos.line, pos.character) {
             Some(t) => t,
             None => return Ok(None),
@@ -250,13 +385,31 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        let doc = match kerml_parser::parse_sysml(&text) {
-            Ok(d) => d,
-            Err(_) => return Ok(None),
-        };
-        let defs = collect_definition_ranges(&doc);
-        if let Some((_, range)) = defs.into_iter().find(|(name, _)| name == &word) {
-            return Ok(Some(GotoDefinitionResponse::Scalar(Location { uri, range })));
+        // Same file first, then rest of workspace.
+        if let Some(entry) = state.index.get(&uri) {
+            if let Some(ref doc) = entry.parsed {
+                let defs = collect_definition_ranges(doc);
+                if let Some((_, range)) = defs.into_iter().find(|(name, _)| name == &word) {
+                    return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                        uri: uri.clone(),
+                        range,
+                    })));
+                }
+            }
+        }
+        for (u, entry) in state.index.iter() {
+            if *u == uri {
+                continue;
+            }
+            if let Some(ref doc) = entry.parsed {
+                let defs = collect_definition_ranges(doc);
+                if let Some((_, range)) = defs.into_iter().find(|(name, _)| name == &word) {
+                    return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                        uri: u.clone(),
+                        range,
+                    })));
+                }
+            }
         }
         Ok(None)
     }
@@ -266,37 +419,41 @@ impl LanguageServer for Backend {
         let pos = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
         let state = self.state.read().await;
-        let text = match state.documents.get(&uri) {
-            Some(t) => t.clone(),
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
             None => return Ok(None),
         };
-        drop(state);
-
         let (_, _, _, word) = match word_at_position(&text, pos.line, pos.character) {
             Some(t) => t,
             None => return Ok(None),
         };
 
-        let def_range = kerml_parser::parse_sysml(&text)
-            .ok()
-            .and_then(|doc| {
-                collect_definition_ranges(&doc)
+        let mut def_location: Option<(Url, Range)> = None;
+        for (u, entry) in state.index.iter() {
+            if let Some(ref doc) = entry.parsed {
+                if let Some((_, range)) = collect_definition_ranges(doc)
                     .into_iter()
                     .find(|(name, _)| name == &word)
-                    .map(|(_, r)| r)
-            });
+                {
+                    def_location = Some((u.clone(), range));
+                    break;
+                }
+            }
+        }
 
-        let mut locations: Vec<Location> = find_reference_ranges(&text, &word)
-            .into_iter()
-            .map(|range| Location {
-                uri: uri.clone(),
-                range,
-            })
-            .collect();
+        let mut locations: Vec<Location> = Vec::new();
+        for (u, entry) in state.index.iter() {
+            for range in find_reference_ranges(&entry.content, &word) {
+                locations.push(Location {
+                    uri: u.clone(),
+                    range,
+                });
+            }
+        }
 
         if !include_declaration {
-            if let Some(def_range) = def_range {
-                locations.retain(|loc| loc.range != def_range);
+            if let Some((def_uri, def_range)) = &def_location {
+                locations.retain(|loc| !(loc.uri == *def_uri && loc.range == *def_range));
             }
         }
 
@@ -309,18 +466,39 @@ impl LanguageServer for Backend {
     ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = params.text_document.uri;
         let state = self.state.read().await;
-        let text = match state.documents.get(&uri) {
-            Some(t) => t.clone(),
+        let entry = match state.index.get(&uri) {
+            Some(e) => e,
             None => return Ok(None),
         };
-        drop(state);
-
-        let doc = match kerml_parser::parse_sysml(&text) {
-            Ok(d) => d,
-            Err(_) => return Ok(None),
+        let doc = match &entry.parsed {
+            Some(d) => d,
+            None => return Ok(None),
         };
-        let symbols = collect_document_symbols(&doc);
+        let symbols = collect_document_symbols(doc);
         Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+    }
+
+    async fn symbol(
+        &self,
+        params: tower_lsp::lsp_types::WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<tower_lsp::lsp_types::SymbolInformation>>> {
+        let query = params.query.to_lowercase();
+        let state = self.state.read().await;
+        let mut out = Vec::new();
+        for (uri, entry) in state.index.iter() {
+            let doc = match &entry.parsed {
+                Some(d) => d,
+                None => continue,
+            };
+            let symbols = collect_document_symbols(doc);
+            let infos = document_symbols_to_workspace_symbols(uri, &symbols);
+            for info in infos {
+                if query.is_empty() || info.name.to_lowercase().contains(&query) {
+                    out.push(info);
+                }
+            }
+        }
+        Ok(Some(out))
     }
 
     async fn code_action(
@@ -329,8 +507,8 @@ impl LanguageServer for Backend {
     ) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri.clone();
         let state = self.state.read().await;
-        let text = match state.documents.get(&uri) {
-            Some(t) => t.clone(),
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
             None => return Ok(None),
         };
         drop(state);
@@ -348,8 +526,8 @@ impl LanguageServer for Backend {
     ) -> Result<Option<Vec<TextEdit>>> {
         let uri = params.text_document.uri;
         let state = self.state.read().await;
-        let text = match state.documents.get(&uri) {
-            Some(t) => t.clone(),
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
             None => return Ok(None),
         };
         drop(state);

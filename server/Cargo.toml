@@ -12,6 +12,7 @@ path = "src/main.rs"
 kerml-parser = { path = "../kerml-parser" }
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
+walkdir = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -19,3 +20,5 @@ clap = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tempfile = "3"
+url = "2"
