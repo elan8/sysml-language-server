@@ -209,10 +209,10 @@ fn selection_contained_in(mut selection: Range, full: Range) -> Range {
         a.line > b.line || (a.line == b.line && a.character > b.character)
     }
     if pos_lt(&selection.start, &full.start) {
-        selection.start = full.start.clone();
+        selection.start = full.start;
     }
     if pos_gt(&selection.end, &full.end) {
-        selection.end = full.end.clone();
+        selection.end = full.end;
     }
     if pos_lt(&selection.end, &selection.start) {
         return full;
@@ -379,6 +379,7 @@ pub fn collect_document_symbols(doc: &SysMLDocument) -> Vec<DocumentSymbol> {
 }
 
 /// Flattens document symbols into workspace symbol list with the given file URI.
+#[allow(dead_code)]
 pub fn document_symbols_to_workspace_symbols(
     uri: &Url,
     symbols: &[DocumentSymbol],
@@ -467,7 +468,7 @@ fn symbol_entries_from_package(
     let description = if pkg.name.is_empty() {
         "Top-level package (namespace).".to_string()
     } else {
-        format!("Package (namespace) '{}'. Contains members (parts, actions, etc.).", pkg.name)
+        format!("package (namespace) '{}'. Contains members (parts, actions, etc.).", pkg.name)
     };
     let signature = if pkg.name.is_empty() {
         None
@@ -1454,6 +1455,7 @@ pub fn suggest_wrap_in_package(source: &str, uri: &Url) -> Option<CodeAction> {
 }
 
 /// Collects all named elements from the document for hover/completion: (name, short_description).
+#[allow(dead_code)]
 pub fn collect_named_elements(doc: &SysMLDocument) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for pkg in &doc.packages {
@@ -1462,6 +1464,7 @@ pub fn collect_named_elements(doc: &SysMLDocument) -> Vec<(String, String)> {
     out
 }
 
+#[allow(dead_code)]
 fn collect_from_package(pkg: &kerml_parser::ast::Package, out: &mut Vec<(String, String)>) {
     let prefix = format!("package '{}'", pkg.name);
     out.push((pkg.name.clone(), prefix));
@@ -1470,6 +1473,7 @@ fn collect_from_package(pkg: &kerml_parser::ast::Package, out: &mut Vec<(String,
     }
 }
 
+#[allow(dead_code)]
 fn collect_from_member(member: &Member, out: &mut Vec<(String, String)>) {
     use kerml_parser::ast::Member as M;
     match member {

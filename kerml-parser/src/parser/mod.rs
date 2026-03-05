@@ -469,6 +469,7 @@ fn parse_in_statement(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>
     let mut next_is_specializes = false;
     let mut next_is_type = false;
 
+    #[allow(clippy::too_many_arguments)]
     fn process_in_statement_pair(
         pair: pest::iterators::Pair<'_, Rule>,
         source: &str,

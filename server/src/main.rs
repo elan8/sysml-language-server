@@ -66,7 +66,7 @@ struct IndexEntry {
     parsed: Option<SysMLDocument>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct ServerState {
     /// Workspace root URIs from initialize (workspace_folders or root_uri).
     workspace_roots: Vec<Url>,
@@ -74,16 +74,6 @@ struct ServerState {
     index: std::collections::HashMap<Url, IndexEntry>,
     /// Workspace-wide symbol table: flat list of definable symbols, updated when index changes.
     symbol_table: Vec<SymbolEntry>,
-}
-
-impl Default for ServerState {
-    fn default() -> Self {
-        Self {
-            workspace_roots: Vec::new(),
-            index: std::collections::HashMap::new(),
-            symbol_table: Vec::new(),
-        }
-    }
 }
 
 /// Removes all symbol table entries for `uri`, then appends `new_entries` if provided.
