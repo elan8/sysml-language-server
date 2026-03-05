@@ -29,9 +29,9 @@ fn init_test_logger() {
 /// Used by CI; if unset, falls back to `temp/SysML-v2-Release-2026-01` under workspace root.
 pub const SYSML_V2_RELEASE_DIR_ENV: &str = "SYSML_V2_RELEASE_DIR";
 
-/// Get the path to the validation directory (SysML v2 Release `sysml/src/validation`).
-fn validation_dir() -> PathBuf {
-    let root = std::env::var_os(SYSML_V2_RELEASE_DIR_ENV)
+/// Root of the SysML v2 Release tree (from env or default temp path).
+fn sysml_v2_release_root() -> PathBuf {
+    std::env::var_os(SYSML_V2_RELEASE_DIR_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -39,8 +39,22 @@ fn validation_dir() -> PathBuf {
                 .unwrap()
                 .join("temp")
                 .join("SysML-v2-Release-2026-01")
-        });
-    root.join("sysml").join("src").join("validation")
+        })
+}
+
+/// Get the path to the validation directory (SysML v2 Release `sysml/src/validation`).
+fn validation_dir() -> PathBuf {
+    sysml_v2_release_root().join("sysml").join("src").join("validation")
+}
+
+/// Path to the Vehicle Example Annex A file (challenging SysML v2 model used for parser integration testing).
+pub fn vehicle_example_annex_a_path() -> PathBuf {
+    sysml_v2_release_root()
+        .join("sysml")
+        .join("src")
+        .join("examples")
+        .join("Vehicle Example")
+        .join("SysML v2 Spec Annex A SimpleVehicleModel.sysml")
 }
 
 /// Find all .sysml files in a directory recursively
@@ -76,6 +90,42 @@ fn test_parse_file(file_path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use log::{info, debug};
+
+    /// Integration test: parse the Vehicle Example Annex A file (challenging SysML v2 model).
+    /// This file exercises state machines, transitions, ref item, exhibit state, connect with multiplicity,
+    /// and many other constructs. Used to drive parser quality improvements.
+    #[test]
+    fn test_vehicle_example_annex_a_simple_vehicle_model() {
+        init_test_logger();
+
+        let path = vehicle_example_annex_a_path();
+        if !path.exists() {
+            debug!(
+                "Vehicle Example file not found: {:?}. Set {} or place SysML-v2-Release in temp/SysML-v2-Release-2026-01",
+                path,
+                super::SYSML_V2_RELEASE_DIR_ENV
+            );
+            return;
+        }
+
+        let content = fs::read_to_string(&path).expect("read Vehicle Example file");
+        let doc = match parse_sysml(&content) {
+            Ok(d) => d,
+            Err(e) => {
+                info!(
+                    "Vehicle Example Annex A parse error (parser improvement opportunity): {}",
+                    e
+                );
+                panic!("Vehicle Example Annex A should parse without error: {}", e);
+            }
+        };
+
+        // Basic AST sanity: document has at least one package (e.g. SimpleVehicleModel)
+        assert!(
+            !doc.packages.is_empty(),
+            "Vehicle Example should produce at least one package in the AST"
+        );
+    }
 
     /// Test all validation files
     #[test]

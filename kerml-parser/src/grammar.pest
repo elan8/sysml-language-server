@@ -263,23 +263,24 @@ variant_part_usage = {
 // Metadata is not used in attribute_def (it's in attribute_body if needed)
 // Supports qualified_name in type position: attribute x: Real[1];
 // Supports short ID syntax: attribute <'id'> name
+// Supports "attribute redefines name default ..." (name optional when redefines present)
 attribute_def = {
-    visibility? ~ "attribute" ~ ("def")? ~ (short_id)? ~ name ~ 
+    visibility? ~ "attribute" ~ ("def")? ~ (short_id)? ~ (("redefines" ~ name) | (name ~ ("redefines" ~ name)?)) ~ 
     ("[" ~ (expr_value ~ ".." ~ ("*" | expr_value) | expr_value | "*") ~ "]")? ~
+    ("nonunique")? ~
     (":" ~ ">" ~ name)? ~
     (":" ~ (qualified_name | name))? ~
     ("redefines" ~ name)? ~
-    ("default" ~ "=" ~ expr_value)? ~
+    ("default" ~ ("=" ~ expr_value | expr_value))? ~
     ("=" ~ expr_value)? ~
     ("{" ~ attribute_body* ~ "}" | ";")
 }
 
-// Attribute shorthand with :>> syntax (e.g., ":>> mass : MassValue" or ":>> unit = s;")
-// Also supports "attribute :>> name = value" pattern
+// Attribute shorthand with :>> syntax (e.g., "length1:>> length = 4800 [mm];" or ":>> mass : MassValue")
 // Supports qualified_name in type position
 // Supports multiplicity and ordered: attribute :>> samples: Type[*] ordered;
 attribute_shorthand = {
-    (":>>" | ("attribute" ~ ":>>")) ~ name ~ (":" ~ (qualified_name | name))? ~ 
+    (name ~ ":>>" | ":>>" | ("attribute" ~ ":>>")) ~ name ~ (":" ~ (qualified_name | name))? ~ 
     ("[" ~ (expr_value ~ ".." ~ ("*" | expr_value) | expr_value | "*") ~ "]")? ~
     ("ordered")? ~
     ("=" ~ expr_value)? ~
@@ -386,17 +387,16 @@ port_def = {
     ("{" ~ port_body ~ "}" | ";")
 }
 
-// Port usage - supports ~ for negation and :>> syntax
-// Supports "port :>> name = expr {" pattern
+// Port usage - supports ~ for negation and :>> syntax (e.g. "port name :>> name {")
 // Supports multiplicity after type: port name : Type[2];
 // Supports qualified_name in type position
 port_usage = {
-    "port" ~ (":>>" ~ name | name)? ~
+    "port" ~ (name ~ ":>>" ~ name | ":>>" ~ name | name)? ~
     (":" ~ ">" ~ (qualified_name | name))? ~
     (":" ~ ("~")? ~ (qualified_name | name))? ~
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
-    ("=" ~ expr_value)? ~
     ("redefines" ~ name)? ~
+    ("=" ~ expr_value)? ~
     (metadata_annotation)* ~
     ("{" ~ port_body ~ "}" | ";")
 }
@@ -429,7 +429,7 @@ connection_def = {
 // Note: qualified_name includes name.name patterns, so we use name which includes qualified_name
 // The connect pattern must match qualified_name explicitly to handle engine.drivePwrPort
 connection_usage = {
-    ("connect" ~ ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~ expr_value ~ "to" ~ ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~ expr_value ~ ("{" ~ member* ~ "}" | ";")) |
+    ("connect" ~ ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~ (string_literal | qualified_name | name) ~ "to" ~ ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~ (string_literal | qualified_name | name) ~ ("{" ~ member* ~ "}" | ";")) |
     ("connection" ~ name ~
     (":" ~ (qualified_name | name))? ~
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
@@ -448,10 +448,10 @@ ref_part = {
     ("{" ~ member* ~ "}" | ";")
 }
 
-// Ref item - e.g. "ref item fuel : Fuel { ... }"
+// Ref item - e.g. "ref item fuel : Fuel { ... }" or "ref item redefines fuel { ... }"
 // Supports qualified_name in type position
 ref_item = {
-    "ref" ~ "item" ~ name ~
+    "ref" ~ "item" ~ (("redefines" ~ name) | (name ~ ("redefines" ~ name)?)) ~
     (":" ~ ">" ~ (qualified_name | name))? ~
     (":" ~ (qualified_name | name))? ~
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
@@ -496,12 +496,17 @@ item_def = {
 // Supports qualified_name in type position
 // Supports :> syntax: out torque :> ISQ::torque
 // Supports abstract: abstract item fmeaItems : FMEAItem[*] nonunique;
+// Item usage: supports multiplicity before or after type; name optional when :> present (e.g. "item :> envelopingShapes : Box[1]")
 item_usage = {
-    ("abstract")? ~ ("in" | "out")? ~ ("item")? ~ name ~
+    ("abstract")? ~ ("in" | "out")? ~ ("item")? ~ name? ~
+    ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
     (":" ~ ">" ~ (qualified_name | name))? ~
     (":" ~ (qualified_name | name))? ~
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
     ("nonunique")? ~
+    ("redefines" ~ name)? ~
+    ("subsets" ~ name)? ~
+    ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
     ("=" ~ (string_literal ~ "::" ~ name | expr_value))? ~
     (metadata_annotation)* ~
     ("{" ~ member* ~ "}" | ";")
@@ -632,23 +637,24 @@ exhibit_state = {
     "exhibit" ~ ("state")? ~ (string_literal ~ ("." ~ name)+ | qualified_name | name) ~
     (":>>" ~ (string_literal | qualified_name | name))? ~
     (":" ~ (string_literal | qualified_name | name))? ~
+    ("redefines" ~ name)? ~
     ("parallel")? ~
     ("{" ~ member* ~ "}" | ";")
 }
 
-// Subject statement - can appear in use case context
+// Subject statement - can appear in use case context (e.g. "subject name redefines name = expr;")
 // Supports qualified_name in type position
-// Supports bare "subject;", "subject name : Type;", or "subject name : Type { }"
 subject_statement = {
-    "subject" ~ (name? ~ (":" ~ (qualified_name | name) ~ ("[" ~ (expr_value ~ ".." ~ ("*" | expr_value) | expr_value | "*") ~ "]")?)? ~ ("=" ~ ("all")? ~ expr_value)?)? ~ ("{" ~ member* ~ "}" | ";")
+    "subject" ~ (name? ~ (":" ~ (qualified_name | name) ~ ("[" ~ (expr_value ~ ".." ~ ("*" | expr_value) | expr_value | "*") ~ "]")?)? ~ ("redefines" ~ name)? ~ ("=" ~ ("all")? ~ expr_value)?)? ~ ("{" ~ member* ~ "}" | ";")
 }
 
 // End statement (e.g., "end hitch : HitchBall;" or "end [*] ref cause: Situation;")
 // Supports qualified_name in type position
 // Supports multiplicity and ref modifier
+// Supports conjugated type: end p2:~DrivePwrPort; and language extension: end #logical logicalEnd;
 end_statement = {
-    "end" ~ ("[" ~ (expr_value ~ ".." ~ ("*" | expr_value) | expr_value | "*") ~ "]")? ~ 
-    ("ref")? ~ name ~ (":" ~ (qualified_name | name))? ~ ";"
+    "end" ~ ("[" ~ (expr_value ~ ".." ~ ("*" | expr_value) | expr_value | "*") ~ "]")? ~
+    ("ref")? ~ ("#" ~ identifier)? ~ name ~ (":" ~ ("~")? ~ (qualified_name | name))? ~ ";"
 }
 
 // Dependency statement - supports both "dependency name from X to Y" and "dependency from X to Y"
@@ -693,7 +699,8 @@ interface_def = {
     ("interface" ~ expr_value ~ "to" ~ expr_value ~
     ("{" ~ member* ~ "}" | ";")) |
     ("interface" ~ name ~ (":" ~ (qualified_name | name))? ~
-    ("connect" ~ expr_value ~ "to" ~ expr_value)? ~
+    ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
+    ("connect" ~ ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~ (string_literal | qualified_name | name) ~ "to" ~ ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~ (string_literal | qualified_name | name))? ~
     (metadata_annotation)* ~
     ("{" ~ member* ~ "}" | ";"))
 }
@@ -771,12 +778,12 @@ requirement_def = {
     ("{" ~ (import_statement | connect_statement | requirement_references | require_statement | member)* ~ "}" | ";")
 }
 
-// Requirement usage
+// Requirement usage (e.g. "requirement name :>> name { }")
 // Allows import_statement in requirement body
-// Supports qualified_name in type position
-// Supports short ID syntax: requirement <'id'> name
+// Supports :>> and qualified_name in type position
 requirement_usage = {
     "requirement" ~ (short_id)? ~ name ~
+    (":>>" ~ name)? ~
     (":" ~ (qualified_name | name))? ~
     ("redefines" ~ name)? ~
     ("=" ~ expr_value)? ~
@@ -850,6 +857,7 @@ perform_action = {
         ((string_literal ~ "." ~ (string_literal | name) | qualified_name | name ~ "." ~ (string_literal | name) | string_literal | name) ~ 
          (":>>" ~ (string_literal | qualified_name | name))? ~
          (":" ~ (string_literal | qualified_name | name))? ~
+         ("redefines" ~ name)? ~
          ("=" ~ expr_value)? ~
          ("{" ~ (statement | member)* ~ "}" | ";"))
     )
@@ -988,7 +996,7 @@ state_def = {
     "state" ~ (
         "def" ~ (string_literal | name) |
         (string_literal | name) ~ ":" ~ (string_literal | qualified_name | name) ~ "parallel" |
-        (string_literal | name) ~ (":>>" ~ (string_literal ~ "::" ~ (string_literal | name) | string_literal | qualified_name | name) ~ ("," ~ (string_literal ~ "::" ~ (string_literal | name) | string_literal | qualified_name | name))*)? ~ (":" ~ (string_literal | qualified_name | name))?
+        (string_literal | name) ~ ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~ (":>>" ~ (string_literal ~ "::" ~ (string_literal | name) | string_literal | qualified_name | name) ~ ("," ~ (string_literal ~ "::" ~ (string_literal | name) | string_literal | qualified_name | name))*)? ~ (":" ~ (string_literal | qualified_name | name))? ~ ("nonunique")?
     ) ~
     (metadata_annotation)* ~
     ("{" ~ (state_machine_statement | accept_statement | transition_statement | statement | member)* ~ "}" | ";")
@@ -1050,6 +1058,10 @@ flow_statement = {
     ("flow" ~ "of" ~ (qualified_name | name) ~ ":" ~ (qualified_name | name) ~
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
     "from" ~ expr_value ~ "to" ~ expr_value ~
+    ("{" ~ member* ~ "}" | ";")) |
+    ("flow" ~ "of" ~ (qualified_name | name) ~ "from" ~ expr_value ~ "to" ~ expr_value ~
+    ("{" ~ member* ~ "}" | ";")) |
+    ("flow" ~ (qualified_name | name) ~ "from" ~ expr_value ~ "to" ~ expr_value ~
     ("{" ~ member* ~ "}" | ";")) |
     ("flow" ~ "of" ~ (qualified_name | name) ~ ":" ~ (qualified_name | name) ~
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
@@ -1469,9 +1481,12 @@ satisfy_statement = {
     ("{" ~ member* ~ "}" | ";")
 }
 
-// Connect statement as member (e.g., "connect x to y;")
+// Connect statement as member (e.g., "connect x to y;" or "connect [1] x to [1] y;")
 connect_statement = {
-    "connect" ~ (string_literal | qualified_name | name) ~ "to" ~ (string_literal | qualified_name | name) ~
+    "connect" ~ ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
+    (string_literal | qualified_name | name) ~ "to" ~
+    ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
+    (string_literal | qualified_name | name) ~
     ("{" ~ member* ~ "}" | ";")
 }
 
