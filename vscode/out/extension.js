@@ -25,18 +25,34 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
+const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const vscode_1 = require("vscode");
 const node_1 = require("vscode-languageclient/node");
 let client;
-function activate() {
+function getBundledServerCommand(extensionPath) {
+    const platform = process.platform;
+    const arch = process.arch;
+    const binaryName = platform === "win32" ? "sysml-language-server.exe" : "sysml-language-server";
+    const bundledPath = path.join(extensionPath, "server", `${platform}-${arch}`, binaryName);
+    if (fs.existsSync(bundledPath)) {
+        return bundledPath;
+    }
+    return "sysml-language-server";
+}
+function activate(context) {
     const config = vscode_1.workspace.getConfiguration("sysml-language-server");
     const serverPath = config.get("serverPath") ?? "sysml-language-server";
-    const serverCommand = serverPath === "sysml-language-server"
-        ? serverPath
-        : path.isAbsolute(serverPath)
-            ? serverPath
-            : path.resolve(vscode_1.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "", serverPath);
+    let serverCommand;
+    if (serverPath === "sysml-language-server") {
+        serverCommand = getBundledServerCommand(context.extensionPath);
+    }
+    else if (path.isAbsolute(serverPath)) {
+        serverCommand = serverPath;
+    }
+    else {
+        serverCommand = path.resolve(vscode_1.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "", serverPath);
+    }
     const serverOptions = {
         command: serverCommand,
         args: [],

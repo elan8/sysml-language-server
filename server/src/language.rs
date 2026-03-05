@@ -1,5 +1,6 @@
 //! Helpers for hover and completion: position/word resolution, keywords, and AST name collection.
 //! Also provides definition/reference ranges for Go to definition and Find references.
+#![allow(deprecated)] // LSP deprecated field in DocumentSymbol/SymbolInformation; use tags in future
 
 use kerml_parser::ast::{Member, Multiplicity, SourcePosition, SourceRange, SysMLDocument};
 use tower_lsp::lsp_types::{

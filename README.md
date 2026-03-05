@@ -28,6 +28,13 @@ The server is **workspace-aware**: hover, completion, go to definition, find ref
 - **VS Code extension** (`vscode/`): TypeScript client that spawns the server.
 - **kerml-parser** (`kerml-parser/`): Parses SysML v2 textual notation (aligned with the [SysML v2 Release](https://github.com/Systems-Modeling/SysML-v2-Release) validation suite). The parser does not claim full OMG spec compliance.
 
+## Installing a release
+
+For a released version (e.g. v0.1.0), use the [Releases](https://github.com/elan8/sysml-language-server/releases) page:
+
+1. **VS Code extension:** Download the `.vsix` for the desired version. In VS Code: Extensions view → "…" → **Install from VSIX** → select the downloaded file. The extension .vsix includes the language server binary; no separate server install is needed unless you want to use a custom binary (see `sysml-language-server.serverPath`).
+2. **Server only** (e.g. for another editor): Download the server archive for your OS (`sysml-language-server-<version>-{linux|darwin|win32}-x64.{tar.gz|zip}`), extract it, and put the binary on your PATH or point your client at it.
+
 ## Building
 
 ### Rust server

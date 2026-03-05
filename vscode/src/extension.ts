@@ -1,4 +1,6 @@
+import * as fs from "fs";
 import * as path from "path";
+import type { ExtensionContext } from "vscode";
 import { workspace } from "vscode";
 import {
   LanguageClient,
@@ -9,16 +11,38 @@ import {
 
 let client: LanguageClient | undefined;
 
-export function activate(): void {
+function getBundledServerCommand(extensionPath: string): string {
+  const platform = process.platform;
+  const arch = process.arch;
+  const binaryName =
+    platform === "win32" ? "sysml-language-server.exe" : "sysml-language-server";
+  const bundledPath = path.join(
+    extensionPath,
+    "server",
+    `${platform}-${arch}`,
+    binaryName
+  );
+  if (fs.existsSync(bundledPath)) {
+    return bundledPath;
+  }
+  return "sysml-language-server";
+}
+
+export function activate(context: ExtensionContext): void {
   const config = workspace.getConfiguration("sysml-language-server");
   const serverPath = config.get<string>("serverPath") ?? "sysml-language-server";
 
-  const serverCommand =
-    serverPath === "sysml-language-server"
-      ? serverPath
-      : path.isAbsolute(serverPath)
-        ? serverPath
-        : path.resolve(workspace.workspaceFolders?.[0]?.uri.fsPath ?? "", serverPath);
+  let serverCommand: string;
+  if (serverPath === "sysml-language-server") {
+    serverCommand = getBundledServerCommand(context.extensionPath);
+  } else if (path.isAbsolute(serverPath)) {
+    serverCommand = serverPath;
+  } else {
+    serverCommand = path.resolve(
+      workspace.workspaceFolders?.[0]?.uri.fsPath ?? "",
+      serverPath
+    );
+  }
 
   const serverOptions: ServerOptions = {
     command: serverCommand,

@@ -1,4 +1,5 @@
 //! SysML v2 language server (LSP over stdio).
+#![allow(deprecated)] // LSP deprecated field in SymbolInformation; use tags in future
 
 mod language;
 mod semantic_tokens;
