@@ -16,7 +16,7 @@
       "patterns": [
         {
           "name": "comment.line.double-slash.sysml",
-          "match": "//.*$"
+          "match": "//(?!\\*).*$"
         },
         {
           "name": "comment.block.sysml",
@@ -68,7 +68,7 @@
       "patterns": [
         {
           "name": "keyword.control.sysml",
-          "match": "\\b(package|library|import|part|def|attribute|port|connection|interface|item|value|action|requirement|ref|alias|view|metadata|filter|connector|bind|allocate|connect|variant|abstract|occurrence|calc|constraint|exhibit|transition|accept|do|then|first|if|send|new|to|for|perform|assert|assume|require|doc|standard|expose|verify|position|satisfy|return|in|out|provides|requires|nonunique|ordered|redefines|subsets|default|istype|at|when|render|pin|connect|state|individual)\\b"
+          "match": "\\b(package|library|import|part|def|attribute|port|connection|interface|item|value|action|requirement|ref|alias|view|metadata|filter|connector|bind|allocate|connect|variant|abstract|occurrence|calc|constraint|exhibit|transition|accept|do|then|first|if|send|new|to|for|perform|assert|assume|require|doc|standard|expose|verify|position|satisfy|return|in|out|provides|requires|nonunique|ordered|redefines|subsets|default|istype|at|when|render|pin|connect|state|individual|flow|succession|end)\\b"
         },
         {
           "name": "keyword.other.sysml",

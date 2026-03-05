@@ -6,6 +6,7 @@
 
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
+use pest::error::LineColLocation;
 use crate::error::{ParseError, Result};
 use crate::ast::*;
 use log::{debug, trace};
@@ -24,8 +25,15 @@ pub struct SysMLParser;
 
 /// Parses SysML v2 source text into a [SysMLDocument](crate::ast::SysMLDocument) AST.
 pub fn parse_sysml(input: &str) -> Result<SysMLDocument> {
-    let mut pairs = SysMLParser::parse(Rule::document, input)
-        .map_err(|e| ParseError::PestError(format!("{}", e)))?;
+    let mut pairs = SysMLParser::parse(Rule::document, input).map_err(|e| {
+        let msg = format!("{}", e);
+        let pos = match &e.line_col {
+            LineColLocation::Pos((line, col)) | LineColLocation::Span((line, col), _) => {
+                Some(((line.saturating_sub(1)) as u32, (col.saturating_sub(1)) as u32))
+            }
+        };
+        ParseError::PestError(msg, pos)
+    })?;
     
     // Get the inner pairs of the document rule
     if let Some(document_pair) = pairs.next() {
@@ -410,7 +418,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
                 Ok(Member::RequiresStatement(parse_requires_statement(pair.into_inner(), source)?))
             }
             // These are recognized but not fully parsed yet - just skip them for now
-            Rule::flow_statement | Rule::assign_statement | Rule::transition_statement |
+            Rule::flow_statement | Rule::succession_flow_statement | Rule::assign_statement | Rule::transition_statement |
             Rule::accept_statement | Rule::state_machine_statement | Rule::variation_statement |
             Rule::state_def | Rule::exhibit_state | Rule::subject_statement |
             Rule::end_statement | Rule::dependency_statement | Rule::occurrence_def | Rule::occurrence_usage |
@@ -781,7 +789,7 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
 /// Parse a metadata annotation (e.g., @Layer(name = "02_SystemContext"))
 fn parse_metadata_annotation(pair: Pair<'_, Rule>) -> Result<MetadataAnnotation> {
     let mut inner = pair.into_inner();
-    let name_pair = inner.next().ok_or_else(|| ParseError::PestError("Metadata annotation missing name".to_string()))?;
+    let name_pair = inner.next().ok_or_else(|| ParseError::PestError("Metadata annotation missing name".to_string(), None))?;
     let name = name_pair.as_str().to_string();
     
     let mut attributes = HashMap::new();

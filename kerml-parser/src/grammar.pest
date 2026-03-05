@@ -131,6 +131,7 @@ member = _{
     accept_statement |
     transition_statement |
     flow_statement |
+    succession_flow_statement |
     analysis_def |
     concern_statement |
     message_statement |
@@ -544,6 +545,7 @@ statement = _{
     return_statement |
     bind_statement |
     flow_statement |
+    succession_flow_statement |
     event_occurrence_statement |
     require_constraint_statement |
     require_statement |
@@ -1036,6 +1038,17 @@ flow_statement = {
     ("{" ~ member* ~ "}" | ";")) |
     ("flow" ~ (string_literal ~ ("." ~ name)+ | qualified_name | expr_value) ~ ("to" ~ (string_literal ~ ("." ~ name)+ | qualified_name | expr_value))? ~
     ("{" ~ member* ~ "}" | ";"))
+}
+
+// Succession flow statement (SysML v2: succession flow like streaming flow, with ordering constraint)
+// succession flow [name] from expr to expr;  or  succession flow expr to expr;
+succession_flow_statement = {
+    "succession" ~ "flow" ~
+    (
+        (name? ~ "from" ~ (string_literal ~ ("." ~ name)+ | qualified_name | expr_value) ~ "to" ~ (string_literal ~ ("." ~ name)+ | qualified_name | expr_value)) |
+        ((string_literal ~ ("." ~ name)+ | qualified_name | expr_value) ~ "to" ~ (string_literal ~ ("." ~ name)+ | qualified_name | expr_value))
+    ) ~
+    ("{" ~ member* ~ "}" | ";")
 }
 
 // Event occurrence statement - supports both "event occurrence name" and "event name.sourceEvent"

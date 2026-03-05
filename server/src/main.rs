@@ -1,6 +1,7 @@
 //! SysML v2 language server (LSP over stdio).
 
 mod language;
+mod semantic_tokens;
 
 use kerml_parser::ast::SysMLDocument;
 use std::sync::Arc;
@@ -47,6 +48,7 @@ fn apply_incremental_change(text: &str, range: &Range, new_text: &str) -> Option
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
+use semantic_tokens::{legend, semantic_tokens_full, semantic_tokens_range};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use walkdir::WalkDir;
 
@@ -121,6 +123,14 @@ impl LanguageServer for Backend {
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
+                        work_done_progress_options: WorkDoneProgressOptions::default(),
+                        legend: legend(),
+                        range: Some(true),
+                        full: Some(SemanticTokensFullOptions::Bool(true)),
+                    }),
+                ),
                 ..ServerCapabilities::default()
             },
         })
@@ -610,6 +620,43 @@ impl LanguageServer for Backend {
         drop(state);
         Ok(Some(format_document(&text, &params.options)))
     }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let uri = params.text_document.uri;
+        let state = self.state.read().await;
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
+            None => return Ok(None),
+        };
+        drop(state);
+        let tokens = semantic_tokens_full(&text);
+        Ok(Some(SemanticTokensResult::Tokens(tokens)))
+    }
+
+    async fn semantic_tokens_range(
+        &self,
+        params: SemanticTokensRangeParams,
+    ) -> Result<Option<SemanticTokensRangeResult>> {
+        let uri = params.text_document.uri;
+        let range = params.range;
+        let state = self.state.read().await;
+        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
+            None => return Ok(None),
+        };
+        drop(state);
+        let tokens = semantic_tokens_range(
+            &text,
+            range.start.line,
+            range.start.character,
+            range.end.line,
+            range.end.character,
+        );
+        Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
+    }
 }
 
 impl Backend {
@@ -622,10 +669,13 @@ impl Backend {
         match kerml_parser::parse_sysml(text) {
             Ok(_) => {}
             Err(e) => {
+                let (line, character) = e
+                    .position()
+                    .unwrap_or((0, 0));
                 diagnostics.push(Diagnostic {
                     range: Range {
-                        start: Position::new(0, 0),
-                        end: Position::new(0, 0),
+                        start: Position::new(line, character),
+                        end: Position::new(line, character),
                     },
                     severity: Some(DiagnosticSeverity::ERROR),
                     code: None,
