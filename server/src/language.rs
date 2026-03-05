@@ -337,6 +337,429 @@ pub fn document_symbols_to_workspace_symbols(
     out
 }
 
+/// Workspace-wide symbol entry: one definable name with location and semantic info.
+#[derive(Debug, Clone)]
+pub struct SymbolEntry {
+    pub name: String,
+    pub uri: Url,
+    pub range: Range,
+    pub kind: SymbolKind,
+    pub container_name: Option<String>,
+    pub detail: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Collects a flat list of symbol entries from a parsed document for the symbol table.
+pub fn collect_symbol_entries(doc: &SysMLDocument, uri: &Url) -> Vec<SymbolEntry> {
+    let mut out = Vec::new();
+    for pkg in &doc.packages {
+        symbol_entries_from_package(pkg, uri, None, &mut out);
+    }
+    out
+}
+
+fn symbol_entries_from_package(
+    pkg: &kerml_parser::ast::Package,
+    uri: &Url,
+    container: Option<&str>,
+    out: &mut Vec<SymbolEntry>,
+) {
+    let name = if pkg.name.is_empty() {
+        "(top level)"
+    } else {
+        pkg.name.as_str()
+    };
+    let selection_range = pkg
+        .name_position
+        .as_ref()
+        .map(source_position_to_range)
+        .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+    let range = pkg
+        .range
+        .as_ref()
+        .map(source_range_to_range)
+        .unwrap_or(selection_range);
+    let description = format!("package '{}'", pkg.name);
+    out.push(SymbolEntry {
+        name: name.to_string(),
+        uri: uri.clone(),
+        range,
+        kind: SymbolKind::MODULE,
+        container_name: container.map(String::from),
+        detail: Some("package".to_string()),
+        description: Some(description),
+    });
+    for m in &pkg.members {
+        symbol_entries_from_member(m, uri, Some(name), out);
+    }
+}
+
+fn symbol_entries_from_member(
+    member: &Member,
+    uri: &Url,
+    container: Option<&str>,
+    out: &mut Vec<SymbolEntry>,
+) {
+    use kerml_parser::ast::Member as M;
+    match member {
+        M::PartDef(p) => {
+            let selection_range = p
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = p
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let description = format!(
+                "part def '{}'{}",
+                p.name,
+                p.type_ref
+                    .as_ref()
+                    .map(|t| format!(" : {}", t))
+                    .unwrap_or_else(|| {
+                        p.specializes
+                            .as_ref()
+                            .map(|s| format!(" :> {}", s))
+                            .unwrap_or_default()
+                    })
+            );
+            out.push(SymbolEntry {
+                name: p.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::CLASS,
+                container_name: container.map(String::from),
+                detail: Some("part def".to_string()),
+                description: Some(description),
+            });
+            for m in &p.members {
+                symbol_entries_from_member(m, uri, Some(&p.name), out);
+            }
+        }
+        M::PartUsage(p) => {
+            let name = p.name.as_deref().unwrap_or("(anonymous)");
+            let selection_range = p
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = p
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            if let Some(ref n) = p.name {
+                let description = format!(
+                    "part usage '{}'{}",
+                    n,
+                    p.type_ref
+                        .as_ref()
+                        .map(|t| format!(" : {}", t))
+                        .unwrap_or_else(|| {
+                            p.specializes
+                                .as_ref()
+                                .map(|s| format!(" :> {}", s))
+                                .unwrap_or_default()
+                        })
+                );
+                out.push(SymbolEntry {
+                    name: name.to_string(),
+                    uri: uri.clone(),
+                    range,
+                    kind: SymbolKind::VARIABLE,
+                    container_name: container.map(String::from),
+                    detail: Some("part".to_string()),
+                    description: Some(description),
+                });
+            }
+            for m in &p.members {
+                symbol_entries_from_member(m, uri, Some(name), out);
+            }
+        }
+        M::AttributeDef(a) => {
+            let selection_range = a
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = a
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let description = format!(
+                "attribute def '{}'{}",
+                a.name,
+                a.type_ref
+                    .as_ref()
+                    .map(|t| format!(" : {}", t))
+                    .unwrap_or_else(|| {
+                        a.specializes
+                            .as_ref()
+                            .map(|s| format!(" :> {}", s))
+                            .unwrap_or_default()
+                    })
+            );
+            out.push(SymbolEntry {
+                name: a.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::PROPERTY,
+                container_name: container.map(String::from),
+                detail: Some("attribute def".to_string()),
+                description: Some(description),
+            });
+        }
+        M::AttributeUsage(a) => {
+            let selection_range = a
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = a
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let description = format!(
+                "attribute usage '{}'{}",
+                a.name,
+                a.type_ref
+                    .as_ref()
+                    .map(|t| format!(" : {}", t))
+                    .unwrap_or_default()
+            );
+            out.push(SymbolEntry {
+                name: a.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::PROPERTY,
+                container_name: container.map(String::from),
+                detail: Some("attribute".to_string()),
+                description: Some(description),
+            });
+        }
+        M::PortDef(p) => {
+            let selection_range = p
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = p
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let description = format!(
+                "port def '{}'{}",
+                p.name,
+                p.type_ref
+                    .as_ref()
+                    .map(|t| format!(" : {}", t))
+                    .unwrap_or_default()
+            );
+            out.push(SymbolEntry {
+                name: p.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::INTERFACE,
+                container_name: container.map(String::from),
+                detail: Some("port def".to_string()),
+                description: Some(description),
+            });
+            for m in &p.members {
+                symbol_entries_from_member(m, uri, Some(&p.name), out);
+            }
+        }
+        M::PortUsage(p) => {
+            let name = p.name.as_deref().unwrap_or("(anonymous)");
+            let selection_range = p
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = p
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            if let Some(ref n) = p.name {
+                out.push(SymbolEntry {
+                    name: name.to_string(),
+                    uri: uri.clone(),
+                    range,
+                    kind: SymbolKind::INTERFACE,
+                    container_name: container.map(String::from),
+                    detail: Some("port".to_string()),
+                    description: Some(format!("port usage '{}'", n)),
+                });
+            }
+            for m in &p.members {
+                symbol_entries_from_member(m, uri, Some(name), out);
+            }
+        }
+        M::InterfaceDef(i) => {
+            let selection_range = i
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = i
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            out.push(SymbolEntry {
+                name: i.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::INTERFACE,
+                container_name: container.map(String::from),
+                detail: Some("interface".to_string()),
+                description: Some(format!("interface def '{}'", i.name)),
+            });
+            for m in &i.members {
+                symbol_entries_from_member(m, uri, Some(&i.name), out);
+            }
+        }
+        M::ConnectionUsage(c) => {
+            if let (Some(ref name), Some(ref pos)) = (&c.name, &c.name_position) {
+                let selection_range = source_position_to_range(pos);
+                let range = c
+                    .range
+                    .as_ref()
+                    .map(source_range_to_range)
+                    .unwrap_or(selection_range);
+                out.push(SymbolEntry {
+                    name: name.clone(),
+                    uri: uri.clone(),
+                    range,
+                    kind: SymbolKind::VARIABLE,
+                    container_name: container.map(String::from),
+                    detail: Some("connection".to_string()),
+                    description: Some(format!("connection '{}'", name)),
+                });
+            }
+        }
+        M::ItemDef(i) => {
+            let selection_range = i
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = i
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            out.push(SymbolEntry {
+                name: i.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::CONSTANT,
+                container_name: container.map(String::from),
+                detail: Some("item def".to_string()),
+                description: Some(format!("item def '{}'", i.name)),
+            });
+            for m in &i.members {
+                symbol_entries_from_member(m, uri, Some(&i.name), out);
+            }
+        }
+        M::ItemUsage(i) => {
+            let selection_range = i
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = i
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            out.push(SymbolEntry {
+                name: i.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::CONSTANT,
+                container_name: container.map(String::from),
+                detail: Some("item".to_string()),
+                description: Some(format!("item usage '{}'", i.name)),
+            });
+        }
+        M::RequirementDef(r) => {
+            let selection_range = r
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = r
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            out.push(SymbolEntry {
+                name: r.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::STRING,
+                container_name: container.map(String::from),
+                detail: Some("requirement def".to_string()),
+                description: Some(format!("requirement def '{}'", r.name)),
+            });
+            for m in &r.members {
+                symbol_entries_from_member(m, uri, Some(&r.name), out);
+            }
+        }
+        M::RequirementUsage(r) => {
+            let selection_range = r
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = r
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            out.push(SymbolEntry {
+                name: r.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::STRING,
+                container_name: container.map(String::from),
+                detail: Some("requirement".to_string()),
+                description: Some(format!("requirement usage '{}'", r.name)),
+            });
+        }
+        M::ActionDef(a) => {
+            let selection_range = a
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = a
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            out.push(SymbolEntry {
+                name: a.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::FUNCTION,
+                container_name: container.map(String::from),
+                detail: Some("action def".to_string()),
+                description: Some(format!("action def '{}'", a.name)),
+            });
+        }
+        M::Package(p) => symbol_entries_from_package(p, uri, container, out),
+        _ => {}
+    }
+}
+
 fn document_symbol_from_package(pkg: &kerml_parser::ast::Package) -> Option<DocumentSymbol> {
     let name = if pkg.name.is_empty() {
         "(top level)"
@@ -993,6 +1416,7 @@ mod tests {
                         is_abstract: false,
                         specializes: None,
                         type_ref: None,
+                        type_ref_position: None,
                         multiplicity: None,
                         ordered: false,
                         metadata: vec![],
@@ -1108,6 +1532,43 @@ mod tests {
         assert_eq!(children[0].name, "Engine");
         assert_eq!(children[0].detail.as_deref(), Some("part def"));
         assert_eq!(children[0].kind, SymbolKind::CLASS);
+    }
+
+    #[test]
+    fn test_collect_symbol_entries_empty() {
+        let doc = SysMLDocument::default();
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let entries = collect_symbol_entries(&doc, &uri);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_collect_symbol_entries_package() {
+        let text = "package P { }";
+        let doc = kerml_parser::parse_sysml(text).expect("parse");
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let entries = collect_symbol_entries(&doc, &uri);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "P");
+        assert_eq!(entries[0].detail.as_deref(), Some("package"));
+        assert_eq!(entries[0].kind, SymbolKind::MODULE);
+        assert_eq!(entries[0].uri, uri);
+        assert!(entries[0].description.as_deref().unwrap().contains("package"));
+    }
+
+    #[test]
+    fn test_collect_symbol_entries_nested() {
+        let text = "package P { part def Engine { } }";
+        let doc = kerml_parser::parse_sysml(text).expect("parse");
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let entries = collect_symbol_entries(&doc, &uri);
+        assert_eq!(entries.len(), 2); // package P + part def Engine
+        assert_eq!(entries[0].name, "P");
+        assert_eq!(entries[0].container_name, None);
+        assert_eq!(entries[1].name, "Engine");
+        assert_eq!(entries[1].container_name.as_deref(), Some("P"));
+        assert_eq!(entries[1].detail.as_deref(), Some("part def"));
+        assert_eq!(entries[1].kind, SymbolKind::CLASS);
     }
 
     #[test]

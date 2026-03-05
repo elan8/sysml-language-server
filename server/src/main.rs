@@ -53,9 +53,9 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 use walkdir::WalkDir;
 
 use language::{
-    collect_definition_ranges, collect_document_symbols, collect_named_elements, completion_prefix,
-    document_symbols_to_workspace_symbols, find_reference_ranges, format_document, keyword_doc,
-    line_prefix_at_position, suggest_wrap_in_package, sysml_keywords, word_at_position,
+    collect_definition_ranges, collect_document_symbols, collect_symbol_entries, completion_prefix,
+    find_reference_ranges, format_document, keyword_doc, line_prefix_at_position,
+    suggest_wrap_in_package, sysml_keywords, word_at_position, SymbolEntry,
 };
 
 /// Per-file index entry: content and optional parsed AST (invalidated when content changes).
@@ -71,6 +71,8 @@ struct ServerState {
     workspace_roots: Vec<Url>,
     /// One source of truth: URI -> (content, parsed). Open docs and workspace-scanned files.
     index: std::collections::HashMap<Url, IndexEntry>,
+    /// Workspace-wide symbol table: flat list of definable symbols, updated when index changes.
+    symbol_table: Vec<SymbolEntry>,
 }
 
 impl Default for ServerState {
@@ -78,8 +80,26 @@ impl Default for ServerState {
         Self {
             workspace_roots: Vec::new(),
             index: std::collections::HashMap::new(),
+            symbol_table: Vec::new(),
         }
     }
+}
+
+/// Removes all symbol table entries for `uri`, then appends `new_entries` if provided.
+fn update_symbol_table_for_uri(
+    state: &mut ServerState,
+    uri: &Url,
+    new_entries: Option<&[SymbolEntry]>,
+) {
+    state.symbol_table.retain(|e| e.uri != *uri);
+    if let Some(entries) = new_entries {
+        state.symbol_table.extend(entries.iter().cloned());
+    }
+}
+
+/// Removes all symbol table entries for `uri`.
+fn remove_symbol_table_entries_for_uri(state: &mut ServerState, uri: &Url) {
+    state.symbol_table.retain(|e| e.uri != *uri);
 }
 
 #[derive(Debug)]
@@ -179,13 +199,15 @@ impl LanguageServer for Backend {
             let mut st = state.write().await;
             for (uri, content) in entries {
                 let parsed = kerml_parser::parse_sysml(&content).ok();
+                let new_entries = parsed.as_ref().map(|doc| collect_symbol_entries(doc, &uri));
                 st.index.insert(
-                    uri,
+                    uri.clone(),
                     IndexEntry {
                         content,
                         parsed,
                     },
                 );
+                update_symbol_table_for_uri(&mut st, &uri, new_entries.as_deref());
             }
         });
     }
@@ -200,6 +222,7 @@ impl LanguageServer for Backend {
         let parsed = kerml_parser::parse_sysml(&text).ok();
         {
             let mut state = self.state.write().await;
+            let new_entries = parsed.as_ref().map(|doc| collect_symbol_entries(doc, &uri));
             state.index.insert(
                 uri.clone(),
                 IndexEntry {
@@ -207,6 +230,7 @@ impl LanguageServer for Backend {
                     parsed,
                 },
             );
+            update_symbol_table_for_uri(&mut state, &uri, new_entries.as_deref());
         }
         self.publish_diagnostics_for_document(uri, &text).await;
     }
@@ -215,7 +239,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         {
             let mut state = self.state.write().await;
-            if let Some(entry) = state.index.get_mut(&uri) {
+            let (should_update, new_entries) = if let Some(entry) = state.index.get_mut(&uri) {
                 for change in params.content_changes {
                     if let Some(range) = change.range {
                         if let Some(new_text) =
@@ -228,6 +252,16 @@ impl LanguageServer for Backend {
                     }
                 }
                 entry.parsed = kerml_parser::parse_sysml(&entry.content).ok();
+                let new_entries = entry
+                    .parsed
+                    .as_ref()
+                    .map(|doc| collect_symbol_entries(doc, &uri));
+                (true, new_entries)
+            } else {
+                (false, None)
+            };
+            if should_update {
+                update_symbol_table_for_uri(&mut state, &uri, new_entries.as_deref());
             }
         }
         let state = self.state.read().await;
@@ -259,14 +293,22 @@ impl LanguageServer for Backend {
                 if let Ok(path) = event.uri.to_file_path() {
                     if let Ok(content) = tokio::fs::read_to_string(&path).await {
                         let parsed = kerml_parser::parse_sysml(&content).ok();
+                        let new_entries =
+                            parsed.as_ref().map(|doc| collect_symbol_entries(doc, &event.uri));
                         state.index.insert(
                             event.uri.clone(),
                             IndexEntry { content, parsed },
+                        );
+                        update_symbol_table_for_uri(
+                            &mut state,
+                            &event.uri,
+                            new_entries.as_deref(),
                         );
                     }
                 }
             } else if event.typ == FileChangeType::DELETED {
                 state.index.remove(&event.uri);
+                remove_symbol_table_entries_for_uri(&mut state, &event.uri);
             }
         }
     }
@@ -300,36 +342,36 @@ impl LanguageServer for Backend {
             }));
         }
 
-        // Current file first, then rest of index (workspace-aware).
-        if let Some(entry) = state.index.get(&uri) {
-            if let Some(ref ast) = entry.parsed {
-                let elements = collect_named_elements(ast);
-                if let Some((_, desc)) = elements.into_iter().find(|(name, _)| name == &word) {
-                    return Ok(Some(Hover {
-                        contents: HoverContents::Scalar(MarkedString::String(desc)),
-                        range: Some(range),
-                    }));
-                }
-            }
+        // Look up in symbol table: current file first, then others.
+        if let Some(entry) = state
+            .symbol_table
+            .iter()
+            .find(|e| e.name == word && e.uri == uri)
+        {
+            let contents = entry
+                .description
+                .clone()
+                .unwrap_or_else(|| entry.name.clone());
+            return Ok(Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(contents)),
+                range: Some(range),
+            }));
         }
-        for (u, entry) in state.index.iter() {
-            if *u == uri {
-                continue;
-            }
-            if let Some(ref ast) = entry.parsed {
-                let elements = collect_named_elements(ast);
-                if let Some((_, desc)) = elements.into_iter().find(|(name, _)| name == &word) {
-                    let location_note = format!("Defined in {}", u.path());
-                    return Ok(Some(Hover {
-                        contents: HoverContents::Scalar(MarkedString::String(format!(
-                            "{}\n\n{}",
-                            desc,
-                            location_note
-                        ))),
-                        range: Some(range),
-                    }));
-                }
-            }
+        if let Some(entry) = state
+            .symbol_table
+            .iter()
+            .find(|e| e.name == word && e.uri != uri)
+        {
+            let contents = entry.description.clone().unwrap_or_else(|| entry.name.clone());
+            let location_note = format!("Defined in {}", entry.uri.path());
+            return Ok(Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(format!(
+                    "{}\n\n{}",
+                    contents,
+                    location_note
+                ))),
+                range: Some(range),
+            }));
         }
 
         Ok(None)
@@ -360,19 +402,14 @@ impl LanguageServer for Backend {
         }
 
         let mut seen = std::collections::HashSet::<String>::new();
-        for entry in state.index.values() {
-            if let Some(ref ast) = entry.parsed {
-                let elements = collect_named_elements(ast);
-                for (name, desc) in elements {
-                    if (prefix.is_empty() || name.starts_with(prefix)) && seen.insert(name.clone()) {
-                        items.push(CompletionItem {
-                            label: name,
-                            kind: Some(CompletionItemKind::REFERENCE),
-                            detail: Some(desc),
-                            ..Default::default()
-                        });
-                    }
-                }
+        for entry in &state.symbol_table {
+            if (prefix.is_empty() || entry.name.starts_with(prefix)) && seen.insert(entry.name.clone()) {
+                items.push(CompletionItem {
+                    label: entry.name.clone(),
+                    kind: Some(CompletionItemKind::REFERENCE),
+                    detail: entry.description.clone().or_else(|| entry.detail.clone()),
+                    ..Default::default()
+                });
             }
         }
 
@@ -399,31 +436,26 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        // Same file first, then rest of workspace.
-        if let Some(entry) = state.index.get(&uri) {
-            if let Some(ref doc) = entry.parsed {
-                let defs = collect_definition_ranges(doc);
-                if let Some((_, range)) = defs.into_iter().find(|(name, _)| name == &word) {
-                    return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                        uri: uri.clone(),
-                        range,
-                    })));
-                }
-            }
+        // Look up in symbol table: same file first, then rest of workspace.
+        if let Some(entry) = state
+            .symbol_table
+            .iter()
+            .find(|e| e.name == word && e.uri == uri)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: entry.uri.clone(),
+                range: entry.range,
+            })));
         }
-        for (u, entry) in state.index.iter() {
-            if *u == uri {
-                continue;
-            }
-            if let Some(ref doc) = entry.parsed {
-                let defs = collect_definition_ranges(doc);
-                if let Some((_, range)) = defs.into_iter().find(|(name, _)| name == &word) {
-                    return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                        uri: u.clone(),
-                        range,
-                    })));
-                }
-            }
+        if let Some(entry) = state
+            .symbol_table
+            .iter()
+            .find(|e| e.name == word && e.uri != uri)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: entry.uri.clone(),
+                range: entry.range,
+            })));
         }
         Ok(None)
     }
@@ -571,20 +603,22 @@ impl LanguageServer for Backend {
     ) -> Result<Option<Vec<tower_lsp::lsp_types::SymbolInformation>>> {
         let query = params.query.to_lowercase();
         let state = self.state.read().await;
-        let mut out = Vec::new();
-        for (uri, entry) in state.index.iter() {
-            let doc = match &entry.parsed {
-                Some(d) => d,
-                None => continue,
-            };
-            let symbols = collect_document_symbols(doc);
-            let infos = document_symbols_to_workspace_symbols(uri, &symbols);
-            for info in infos {
-                if query.is_empty() || info.name.to_lowercase().contains(&query) {
-                    out.push(info);
-                }
-            }
-        }
+        let out: Vec<SymbolInformation> = state
+            .symbol_table
+            .iter()
+            .filter(|e| query.is_empty() || e.name.to_lowercase().contains(&query))
+            .map(|e| SymbolInformation {
+                name: e.name.clone(),
+                kind: e.kind,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: e.uri.clone(),
+                    range: e.range,
+                },
+                container_name: e.container_name.clone(),
+            })
+            .collect();
         Ok(Some(out))
     }
 
