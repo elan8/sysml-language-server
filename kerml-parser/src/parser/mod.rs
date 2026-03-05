@@ -492,7 +492,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
                 Ok(Member::RequiresStatement(parse_requires_statement(pair.into_inner(), source)?))
             }
             // These are recognized but not fully parsed yet - just skip them for now
-            Rule::flow_statement | Rule::succession_flow_statement | Rule::assign_statement | Rule::transition_statement |
+            Rule::flow_statement | Rule::succession_statement | Rule::succession_flow_statement | Rule::assign_statement | Rule::transition_statement |
             Rule::accept_statement | Rule::state_machine_statement | Rule::variation_statement |
             Rule::send_node_statement |
             Rule::state_def | Rule::exhibit_state | Rule::subject_statement |

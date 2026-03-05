@@ -47,14 +47,28 @@ fn validation_dir() -> PathBuf {
     sysml_v2_release_root().join("sysml").join("src").join("validation")
 }
 
-/// Path to the Vehicle Example Annex A file (challenging SysML v2 model used for parser integration testing).
-pub fn vehicle_example_annex_a_path() -> PathBuf {
+/// Path to the Vehicle Example directory under SysML v2 Release examples.
+pub fn vehicle_example_dir() -> PathBuf {
     sysml_v2_release_root()
         .join("sysml")
         .join("src")
         .join("examples")
         .join("Vehicle Example")
-        .join("SysML v2 Spec Annex A SimpleVehicleModel.sysml")
+}
+
+/// Path to the Vehicle Example Annex A file (challenging SysML v2 model used for parser integration testing).
+pub fn vehicle_example_annex_a_path() -> PathBuf {
+    vehicle_example_dir().join("SysML v2 Spec Annex A SimpleVehicleModel.sysml")
+}
+
+/// Paths to the Vehicle Example definitions, individuals, and usages files (integration test).
+pub fn vehicle_example_definition_paths() -> Vec<PathBuf> {
+    let dir = vehicle_example_dir();
+    vec![
+        dir.join("VehicleDefinitions.sysml"),
+        dir.join("VehicleIndividuals.sysml"),
+        dir.join("VehicleUsages.sysml"),
+    ]
 }
 
 /// Find all .sysml files in a directory recursively
@@ -125,6 +139,48 @@ mod tests {
             !doc.packages.is_empty(),
             "Vehicle Example should produce at least one package in the AST"
         );
+    }
+
+    /// Integration test: parse Vehicle Example VehicleDefinitions.sysml, VehicleIndividuals.sysml, and VehicleUsages.sysml.
+    #[test]
+    fn test_vehicle_example_definitions_individuals_usages() {
+        init_test_logger();
+
+        let paths = vehicle_example_definition_paths();
+        for path in &paths {
+            if !path.exists() {
+                debug!(
+                    "Vehicle Example file not found: {:?}. Set {} or place SysML-v2-Release in temp/SysML-v2-Release-2026-01",
+                    path,
+                    super::SYSML_V2_RELEASE_DIR_ENV
+                );
+                return;
+            }
+        }
+
+        for path in &paths {
+            let content = fs::read_to_string(path).expect("read Vehicle Example file");
+            let doc = match parse_sysml(&content) {
+                Ok(d) => d,
+                Err(e) => {
+                    info!(
+                        "Vehicle Example {} parse error: {}",
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        e
+                    );
+                    panic!(
+                        "Vehicle Example {} should parse without error: {}",
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        e
+                    );
+                }
+            };
+            assert!(
+                !doc.packages.is_empty() || !doc.imports.is_empty(),
+                "Vehicle Example {} should produce at least one package or import",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            );
+        }
     }
 
     /// Test all validation files
