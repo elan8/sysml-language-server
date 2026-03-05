@@ -1,15 +1,19 @@
 //! Semantic tokenization for SysML: classifies tokens so the editor can apply
-//! semantic highlighting (keyword, string, number, comment, operator, variable, type).
+//! semantic highlighting (keyword, string, number, comment, operator, variable, type, namespace,
+//! class, interface, property, function).
 //!
-//! When the parser has successfully built an AST, we use it to refine type references
-//! (parser knows exactly which identifiers are types); otherwise we use heuristics (e.g. after `:`).
+//! We use the AST when available: the parser provides (SourceRange, SemanticRole) for definition
+//! names, type references, etc., and we override the lexer’s token types for those spans. This
+//! matches how other language servers (C#, TypeScript, Rust) drive semantic highlighting from
+//! the AST. When the parse fails, we fall back to lexer-only heuristics (e.g. identifier after
+//! `:` → type, identifier after `package` → namespace).
 
-use kerml_parser::ast::SourceRange;
+use kerml_parser::ast::{SemanticRole, SourceRange};
 use tower_lsp::lsp_types::{
     SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
 };
 
-/// Legend: token types we emit (indices 0..=6).
+/// Legend: token types we emit (indices 0..=11). Order must match the TYPE_* constants below.
 pub fn legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
         token_types: vec![
@@ -20,6 +24,11 @@ pub fn legend() -> SemanticTokensLegend {
             SemanticTokenType::OPERATOR,
             SemanticTokenType::VARIABLE,
             SemanticTokenType::TYPE,
+            SemanticTokenType::NAMESPACE,
+            SemanticTokenType::CLASS,
+            SemanticTokenType::INTERFACE,
+            SemanticTokenType::PROPERTY,
+            SemanticTokenType::FUNCTION,
         ],
         token_modifiers: vec![],
     }
@@ -32,6 +41,31 @@ const TYPE_COMMENT: u32 = 3;
 const TYPE_OPERATOR: u32 = 4;
 const TYPE_VARIABLE: u32 = 5;
 const TYPE_TYPE: u32 = 6;
+const TYPE_NAMESPACE: u32 = 7;
+const TYPE_CLASS: u32 = 8;
+const TYPE_INTERFACE: u32 = 9;
+const TYPE_PROPERTY: u32 = 10;
+const TYPE_FUNCTION: u32 = 11;
+
+/// Map parser SemanticRole to legend index for use with apply_ast_semantic_ranges.
+pub fn semantic_role_to_type_index(role: SemanticRole) -> u32 {
+    match role {
+        SemanticRole::Type => TYPE_TYPE,
+        SemanticRole::Namespace => TYPE_NAMESPACE,
+        SemanticRole::Class => TYPE_CLASS,
+        SemanticRole::Interface => TYPE_INTERFACE,
+        SemanticRole::Property => TYPE_PROPERTY,
+        SemanticRole::Function => TYPE_FUNCTION,
+    }
+}
+
+/// Build (SourceRange, token_type_index) from AST for semantic_tokens_full/range.
+pub fn ast_semantic_ranges(doc: &kerml_parser::ast::SysMLDocument) -> Vec<(SourceRange, u32)> {
+    kerml_parser::collect_semantic_ranges(doc)
+        .into_iter()
+        .map(|(r, role)| (r, semantic_role_to_type_index(role)))
+        .collect()
+}
 
 static KEYWORDS: &[&str] = &[
     "package", "library", "import", "part", "def", "attribute", "port", "connection",
@@ -61,6 +95,7 @@ fn tokenize_line(line: &str, line_index: u32, in_block_comment: bool) -> (Vec<(u
     let mut still_in_block_comment = in_block_comment;
     let mut already_continued_block = false;
     let mut last_was_colon = false;
+    let mut expect_package_name = false;
 
     while i < n {
         // If we're inside a block comment (from a previous line), look for */ or treat rest of line as comment (once per line)
@@ -263,7 +298,13 @@ fn tokenize_line(line: &str, line_index: u32, in_block_comment: bool) -> (Vec<(u
             let len = (i - start) as u32;
             let token_type = if is_keyword(&word) {
                 last_was_colon = false;
+                if word == "package" {
+                    expect_package_name = true;
+                }
                 TYPE_KEYWORD
+            } else if expect_package_name {
+                expect_package_name = false;
+                TYPE_NAMESPACE
             } else if last_was_colon {
                 last_was_colon = false;
                 TYPE_TYPE
@@ -289,38 +330,45 @@ fn tokenize_line(line: &str, line_index: u32, in_block_comment: bool) -> (Vec<(u
     (tokens, still_in_block_comment)
 }
 
-/// Returns true if the token span is entirely inside one of the type ref ranges.
-fn token_in_type_ref_range(
+/// Returns the AST semantic type for a token span if it is entirely inside one of the given ranges.
+fn token_ast_type(
     line: u32,
     start_char: u32,
     length: u32,
-    type_ref_ranges: &[SourceRange],
-) -> bool {
+    ast_ranges: &[(SourceRange, u32)],
+) -> Option<u32> {
     let end_char = start_char + length;
-    for r in type_ref_ranges {
+    for (r, token_type) in ast_ranges {
         if line >= r.start_line && line <= r.end_line {
-            let range_start = if line == r.start_line { r.start_character } else { 0 };
+            let range_start = if line == r.start_line {
+                r.start_character
+            } else {
+                0
+            };
             let range_end = if line == r.end_line {
                 r.end_character
             } else {
                 u32::MAX
             };
             if start_char >= range_start && end_char <= range_end {
-                return true;
+                return Some(*token_type);
             }
         }
     }
-    false
+    None
 }
 
-/// Refine variable tokens to type when they fall inside parser-known type ref ranges.
-fn apply_type_ref_ranges(
+/// Override token types using AST-derived (range, type) pairs. Only VARIABLE and NAMESPACE
+/// tokens are considered for override so we never overwrite keywords, strings, etc.
+fn apply_ast_semantic_ranges(
     tokens: &mut [(u32, u32, u32, u32)],
-    type_ref_ranges: &[SourceRange],
+    ast_ranges: &[(SourceRange, u32)],
 ) {
     for (line, start, len, type_idx) in tokens.iter_mut() {
-        if *type_idx == TYPE_VARIABLE && token_in_type_ref_range(*line, *start, *len, type_ref_ranges) {
-            *type_idx = TYPE_TYPE;
+        if *type_idx == TYPE_VARIABLE || *type_idx == TYPE_NAMESPACE {
+            if let Some(ast_type) = token_ast_type(*line, *start, *len, ast_ranges) {
+                *type_idx = ast_type;
+            }
         }
     }
 }
@@ -353,11 +401,11 @@ fn encode(tokens: &[(u32, u32, u32, u32)]) -> Vec<SemanticToken> {
 }
 
 /// Produce semantic tokens for the full document.
-/// When `type_ref_ranges` is Some (from a successful parse), those ranges classify
-/// identifiers as type; otherwise the lexer uses heuristics (e.g. identifier after `:`).
+/// When `ast_ranges` is Some (from a successful parse), those (range, token_type) pairs
+/// override variable/namespace tokens for AST-driven highlighting; otherwise the lexer uses heuristics.
 pub fn semantic_tokens_full(
     text: &str,
-    type_ref_ranges: Option<&[SourceRange]>,
+    ast_ranges: Option<&[(SourceRange, u32)]>,
 ) -> SemanticTokens {
     let mut all_tokens = Vec::new();
     let mut in_block_comment = false;
@@ -366,8 +414,8 @@ pub fn semantic_tokens_full(
         in_block_comment = still_in;
         all_tokens.extend(line_tokens);
     }
-    if let Some(ranges) = type_ref_ranges {
-        apply_type_ref_ranges(&mut all_tokens, ranges);
+    if let Some(ranges) = ast_ranges {
+        apply_ast_semantic_ranges(&mut all_tokens, ranges);
     }
     SemanticTokens {
         result_id: None,
@@ -387,14 +435,14 @@ fn block_comment_state_after_line(lines: &[&str], through_line: u32) -> bool {
 
 /// Produce semantic tokens for a range (for textDocument/semanticTokens/range).
 /// Only tokens that overlap the given range are included.
-/// When `type_ref_ranges` is Some, those ranges refine variable -> type.
+/// When `ast_ranges` is Some, those (range, type) pairs override variable/namespace tokens.
 pub fn semantic_tokens_range(
     text: &str,
     start_line: u32,
     start_character: u32,
     end_line: u32,
     end_character: u32,
-    type_ref_ranges: Option<&[SourceRange]>,
+    ast_ranges: Option<&[(SourceRange, u32)]>,
 ) -> SemanticTokens {
     let mut all_tokens = Vec::new();
     let lines: Vec<&str> = text.lines().collect();
@@ -427,8 +475,8 @@ pub fn semantic_tokens_range(
         }
     }
 
-    if let Some(ranges) = type_ref_ranges {
-        apply_type_ref_ranges(&mut all_tokens, ranges);
+    if let Some(ranges) = ast_ranges {
+        apply_ast_semantic_ranges(&mut all_tokens, ranges);
     }
 
     SemanticTokens {

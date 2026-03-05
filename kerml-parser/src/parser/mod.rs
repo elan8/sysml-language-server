@@ -228,15 +228,28 @@ fn parse_document(pairs: Pairs<'_, Rule>, source: &str) -> Result<SysMLDocument>
     Ok(SysMLDocument { imports, packages })
 }
 
-fn parse_import(pairs: Pairs<'_, Rule>, _source: &str) -> Result<Import> {
+fn parse_import(pairs: Pairs<'_, Rule>, source: &str) -> Result<Import> {
     let mut visibility = None;
     let mut path = String::new();
     let mut wildcard = false;
-    
+    let mut path_first_segment_position = None;
+
     for pair in pairs {
         match pair.as_rule() {
             Rule::name | Rule::qualified_name => {
-                path = pair.as_str().to_string();
+                let path_str = pair.as_str();
+                path = path_str.to_string();
+                // First segment is the package/namespace (e.g. "SI" in "SI::N", "ScalarFunctions" in "ScalarFunctions::*")
+                let first_segment_len: u32 = path_str
+                    .find("::")
+                    .map(|byte_i| path_str[..byte_i].chars().count())
+                    .unwrap_or_else(|| path_str.chars().count()) as u32;
+                let pos = span_to_position(pair.as_span(), source);
+                path_first_segment_position = Some(SourcePosition {
+                    line: pos.line,
+                    character: pos.character,
+                    length: first_segment_len,
+                });
             }
             _ => {
                 let text = pair.as_str();
@@ -250,8 +263,13 @@ fn parse_import(pairs: Pairs<'_, Rule>, _source: &str) -> Result<Import> {
             }
         }
     }
-    
-    Ok(Import { visibility, path, wildcard })
+
+    Ok(Import {
+        visibility,
+        path,
+        wildcard,
+        path_first_segment_position,
+    })
 }
 
 fn parse_package(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<Package> {

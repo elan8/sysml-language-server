@@ -20,5 +20,5 @@ mod validation_tests;
 
 pub use parser::{parse_sysml, parse_sysml_collect_errors};
 pub use error::{ParseError, Result};
-pub use ast::collect_type_ref_ranges;
+pub use ast::{collect_semantic_ranges, collect_type_ref_ranges, SemanticRole};
 

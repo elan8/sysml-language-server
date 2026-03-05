@@ -48,7 +48,7 @@ fn apply_incremental_change(text: &str, range: &Range, new_text: &str) -> Option
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
-use semantic_tokens::{legend, semantic_tokens_full, semantic_tokens_range};
+use semantic_tokens::{ast_semantic_ranges, legend, semantic_tokens_full, semantic_tokens_range};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use walkdir::WalkDir;
 
@@ -661,15 +661,15 @@ impl LanguageServer for Backend {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
         let state = self.state.read().await;
-        let (text, type_ref_ranges) = match state.index.get(&uri) {
+        let (text, ast_ranges) = match state.index.get(&uri) {
             Some(e) => (
                 e.content.clone(),
-                e.parsed.as_ref().map(kerml_parser::collect_type_ref_ranges),
+                e.parsed.as_ref().map(ast_semantic_ranges),
             ),
             None => return Ok(None),
         };
         drop(state);
-        let tokens = semantic_tokens_full(&text, type_ref_ranges.as_deref());
+        let tokens = semantic_tokens_full(&text, ast_ranges.as_deref());
         Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
 
@@ -680,10 +680,10 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let range = params.range;
         let state = self.state.read().await;
-        let (text, type_ref_ranges) = match state.index.get(&uri) {
+        let (text, ast_ranges) = match state.index.get(&uri) {
             Some(e) => (
                 e.content.clone(),
-                e.parsed.as_ref().map(kerml_parser::collect_type_ref_ranges),
+                e.parsed.as_ref().map(ast_semantic_ranges),
             ),
             None => return Ok(None),
         };
@@ -694,7 +694,7 @@ impl LanguageServer for Backend {
             range.start.character,
             range.end.line,
             range.end.character,
-            type_ref_ranges.as_deref(),
+            ast_ranges.as_deref(),
         );
         Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
     }

@@ -66,6 +66,10 @@ pub struct Import {
     pub path: String,
     /// Whether this is a wildcard import (import X::*)
     pub wildcard: bool,
+    /// Source position of the first segment of the path (the package/namespace being imported).
+    /// Used for semantic highlighting so "SI" in "import SI::N" is classified as namespace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_first_segment_position: Option<SourcePosition>,
 }
 
 /// A package declaration
@@ -562,74 +566,162 @@ pub enum Literal {
     Boolean(bool),
 }
 
-/// Collects all source ranges where a type reference appears in the document.
-/// Used by the language server to classify those spans as "type" for semantic highlighting.
-pub fn collect_type_ref_ranges(doc: &SysMLDocument) -> Vec<SourceRange> {
+/// Semantic role of an identifier for LSP semantic token highlighting.
+/// Maps to standard LSP SemanticTokenType so the editor can style namespaces, types, classes, etc. distinctly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticRole {
+    /// Type reference (e.g. after `:` or `:>`)
+    Type,
+    /// Package name (namespace)
+    Namespace,
+    /// Definition name that acts as a type/class (part def, item def)
+    Class,
+    /// Interface definition name
+    Interface,
+    /// Property/feature name (attribute, port)
+    Property,
+    /// Action/behavior name (action def)
+    Function,
+}
+
+/// Collects source ranges with their semantic role for AST-driven semantic highlighting.
+/// Returns (range, role) so the server can map roles to LSP token types and override lexer heuristics.
+pub fn collect_semantic_ranges(doc: &SysMLDocument) -> Vec<(SourceRange, SemanticRole)> {
     let mut out = Vec::new();
+    for imp in &doc.imports {
+        if let Some(ref pos) = imp.path_first_segment_position {
+            out.push((pos.to_range(), SemanticRole::Namespace));
+        }
+    }
     for pkg in &doc.packages {
-        collect_type_ref_ranges_members(&pkg.members, &mut out);
+        if let Some(ref pos) = pkg.name_position {
+            out.push((pos.to_range(), SemanticRole::Namespace));
+        }
+        for imp in &pkg.imports {
+            if let Some(ref pos) = imp.path_first_segment_position {
+                out.push((pos.to_range(), SemanticRole::Namespace));
+            }
+        }
+        collect_semantic_ranges_members(&pkg.members, &mut out);
     }
     out
 }
 
-fn collect_type_ref_ranges_members(members: &[Member], out: &mut Vec<SourceRange>) {
+fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRange, SemanticRole)>) {
     for m in members {
         match m {
-            Member::AttributeDef(a) => {
-                if let Some(ref pos) = a.type_ref_position {
-                    out.push(pos.to_range());
-                }
-                collect_type_ref_ranges_members(&a.members, out);
-            }
             Member::PartDef(p) => {
-                if let Some(ref pos) = p.type_ref_position {
-                    out.push(pos.to_range());
+                if let Some(ref pos) = p.name_position {
+                    out.push((pos.to_range(), SemanticRole::Class));
                 }
-                collect_type_ref_ranges_members(&p.members, out);
+                if let Some(ref pos) = p.type_ref_position {
+                    out.push((pos.to_range(), SemanticRole::Type));
+                }
+                collect_semantic_ranges_members(&p.members, out);
             }
             Member::PartUsage(p) => {
-                if let Some(ref pos) = p.type_ref_position {
-                    out.push(pos.to_range());
+                if let Some(ref pos) = p.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
                 }
-                collect_type_ref_ranges_members(&p.members, out);
+                if let Some(ref pos) = p.type_ref_position {
+                    out.push((pos.to_range(), SemanticRole::Type));
+                }
+                collect_semantic_ranges_members(&p.members, out);
+            }
+            Member::AttributeDef(a) => {
+                if let Some(ref pos) = a.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
+                if let Some(ref pos) = a.type_ref_position {
+                    out.push((pos.to_range(), SemanticRole::Type));
+                }
+                collect_semantic_ranges_members(&a.members, out);
+            }
+            Member::AttributeUsage(a) => {
+                if let Some(ref pos) = a.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
+                collect_semantic_ranges_members(&a.members, out);
             }
             Member::PortDef(p) => {
-                if let Some(ref pos) = p.type_ref_position {
-                    out.push(pos.to_range());
+                if let Some(ref pos) = p.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
                 }
-                collect_type_ref_ranges_members(&p.members, out);
+                if let Some(ref pos) = p.type_ref_position {
+                    out.push((pos.to_range(), SemanticRole::Type));
+                }
+                collect_semantic_ranges_members(&p.members, out);
             }
             Member::PortUsage(p) => {
-                if let Some(ref pos) = p.type_ref_position {
-                    out.push(pos.to_range());
+                if let Some(ref pos) = p.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
                 }
-                collect_type_ref_ranges_members(&p.members, out);
+                if let Some(ref pos) = p.type_ref_position {
+                    out.push((pos.to_range(), SemanticRole::Type));
+                }
+                collect_semantic_ranges_members(&p.members, out);
             }
             Member::InterfaceDef(i) => {
-                collect_type_ref_ranges_members(&i.members, out);
+                if let Some(ref pos) = i.name_position {
+                    out.push((pos.to_range(), SemanticRole::Interface));
+                }
+                collect_semantic_ranges_members(&i.members, out);
+            }
+            Member::ConnectionUsage(c) => {
+                if let Some(ref pos) = c.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
             }
             Member::ItemDef(i) => {
-                collect_type_ref_ranges_members(&i.members, out);
+                if let Some(ref pos) = i.name_position {
+                    out.push((pos.to_range(), SemanticRole::Class));
+                }
+                collect_semantic_ranges_members(&i.members, out);
             }
-            Member::ItemUsage(_) => {
-                // ItemUsage has no nested members
+            Member::ItemUsage(i) => {
+                if let Some(ref pos) = i.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
             }
             Member::RequirementDef(r) => {
-                collect_type_ref_ranges_members(&r.members, out);
+                if let Some(ref pos) = r.name_position {
+                    out.push((pos.to_range(), SemanticRole::Class));
+                }
+                collect_semantic_ranges_members(&r.members, out);
             }
             Member::RequirementUsage(r) => {
-                collect_type_ref_ranges_members(&r.members, out);
+                if let Some(ref pos) = r.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
+                collect_semantic_ranges_members(&r.members, out);
             }
-            Member::ActionDef(_) => {
-                // ActionDef has body (statements), not members; skip for type ref collection
+            Member::ActionDef(a) => {
+                if let Some(ref pos) = a.name_position {
+                    out.push((pos.to_range(), SemanticRole::Function));
+                }
             }
             Member::Package(p) => {
-                collect_type_ref_ranges_members(&p.members, out);
+                if let Some(ref pos) = p.name_position {
+                    out.push((pos.to_range(), SemanticRole::Namespace));
+                }
+                collect_semantic_ranges_members(&p.members, out);
             }
             _ => {}
         }
     }
 }
+
+/// Collects all source ranges where a type reference appears in the document.
+/// Used by the language server to classify those spans as "type" for semantic highlighting.
+/// Prefer `collect_semantic_ranges` for full AST-driven highlighting (includes types and more).
+pub fn collect_type_ref_ranges(doc: &SysMLDocument) -> Vec<SourceRange> {
+    collect_semantic_ranges(doc)
+        .into_iter()
+        .filter(|(_, role)| *role == SemanticRole::Type)
+        .map(|(r, _)| r)
+        .collect()
+}
+
 
 
 
