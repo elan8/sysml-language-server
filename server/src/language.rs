@@ -97,6 +97,7 @@ pub fn sysml_keywords() -> &'static [&'static str] {
         "package", "library", "part", "attribute", "port", "connection", "interface", "item",
         "value", "action", "requirement", "ref", "in", "out", "provides", "requires", "bind",
         "allocate", "abstract", "def", "variant", "references", "private", "public",
+        "entry", "exit", "state", "do", "then", "transition", "constraint", "exhibit",
     ]
 }
 
@@ -125,6 +126,14 @@ pub fn keyword_doc(keyword: &str) -> Option<&'static str> {
         "item" => "Item: item definition or usage.",
         "references" => "References: requirement references.",
         "private" | "public" => "Visibility: private or public.",
+        "entry" => "Entry: entry action or behavior when entering a state.",
+        "exit" => "Exit: exit action or behavior when leaving a state.",
+        "state" => "State: state definition or usage in a state machine.",
+        "do" => "Do: activity performed while in a state.",
+        "then" => "Then: target state or action in a transition.",
+        "transition" => "Transition: transition between states.",
+        "constraint" => "Constraint: invariant or constraint block.",
+        "exhibit" => "Exhibit: exhibit state machine (e.g. exhibit state name { }).",
         _ => return None,
     };
     Some(doc)

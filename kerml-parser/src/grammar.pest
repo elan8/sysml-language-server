@@ -523,11 +523,12 @@ action_statement = {
     "action" ~ "{" ~ (statement | member)* ~ "}"
 }
 
-// Statement (used in actions)
+// Statement (used in actions and state machine bodies)
 statement = _{ 
     perform_action |
     assert_constraint |
     assume_constraint |
+    constraint_usage |
     attribute_usage |
     attribute_statement |
     attribute_shorthand |
@@ -610,12 +611,14 @@ if_statement = {
     ("{" ~ (statement | member)* ~ "}" | ";")
 }
 
-// Exhibit state - supports string literals
+// Exhibit state - supports string literals and optional "parallel" before body
 // Supports qualified_name in type position
+// SysML v2: "exhibit state name : Type parallel { ... }" or "exhibit state name { ... }"
 exhibit_state = {
-    "exhibit" ~ ("state")? ~ (string_literal ~ ("." ~ name)+ | qualified_name | name) ~ 
+    "exhibit" ~ ("state")? ~ (string_literal ~ ("." ~ name)+ | qualified_name | name) ~
     (":>>" ~ (string_literal | qualified_name | name))? ~
     (":" ~ (string_literal | qualified_name | name))? ~
+    ("parallel")? ~
     ("{" ~ member* ~ "}" | ";")
 }
 
@@ -796,9 +799,10 @@ calc_usage = {
 }
 
 // Constraint usage (without assert)
-// e.g., constraint hasLegalProfileDepth {profileDepth >= 3.5 [mm]}
+// e.g., constraint hasLegalProfileDepth {profileDepth >= 3.5 [mm]} or inline constraint {expr}
+// Name is optional for inline state-machine constraints: constraint {electricalPower<=500[W]}
 constraint_usage = {
-    "constraint" ~ name ~
+    "constraint" ~ (name)? ~
     (":" ~ (qualified_name | name))? ~
     ("{" ~ (in_statement | expr_value | member)* ~ "}" | ";")
 }
@@ -1073,16 +1077,17 @@ require_statement = {
     ("{" ~ (in_statement | member)* ~ "}" | ";")
 }
 
-// Accept statement (e.g., "accept engineStart : EngineStart;" or "accept 'Vehicle Start Signal' then...")
+// Accept statement (e.g., "accept engineStart : EngineStart;" or "accept ignitionCmd:IgnitionCmd via port")
 // Can appear in state machine context
 // Also supports bare accept without then: "accept 'Vehicle Start Signal' "
-// Supports qualified_name in type position
+// Supports qualified_name and name in type position; optional "via" port
 accept_statement = {
     "accept" ~ (
         ("at" ~ (string_literal ~ ("." ~ name)+ | name ~ ("." ~ name)+ | qualified_name | name)) |
         ("when" ~ expr_value) |
-        ((string_literal | name) ~ (":" ~ (qualified_name | name))?)
+        ((string_literal | name) ~ (":" ~ (name | qualified_name))?)
     ) ~
+    ("via" ~ (name | qualified_name))? ~
     ("if" ~ expr_value)? ~
     ("do" ~ "send" ~ ("new")? ~ (string_literal | qualified_name | name) ~ ("(" ~ (expr_value ~ ("," ~ expr_value)*)? ~ ")")? ~ ("to" ~ expr_value)?)? ~
     ("then" ~ (name | string_literal))? ~

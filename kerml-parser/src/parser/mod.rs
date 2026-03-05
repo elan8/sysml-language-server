@@ -43,6 +43,79 @@ pub fn parse_sysml(input: &str) -> Result<SysMLDocument> {
     }
 }
 
+/// Maximum number of parse errors to collect when using error recovery.
+const MAX_COLLECTED_ERRORS: usize = 20;
+
+/// Parses SysML and collects multiple parse errors by masking error regions and re-parsing.
+/// Returns `(Ok(doc), [])` if parse succeeds, otherwise `(Err(..), errors)` with at least one error.
+/// Pest stops at the first error, so we mask from the error position to end of line and re-parse
+/// to discover further errors.
+pub fn parse_sysml_collect_errors(input: &str) -> (Result<SysMLDocument>, Vec<ParseError>) {
+    let mut errors = Vec::new();
+    let mut current = input.to_string();
+    let mut last_pos: Option<(u32, u32)> = None;
+
+    loop {
+        match parse_sysml(&current) {
+            Ok(doc) => {
+                return (
+                    if errors.is_empty() {
+                        Ok(doc)
+                    } else {
+                        Err(ParseError::Message("Parse failed".to_string()))
+                    },
+                    errors,
+                );
+            }
+            Err(e) => {
+                let mut current_error = Some(e);
+                let pos = current_error.as_ref().and_then(ParseError::position);
+                if errors.len() >= MAX_COLLECTED_ERRORS {
+                    errors.push(current_error.take().unwrap());
+                    return (
+                        Err(ParseError::Message("Parse failed".to_string())),
+                        errors,
+                    );
+                }
+                if let Some((line, col)) = pos {
+                    if last_pos == Some((line, col)) {
+                        errors.push(current_error.take().unwrap());
+                        return (
+                            Err(ParseError::Message("Parse failed".to_string())),
+                            errors,
+                        );
+                    }
+                    last_pos = Some((line, col));
+                    errors.push(current_error.take().unwrap());
+                    if let Some((_line_start, line_end)) = span::line_byte_range(&current, line) {
+                        if let Some(off) = span::line_char_to_byte_offset(&current, line, col) {
+                            let mask_start = off.min(line_end);
+                            if mask_start < line_end {
+                                let len = line_end - mask_start;
+                                let replacement = " ".repeat(len);
+                                current = format!(
+                                    "{}{}{}",
+                                    &current[..mask_start],
+                                    replacement,
+                                    &current[line_end..]
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                }
+                if let Some(e) = current_error {
+                    errors.push(e);
+                }
+                return (
+                    Err(ParseError::Message("Parse failed".to_string())),
+                    errors,
+                );
+            }
+        }
+    }
+}
+
 fn parse_document(pairs: Pairs<'_, Rule>, source: &str) -> Result<SysMLDocument> {
     let mut imports = Vec::new();
     let mut packages = Vec::new();

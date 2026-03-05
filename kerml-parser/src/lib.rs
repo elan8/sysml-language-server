@@ -18,7 +18,7 @@ pub mod error;
 #[cfg(test)]
 mod validation_tests;
 
-pub use parser::parse_sysml;
+pub use parser::{parse_sysml, parse_sysml_collect_errors};
 pub use error::{ParseError, Result};
 pub use ast::collect_type_ref_ranges;
 

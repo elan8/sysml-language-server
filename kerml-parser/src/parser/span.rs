@@ -36,6 +36,36 @@ pub(super) fn span_to_position(span: pest::Span<'_>, source: &str) -> SourcePosi
     }
 }
 
+/// Convert (line, character) 0-based to byte offset in source.
+pub(crate) fn line_char_to_byte_offset(source: &str, line: u32, character: u32) -> Option<usize> {
+    let mut current = 0usize;
+    for (i, line_str) in source.lines().enumerate() {
+        if i as u32 == line {
+            let char_offset = line_str
+                .char_indices()
+                .nth(character as usize)
+                .map(|(o, _)| o)
+                .unwrap_or(line_str.len());
+            return Some(current + char_offset);
+        }
+        current += line_str.len() + 1;
+    }
+    None
+}
+
+/// Return (start_byte, end_byte) for the line at 0-based line index (end = before newline).
+pub(crate) fn line_byte_range(source: &str, line: u32) -> Option<(usize, usize)> {
+    let mut current = 0usize;
+    for (i, line_str) in source.lines().enumerate() {
+        if i as u32 == line {
+            let end = current + line_str.len();
+            return Some((current, end));
+        }
+        current += line_str.len() + 1;
+    }
+    None
+}
+
 /// Convert a byte offset in source to (line, character). 0-based.
 pub(super) fn byte_offset_to_line_char(source: &str, byte_offset: usize) -> (u32, u32) {
     let mut current_pos = 0usize;

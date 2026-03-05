@@ -707,27 +707,23 @@ impl Backend {
         text: &str,
     ) {
         let mut diagnostics = Vec::new();
-        match kerml_parser::parse_sysml(text) {
-            Ok(_) => {}
-            Err(e) => {
-                let (line, character) = e
-                    .position()
-                    .unwrap_or((0, 0));
-                diagnostics.push(Diagnostic {
-                    range: Range {
-                        start: Position::new(line, character),
-                        end: Position::new(line, character),
-                    },
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    code: None,
-                    code_description: None,
-                    source: Some("sysml".to_string()),
-                    message: e.to_string(),
-                    related_information: None,
-                    tags: None,
-                    data: None,
-                });
-            }
+        let (_result, errors) = kerml_parser::parse_sysml_collect_errors(text);
+        for e in errors {
+            let (line, character) = e.position().unwrap_or((0, 0));
+            diagnostics.push(Diagnostic {
+                range: Range {
+                    start: Position::new(line, character),
+                    end: Position::new(line, character),
+                },
+                severity: Some(DiagnosticSeverity::ERROR),
+                code: None,
+                code_description: None,
+                source: Some("sysml".to_string()),
+                message: e.to_string(),
+                related_information: None,
+                tags: None,
+                data: None,
+            });
         }
         self.client
             .publish_diagnostics(uri, diagnostics, None)

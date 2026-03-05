@@ -38,11 +38,11 @@ static KEYWORDS: &[&str] = &[
     "interface", "item", "value", "action", "requirement", "ref", "alias", "view",
     "metadata", "filter", "connector", "bind", "allocate", "connect", "variant",
     "abstract", "occurrence", "calc", "constraint", "exhibit", "transition", "accept",
-    "do", "then", "first", "if", "send", "new", "to", "for", "perform", "assert",
-    "assume", "require", "doc", "standard", "expose", "verify", "position", "satisfy",
-    "return", "in", "out", "provides", "requires", "nonunique", "ordered", "redefines",
-    "subsets", "default", "istype", "at", "when", "render", "pin", "connect", "state",
-    "individual", "flow", "succession", "end",
+    "entry", "exit", "do", "then", "first", "if", "send", "new", "to", "for", "perform",
+    "assert", "assume", "require", "doc", "standard", "expose", "verify", "position",
+    "satisfy", "return", "in", "out", "provides", "requires", "nonunique", "ordered",
+    "redefines", "subsets", "default", "istype", "at", "when", "render", "pin", "connect",
+    "state", "individual", "flow", "succession", "end",
 ];
 
 static KEYWORDS_OTHER: &[&str] = &["private", "public", "true", "false"];
