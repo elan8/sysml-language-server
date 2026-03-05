@@ -186,6 +186,47 @@ pub struct RequiresStatement {
     pub execution_kind: Option<String>,
 }
 
+/// An in-statement (e.g., "in driveTorque :> ISQ::torque;") inside a port def or similar body
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InStatement {
+    /// Item name (e.g., "driveTorque")
+    pub name: String,
+    /// Source position of the name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_position: Option<SourcePosition>,
+    /// Full source range of the in-statement
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
+    /// Type specialization (after :>)
+    pub specializes: Option<String>,
+    /// Source position of the specialization (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub specializes_position: Option<SourcePosition>,
+    /// Type reference (after :)
+    pub type_ref: Option<String>,
+    /// Source position of the type reference (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_ref_position: Option<SourcePosition>,
+}
+
+/// An end statement (e.g., "end axleMount: AxleMountIF;") inside an interface def body
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EndStatement {
+    /// End name (e.g., "axleMount")
+    pub name: String,
+    /// Source position of the name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_position: Option<SourcePosition>,
+    /// Full source range of the end statement
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
+    /// Type reference (after ":")
+    pub type_ref: Option<String>,
+    /// Source position of the type reference (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_ref_position: Option<SourcePosition>,
+}
+
 /// A member within a package or other container
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Member {
@@ -227,6 +268,10 @@ pub enum Member {
     ProvidesStatement(ProvidesStatement),
     /// Requires statement (part requires a capability)
     RequiresStatement(RequiresStatement),
+    /// In-statement (e.g., in/out item in port body)
+    InStatement(InStatement),
+    /// End statement (e.g., end item in interface def body)
+    EndStatement(EndStatement),
 }
 
 /// A part definition
@@ -772,6 +817,43 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                     out.push((pos.to_range(), SemanticRole::Interface));
                 }
                 collect_semantic_ranges_members(&i.members, out);
+            }
+            Member::InStatement(i) => {
+                if let Some(ref pos) = i.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
+                if let (Some(ref spec), Some(ref pos)) = (&i.specializes, &i.specializes_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
+                }
+                if let (Some(ref ty), Some(ref pos)) = (&i.type_ref, &i.type_ref_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
+                }
+            }
+            Member::EndStatement(e) => {
+                if let Some(ref pos) = e.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
+                if let (Some(ref ty), Some(ref pos)) = (&e.type_ref, &e.type_ref_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
+                }
             }
             Member::ConnectionUsage(c) => {
                 if let Some(ref pos) = c.name_position {

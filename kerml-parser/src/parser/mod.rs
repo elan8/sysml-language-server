@@ -236,8 +236,8 @@ fn parse_import(pairs: Pairs<'_, Rule>, source: &str) -> Result<Import> {
 
     for pair in pairs {
         match pair.as_rule() {
-            Rule::name | Rule::qualified_name => {
-                let path_str = pair.as_str();
+            Rule::name | Rule::qualified_name | Rule::identifier => {
+                let path_str = pair.as_str().trim_matches('\'').trim_matches('"');
                 path = path_str.to_string();
                 // First segment is the package/namespace (e.g. "SI" in "SI::N", "ScalarFunctions" in "ScalarFunctions::*")
                 let first_segment_len: u32 = path_str
@@ -248,6 +248,23 @@ fn parse_import(pairs: Pairs<'_, Rule>, source: &str) -> Result<Import> {
                 path_first_segment_position = Some(SourcePosition {
                     line: pos.line,
                     character: pos.character,
+                    length: first_segment_len,
+                });
+            }
+            Rule::string_literal => {
+                let raw = pair.as_str();
+                let path_str = raw.trim_matches('"').trim_matches('\'');
+                path = path_str.to_string();
+                let first_segment_len: u32 = path_str
+                    .find("::")
+                    .map(|byte_i| path_str[..byte_i].chars().count())
+                    .unwrap_or_else(|| path_str.chars().count()) as u32;
+                let pos = span_to_position(pair.as_span(), source);
+                // Content starts after the opening quote
+                let content_start = pos.character + 1;
+                path_first_segment_position = Some(SourcePosition {
+                    line: pos.line,
+                    character: content_start,
                     length: first_segment_len,
                 });
             }
@@ -442,6 +459,146 @@ fn parse_package(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> 
     })
 }
 
+fn parse_in_statement(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<InStatement> {
+    let mut name = String::new();
+    let mut name_position = None;
+    let mut specializes = None;
+    let mut specializes_position = None;
+    let mut type_ref = None;
+    let mut type_ref_position = None;
+    let mut next_is_specializes = false;
+    let mut next_is_type = false;
+
+    fn process_in_statement_pair(
+        pair: pest::iterators::Pair<'_, Rule>,
+        source: &str,
+        name: &mut String,
+        name_position: &mut Option<SourcePosition>,
+        specializes: &mut Option<String>,
+        specializes_position: &mut Option<SourcePosition>,
+        type_ref: &mut Option<String>,
+        type_ref_position: &mut Option<SourcePosition>,
+        next_is_specializes: &mut bool,
+        next_is_type: &mut bool,
+    ) {
+        match pair.as_rule() {
+            Rule::name | Rule::identifier | Rule::qualified_name | Rule::string_literal => {
+                let text = pair.as_str().trim_matches('\'').trim_matches('"');
+                if name.is_empty() {
+                    *name = text.to_string();
+                    *name_position = Some(span_to_position(pair.as_span(), source));
+                } else if *next_is_specializes {
+                    *specializes = Some(text.to_string());
+                    *specializes_position = Some(span_to_position(pair.as_span(), source));
+                    *next_is_specializes = false;
+                } else if *next_is_type {
+                    *type_ref = Some(text.to_string());
+                    *type_ref_position = Some(span_to_position(pair.as_span(), source));
+                    *next_is_type = false;
+                }
+            }
+            _ => {
+                let t = pair.as_str();
+                if t == ":>" {
+                    *next_is_specializes = true;
+                } else if t == ":" {
+                    *next_is_type = true;
+                } else {
+                    for inner in pair.into_inner() {
+                        process_in_statement_pair(
+                            inner, source, name, name_position,
+                            specializes, specializes_position,
+                            type_ref, type_ref_position,
+                            next_is_specializes, next_is_type,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    for pair in pairs {
+        process_in_statement_pair(
+            pair, source,
+            &mut name, &mut name_position,
+            &mut specializes, &mut specializes_position,
+            &mut type_ref, &mut type_ref_position,
+            &mut next_is_specializes, &mut next_is_type,
+        );
+    }
+
+    Ok(InStatement {
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        specializes,
+        specializes_position,
+        type_ref,
+        type_ref_position,
+    })
+}
+
+fn parse_end_statement(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<EndStatement> {
+    let mut name = String::new();
+    let mut name_position = None;
+    let mut type_ref = None;
+    let mut type_ref_position = None;
+    let mut next_is_type = false;
+
+    fn process_end_statement_pair(
+        pair: pest::iterators::Pair<'_, Rule>,
+        source: &str,
+        name: &mut String,
+        name_position: &mut Option<SourcePosition>,
+        type_ref: &mut Option<String>,
+        type_ref_position: &mut Option<SourcePosition>,
+        next_is_type: &mut bool,
+    ) {
+        match pair.as_rule() {
+            Rule::name | Rule::identifier | Rule::qualified_name | Rule::string_literal => {
+                let text = pair.as_str().trim_matches('\'').trim_matches('"');
+                if name.is_empty() {
+                    *name = text.to_string();
+                    *name_position = Some(span_to_position(pair.as_span(), source));
+                } else if *next_is_type {
+                    *type_ref = Some(text.to_string());
+                    *type_ref_position = Some(span_to_position(pair.as_span(), source));
+                    *next_is_type = false;
+                }
+            }
+            _ => {
+                if pair.as_str() == ":" {
+                    *next_is_type = true;
+                } else {
+                    for inner in pair.into_inner() {
+                        process_end_statement_pair(
+                            inner, source, name, name_position,
+                            type_ref, type_ref_position, next_is_type,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    for pair in pairs {
+        process_end_statement_pair(
+            pair, source,
+            &mut name, &mut name_position,
+            &mut type_ref, &mut type_ref_position,
+            &mut next_is_type,
+        );
+    }
+
+    Ok(EndStatement {
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        type_ref,
+        type_ref_position,
+    })
+}
+
 fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
     if let Some(pair) = pairs.next() {
         let rule = pair.as_rule();
@@ -493,12 +650,14 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
             Rule::requires_statement => {
                 Ok(Member::RequiresStatement(parse_requires_statement(pair.into_inner(), source)?))
             }
+            Rule::in_statement => Ok(Member::InStatement(parse_in_statement(pair.into_inner(), source, span)?)),
+            Rule::end_statement => Ok(Member::EndStatement(parse_end_statement(pair.into_inner(), source, span)?)),
             // These are recognized but not fully parsed yet - just skip them for now
             Rule::flow_statement | Rule::succession_statement | Rule::succession_flow_statement | Rule::assign_statement | Rule::transition_statement |
             Rule::accept_statement | Rule::state_machine_statement | Rule::variation_statement |
             Rule::send_node_statement |
             Rule::state_def | Rule::exhibit_state | Rule::subject_statement |
-            Rule::end_statement | Rule::dependency_statement | Rule::occurrence_def | Rule::occurrence_usage |
+            Rule::dependency_statement | Rule::occurrence_def | Rule::occurrence_usage |
             Rule::enum_def | Rule::constraint_def | Rule::use_case | Rule::actor_statement |
             Rule::calc_def | Rule::assert_constraint | Rule::perform_action | Rule::value_def |
             Rule::value_usage | Rule::action_usage | Rule::action_statement | Rule::ref_part |
@@ -1254,8 +1413,8 @@ fn process_port_usage_pair(
                 acc.metadata.push(meta);
             }
         }
-        Rule::name | Rule::identifier => {
-            let text = pair.as_str();
+        Rule::name | Rule::identifier | Rule::qualified_name | Rule::string_literal => {
+            let text = pair.as_str().trim_matches('\'').trim_matches('"');
             if acc.name.is_none() {
                 acc.name = Some(text.to_string());
                 acc.name_position = Some(span_to_position(pair.as_span(), source));
@@ -1433,6 +1592,24 @@ fn parse_interface_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_
             _ => {
                 if pair.as_str() == ":>" {
                     next_is_specialization = true;
+                } else {
+                    // Recurse into body (e.g. "{" ~ member* ~ "}") to collect member pairs
+                    for inner in pair.into_inner() {
+                        if inner.as_rule() == Rule::member {
+                            if let Ok(member) = parse_member(inner.into_inner(), source) {
+                                members.push(member);
+                            }
+                        } else {
+                            // One more level: repetition (member)* yields inner member pairs
+                            for m in inner.into_inner() {
+                                if m.as_rule() == Rule::member {
+                                    if let Ok(member) = parse_member(m.into_inner(), source) {
+                                        members.push(member);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

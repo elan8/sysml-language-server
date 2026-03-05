@@ -780,6 +780,73 @@ fn symbol_entries_from_member(
                 symbol_entries_from_member(m, uri, Some(&i.name), out);
             }
         }
+        M::InStatement(i) => {
+            let selection_range = i
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = i
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let type_part = i
+                .specializes
+                .as_ref()
+                .map(|s| format!(" :> {}", s))
+                .or_else(|| i.type_ref.as_ref().map(|t| format!(" : {}", t)))
+                .unwrap_or_default();
+            let description = format!("in '{}'{}", i.name, type_part);
+            let signature = if type_part.is_empty() {
+                format!("in {};", i.name)
+            } else {
+                format!("in {} {};", i.name, type_part.trim_start_matches(' ').trim_start_matches(':').trim_start_matches('>').trim())
+            };
+            out.push(SymbolEntry {
+                name: i.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::PROPERTY,
+                container_name: container.map(String::from),
+                detail: Some("in".to_string()),
+                description: Some(description),
+                signature: Some(signature),
+            });
+        }
+        M::EndStatement(e) => {
+            let selection_range = e
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = e
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let type_part = e
+                .type_ref
+                .as_ref()
+                .map(|t| format!(" : {}", t))
+                .unwrap_or_default();
+            let description = format!("end '{}'{}", e.name, type_part);
+            let signature = if type_part.is_empty() {
+                format!("end {};", e.name)
+            } else {
+                format!("end {} : {};", e.name, e.type_ref.as_deref().unwrap_or(""))
+            };
+            out.push(SymbolEntry {
+                name: e.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::PROPERTY,
+                container_name: container.map(String::from),
+                detail: Some("end".to_string()),
+                description: Some(description),
+                signature: Some(signature),
+            });
+        }
         M::ConnectionUsage(c) => {
             if let (Some(ref name), Some(ref pos)) = (&c.name, &c.name_position) {
                 let selection_range = source_position_to_range(pos);
