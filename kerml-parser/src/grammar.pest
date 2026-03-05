@@ -298,7 +298,7 @@ attribute_def = {
     visibility? ~ "attribute" ~ ("def")? ~ (short_id)? ~ ((redefines_keyword ~ name) | (name ~ (redefines_keyword ~ name)?)) ~ 
     ("[" ~ (expr_value ~ ".." ~ ("*" | expr_value) | expr_value | "*") ~ "]")? ~
     ("nonunique")? ~
-    (specializes_keyword ~ name)? ~
+    (specializes_keyword ~ (qualified_name | name))? ~
     (defined_by ~ (qualified_name | name))? ~
     (redefines_keyword ~ name)? ~
     ("default" ~ ("=" ~ expr_value | expr_value))? ~

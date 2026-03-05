@@ -358,14 +358,15 @@ fn token_ast_type(
     None
 }
 
-/// Override token types using AST-derived (range, type) pairs. Only VARIABLE and NAMESPACE
-/// tokens are considered for override so we never overwrite keywords, strings, etc.
+/// Override token types using AST-derived (range, type) pairs. VARIABLE, NAMESPACE, and KEYWORD
+/// tokens are overridden when the AST has a role for that span (e.g. attribute name "position"
+/// is a keyword in the lexer but Property in the AST).
 fn apply_ast_semantic_ranges(
     tokens: &mut [(u32, u32, u32, u32)],
     ast_ranges: &[(SourceRange, u32)],
 ) {
     for (line, start, len, type_idx) in tokens.iter_mut() {
-        if *type_idx == TYPE_VARIABLE || *type_idx == TYPE_NAMESPACE {
+        if *type_idx == TYPE_VARIABLE || *type_idx == TYPE_NAMESPACE || *type_idx == TYPE_KEYWORD {
             if let Some(ast_type) = token_ast_type(*line, *start, *len, ast_ranges) {
                 *type_idx = ast_type;
             }

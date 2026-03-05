@@ -54,7 +54,7 @@ use walkdir::WalkDir;
 
 use language::{
     collect_definition_ranges, collect_document_symbols, collect_symbol_entries, completion_prefix,
-    find_reference_ranges, format_document, keyword_doc, line_prefix_at_position,
+    find_reference_ranges, format_document, keyword_doc, keyword_hover_markdown, line_prefix_at_position,
     suggest_wrap_in_package, sysml_keywords, word_at_position, SymbolEntry,
 };
 
@@ -100,6 +100,33 @@ fn update_symbol_table_for_uri(
 /// Removes all symbol table entries for `uri`.
 fn remove_symbol_table_entries_for_uri(state: &mut ServerState, uri: &Url) {
     state.symbol_table.retain(|e| e.uri != *uri);
+}
+
+/// Builds Markdown for symbol hover: title (kind + name), code block with signature or description, container, optional location.
+fn symbol_hover_markdown(entry: &SymbolEntry, show_location: bool) -> String {
+    let kind = entry
+        .detail
+        .as_deref()
+        .unwrap_or("symbol");
+    let name = &entry.name;
+    let mut md = format!("**{}** `{}`\n\n", kind, name);
+    let code_block = entry
+        .signature
+        .as_deref()
+        .or(entry.description.as_deref())
+        .unwrap_or(name.as_str());
+    md.push_str("```sysml\n");
+    md.push_str(code_block);
+    md.push_str("\n```\n\n");
+    if let Some(ref pkg) = entry.container_name {
+        if pkg != "(top level)" {
+            md.push_str(&format!("*Package:* `{}`\n\n", pkg));
+        }
+    }
+    if show_location {
+        md.push_str(&format!("*Defined in:* {}", entry.uri.path()));
+    }
+    md
 }
 
 #[derive(Debug)]
@@ -335,9 +362,13 @@ impl LanguageServer for Backend {
             Position::new(line, char_end),
         );
 
-        if let Some(doc) = keyword_doc(&word) {
+        // Prefer keyword hover (case-insensitive) so "attribute" shows keyword help, not a symbol named "attribute"
+        if let Some(md) = keyword_hover_markdown(&word.to_lowercase()) {
             return Ok(Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(doc.to_string())),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: md,
+                }),
                 range: Some(range),
             }));
         }
@@ -348,12 +379,12 @@ impl LanguageServer for Backend {
             .iter()
             .find(|e| e.name == word && e.uri == uri)
         {
-            let contents = entry
-                .description
-                .clone()
-                .unwrap_or_else(|| entry.name.clone());
+            let value = symbol_hover_markdown(entry, false);
             return Ok(Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(contents)),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value,
+                }),
                 range: Some(range),
             }));
         }
@@ -362,14 +393,12 @@ impl LanguageServer for Backend {
             .iter()
             .find(|e| e.name == word && e.uri != uri)
         {
-            let contents = entry.description.clone().unwrap_or_else(|| entry.name.clone());
-            let location_note = format!("Defined in {}", entry.uri.path());
+            let value = symbol_hover_markdown(entry, true);
             return Ok(Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(format!(
-                    "{}\n\n{}",
-                    contents,
-                    location_note
-                ))),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value,
+                }),
                 range: Some(range),
             }));
         }

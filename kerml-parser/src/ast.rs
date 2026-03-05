@@ -41,6 +41,34 @@ pub struct SourceRange {
     pub end_character: u32,
 }
 
+/// For a qualified type ref (e.g. "ISQ::mass"), returns (namespace range, type range) so the first
+/// segment is namespace and the last segment is type. Positions use the same byte-offset convention as the parser.
+fn type_ref_segment_ranges(
+    type_ref: &str,
+    pos: &SourcePosition,
+) -> (Option<SourceRange>, Option<SourceRange>) {
+    if let Some(sep) = type_ref.find("::") {
+        let first_len = sep as u32;
+        let last_start = type_ref.rfind("::").map(|i| (i + 2) as u32).unwrap_or(0);
+        let last_len = (type_ref.len() - (last_start as usize)) as u32;
+        let namespace_range = SourceRange {
+            start_line: pos.line,
+            start_character: pos.character,
+            end_line: pos.line,
+            end_character: pos.character + first_len,
+        };
+        let type_range = SourceRange {
+            start_line: pos.line,
+            start_character: pos.character + last_start,
+            end_line: pos.line,
+            end_character: pos.character + last_start + last_len,
+        };
+        (Some(namespace_range), Some(type_range))
+    } else {
+        (None, Some(pos.to_range()))
+    }
+}
+
 /// Root document node representing a complete SysML v2 file
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SysMLDocument {
@@ -216,6 +244,9 @@ pub struct PartDef {
     pub is_abstract: bool,
     /// Type specialization (after :>)
     pub specializes: Option<String>,
+    /// Source position of the specialization (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub specializes_position: Option<SourcePosition>,
     /// Type reference (after :)
     pub type_ref: Option<String>,
     /// Source position of the type reference (when present)
@@ -244,6 +275,9 @@ pub struct PartUsage {
     pub range: Option<SourceRange>,
     /// Type specialization (after :>)
     pub specializes: Option<String>,
+    /// Source position of the specialization (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub specializes_position: Option<SourcePosition>,
     /// Type reference (after :)
     pub type_ref: Option<String>,
     /// Source position of the type reference (when present)
@@ -274,6 +308,9 @@ pub struct AttributeDef {
     pub visibility: Option<Visibility>,
     /// Type specialization (after :>)
     pub specializes: Option<String>,
+    /// Source position of the specialization (if present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub specializes_position: Option<SourcePosition>,
     /// Type reference (after :)
     pub type_ref: Option<String>,
     /// Multiplicity
@@ -340,6 +377,9 @@ pub struct PortDef {
     pub range: Option<SourceRange>,
     /// Type specialization (after :>)
     pub specializes: Option<String>,
+    /// Source position of the specialization (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub specializes_position: Option<SourcePosition>,
     /// Type reference (after :)
     pub type_ref: Option<String>,
     /// Source position of the type reference (when present)
@@ -614,8 +654,23 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                 if let Some(ref pos) = p.name_position {
                     out.push((pos.to_range(), SemanticRole::Class));
                 }
-                if let Some(ref pos) = p.type_ref_position {
-                    out.push((pos.to_range(), SemanticRole::Type));
+                if let (Some(ref spec), Some(ref pos)) = (&p.specializes, &p.specializes_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
+                }
+                if let (Some(ref ty), Some(ref pos)) = (&p.type_ref, &p.type_ref_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
                 }
                 collect_semantic_ranges_members(&p.members, out);
             }
@@ -623,8 +678,23 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                 if let Some(ref pos) = p.name_position {
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
-                if let Some(ref pos) = p.type_ref_position {
-                    out.push((pos.to_range(), SemanticRole::Type));
+                if let (Some(ref spec), Some(ref pos)) = (&p.specializes, &p.specializes_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
+                }
+                if let (Some(ref ty), Some(ref pos)) = (&p.type_ref, &p.type_ref_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
                 }
                 collect_semantic_ranges_members(&p.members, out);
             }
@@ -632,8 +702,23 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                 if let Some(ref pos) = a.name_position {
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
-                if let Some(ref pos) = a.type_ref_position {
-                    out.push((pos.to_range(), SemanticRole::Type));
+                if let (Some(ref ty), Some(ref pos)) = (&a.type_ref, &a.type_ref_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
+                }
+                if let (Some(ref spec), Some(ref pos)) = (&a.specializes, &a.specializes_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
                 }
                 collect_semantic_ranges_members(&a.members, out);
             }
@@ -647,8 +732,23 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                 if let Some(ref pos) = p.name_position {
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
-                if let Some(ref pos) = p.type_ref_position {
-                    out.push((pos.to_range(), SemanticRole::Type));
+                if let (Some(ref spec), Some(ref pos)) = (&p.specializes, &p.specializes_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
+                }
+                if let (Some(ref ty), Some(ref pos)) = (&p.type_ref, &p.type_ref_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
                 }
                 collect_semantic_ranges_members(&p.members, out);
             }
@@ -656,8 +756,14 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                 if let Some(ref pos) = p.name_position {
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
-                if let Some(ref pos) = p.type_ref_position {
-                    out.push((pos.to_range(), SemanticRole::Type));
+                if let (Some(ref ty), Some(ref pos)) = (&p.type_ref, &p.type_ref_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
                 }
                 collect_semantic_ranges_members(&p.members, out);
             }

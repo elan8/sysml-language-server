@@ -4,9 +4,58 @@
 //! the official SysML v2 validation files.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use crate::ast::{collect_semantic_ranges, SemanticRole, SourceRange};
 use crate::parser::parse_sysml;
 use crate::error::Result;
+
+/// Returns the source text covered by `r` (parser uses byte offsets for start/end character).
+#[cfg(test)]
+fn range_text(source: &str, r: &SourceRange) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let line = match lines.get(r.start_line as usize) {
+        Some(l) => l,
+        None => return String::new(),
+    };
+    let start = r.start_character as usize;
+    let end = r.end_character as usize;
+    if start >= line.len() || end > line.len() || start >= end {
+        return String::new();
+    }
+    line.get(start..end).unwrap_or("").to_string()
+}
+
+/// Writes semantic ranges (with extracted text) to a file under target/ for review/debugging.
+#[cfg(test)]
+fn write_semantic_ranges_for_review(source: &str, ranges: &[(SourceRange, SemanticRole)], out_path: &Path) {
+    fn role_str(r: SemanticRole) -> &'static str {
+        match r {
+            SemanticRole::Type => "Type",
+            SemanticRole::Namespace => "Namespace",
+            SemanticRole::Class => "Class",
+            SemanticRole::Interface => "Interface",
+            SemanticRole::Property => "Property",
+            SemanticRole::Function => "Function",
+        }
+    }
+    if let Ok(mut f) = fs::File::create(out_path) {
+        let _ = writeln!(f, "# Semantic token ranges (line/char 0-based, byte offsets)\n");
+        for (r, role) in ranges {
+            let text = range_text(source, r);
+            let text_escaped = text.replace('\n', "\\n").replace('\r', "\\r");
+            let _ = writeln!(
+                f,
+                "{}:{}..{} {} \"{}\"",
+                r.start_line,
+                r.start_character,
+                r.end_character,
+                role_str(*role),
+                text_escaped
+            );
+        }
+    }
+}
 
 /// Initialize a file logger for tests so debug/info logs are written to
 /// `test-logs/kerml-parser-tests.log` under the crate directory (handy for development/debugging).
@@ -139,6 +188,36 @@ mod tests {
             !doc.packages.is_empty(),
             "Vehicle Example should produce at least one package in the AST"
         );
+
+        // Write semantic tokens to workspace target/ for review and debugging (e.g. to verify ISQ/Type ranges for :> QualifiedName)
+        let ranges = collect_semantic_ranges(&doc);
+        let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("target"));
+        let _ = fs::create_dir_all(&target_dir);
+        let out_path = target_dir.join("semantic_tokens_annex_a.txt");
+        write_semantic_ranges_for_review(&content, &ranges, &out_path);
+        debug!("Wrote {} semantic ranges to {:?}", ranges.len(), out_path);
+    }
+
+    /// Unit test: semantic ranges for attribute with :> qualified_name (position as Property, ISQ as Namespace, length as Type).
+    #[test]
+    fn test_semantic_ranges_attribute_specializes_qualified() {
+        let source = "package P { part def V { attribute position:>ISQ::length; } }";
+        let doc = parse_sysml(source).expect("parse");
+        let ranges = collect_semantic_ranges(&doc);
+        let has_property = ranges.iter().any(|(r, role)| {
+            *role == SemanticRole::Property && range_text(source, r) == "position"
+        });
+        let has_namespace = ranges.iter().any(|(r, role)| {
+            *role == SemanticRole::Namespace && range_text(source, r) == "ISQ"
+        });
+        let has_type = ranges.iter().any(|(r, role)| {
+            *role == SemanticRole::Type && range_text(source, r) == "length"
+        });
+        assert!(has_property, "expected Property for attribute name 'position'");
+        assert!(has_namespace, "expected Namespace for 'ISQ' in ISQ::length");
+        assert!(has_type, "expected Type for 'length' in ISQ::length");
     }
 
     /// Integration test: parse Vehicle Example VehicleDefinitions.sysml, VehicleIndividuals.sysml, and VehicleUsages.sysml.
@@ -180,6 +259,19 @@ mod tests {
                 "Vehicle Example {} should produce at least one package or import",
                 path.file_name().unwrap_or_default().to_string_lossy()
             );
+            // VehicleDefinitions.sysml: expect port defs and interface def in package body
+            if path.file_name().map(|n| n == "VehicleDefinitions.sysml").unwrap_or(false) {
+                let n_port_def: usize = doc.packages.iter()
+                    .flat_map(|p| &p.members)
+                    .filter(|m| matches!(m, crate::ast::Member::PortDef(_)))
+                    .count();
+                let n_interface_def: usize = doc.packages.iter()
+                    .flat_map(|p| &p.members)
+                    .filter(|m| matches!(m, crate::ast::Member::InterfaceDef(_)))
+                    .count();
+                assert!(n_port_def >= 3, "VehicleDefinitions.sysml should have at least 3 port defs (DriveIF, AxleMountIF, WheelHubIF), got {}", n_port_def);
+                assert!(n_interface_def >= 1, "VehicleDefinitions.sysml should have at least 1 interface def (Mounting), got {}", n_interface_def);
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 //! Helpers for hover and completion: position/word resolution, keywords, and AST name collection.
 //! Also provides definition/reference ranges for Go to definition and Find references.
 
-use kerml_parser::ast::{Member, SourcePosition, SourceRange, SysMLDocument};
+use kerml_parser::ast::{Member, Multiplicity, SourcePosition, SourceRange, SysMLDocument};
 use tower_lsp::lsp_types::{
     CodeAction, DocumentSymbol, FormattingOptions, Location, OneOf,
     OptionalVersionedTextDocumentIdentifier, Position, Range, SymbolInformation, SymbolKind,
@@ -139,6 +139,49 @@ pub fn keyword_doc(keyword: &str) -> Option<&'static str> {
     Some(doc)
 }
 
+/// Returns Markdown string for keyword hover (bold keyword, description, optional syntax hint). None if unknown.
+pub fn keyword_hover_markdown(keyword: &str) -> Option<String> {
+    let (desc, syntax): (&str, Option<&str>) = match keyword {
+        "package" => ("Namespace for members (parts, actions, etc.).", Some("`package name { }`")),
+        "part" => ("Structural element; can be definition (part def) or usage.", Some("`part def Name : Type;` or `part name : Type;`")),
+        "attribute" => ("Property with optional type and default.", Some("`attribute def name : Type;`")),
+        "port" => ("Interaction point (e.g. for connections).", Some("`port def name : Interface;`")),
+        "connection" => ("Links between ports.", Some("`connection name (a, b);`")),
+        "interface" => ("Contract for ports.", Some("`interface def name { }`")),
+        "action" => ("Behavior definition or usage.", Some("`action def name;`")),
+        "requirement" => ("Requirement definition or usage.", Some("`requirement def name;`")),
+        "ref" => ("Reference to an element (e.g. ref action, ref individual).", Some("`ref name;`")),
+        "in" | "out" => ("Input or output (e.g. in action, in attribute).", Some("`in name : Type;`")),
+        "provides" => ("Part provides a capability.", Some("`provides name = value;`")),
+        "requires" => ("Part requires a capability.", Some("`requires name = value;`")),
+        "bind" => ("Bind logical port to physical port.", Some("`bind a to b;`")),
+        "allocate" => ("Allocate logical to physical.", Some("`allocate x to y;`")),
+        "abstract" => ("Abstract part or element.", Some("`abstract part def Name;`")),
+        "def" => ("Definition (e.g. part def, attribute def).", Some("`part def`, `attribute def`, etc.")),
+        "variant" => ("Variant part.", None),
+        "library" => ("Library package.", Some("`library package name { }`")),
+        "value" => ("Value definition or usage.", None),
+        "item" => ("Item definition or usage.", None),
+        "references" => ("Requirement references.", None),
+        "private" | "public" => ("Visibility: private or public.", None),
+        "entry" => ("Entry action or behavior when entering a state.", Some("`entry action name;`")),
+        "exit" => ("Exit action or behavior when leaving a state.", Some("`exit action name;`")),
+        "state" => ("State definition or usage in a state machine.", Some("`state name { }`")),
+        "do" => ("Activity performed while in a state.", Some("`do action name;`")),
+        "then" => ("Target state or action in a transition.", Some("`transition ev then target;`")),
+        "transition" => ("Transition between states.", Some("`transition event then target;`")),
+        "constraint" => ("Invariant or constraint block.", None),
+        "exhibit" => ("Exhibit state machine.", Some("`exhibit state name { }`")),
+        _ => return None,
+    };
+    let mut md = format!("**{}**\n\n{}", keyword, desc);
+    if let Some(syn) = syntax {
+        md.push_str(&format!("\n\nSyntax: {}", syn));
+    }
+    md.push_str("\n\n*See SysML v2 specification for full syntax.*");
+    Some(md)
+}
+
 /// Converts AST source position (line, character, length) to an LSP Range.
 pub fn source_position_to_range(pos: &SourcePosition) -> Range {
     Range::new(
@@ -153,6 +196,27 @@ pub fn source_range_to_range(r: &SourceRange) -> Range {
         Position::new(r.start_line, r.start_character),
         Position::new(r.end_line, r.end_character),
     )
+}
+
+/// Ensures selection_range is contained in full range (LSP requirement).
+/// If selection is outside or partially outside full_range, returns a clamped selection or full_range.
+fn selection_contained_in(mut selection: Range, full: Range) -> Range {
+    fn pos_lt(a: &Position, b: &Position) -> bool {
+        a.line < b.line || (a.line == b.line && a.character < b.character)
+    }
+    fn pos_gt(a: &Position, b: &Position) -> bool {
+        a.line > b.line || (a.line == b.line && a.character > b.character)
+    }
+    if pos_lt(&selection.start, &full.start) {
+        selection.start = full.start.clone();
+    }
+    if pos_gt(&selection.end, &full.end) {
+        selection.end = full.end.clone();
+    }
+    if pos_lt(&selection.end, &selection.start) {
+        return full;
+    }
+    selection
 }
 
 /// Collects for each defined name in the document the LSP range of its definition (from AST name_position).
@@ -346,6 +410,15 @@ pub fn document_symbols_to_workspace_symbols(
     out
 }
 
+/// Formats multiplicity for display (e.g. "[1..*]", "[*]", "[3]").
+fn format_multiplicity(m: &Multiplicity) -> String {
+    match m {
+        Multiplicity::Fixed(n) => format!("[{}]", n),
+        Multiplicity::Unbounded => "[*]".to_string(),
+        Multiplicity::Range(lo, hi) => format!("[{}..{}]", lo, hi),
+    }
+}
+
 /// Workspace-wide symbol entry: one definable name with location and semantic info.
 #[derive(Debug, Clone)]
 pub struct SymbolEntry {
@@ -356,6 +429,8 @@ pub struct SymbolEntry {
     pub container_name: Option<String>,
     pub detail: Option<String>,
     pub description: Option<String>,
+    /// One-line signature for hover code block (e.g. "part def Vehicle : Car;").
+    pub signature: Option<String>,
 }
 
 /// Collects a flat list of symbol entries from a parsed document for the symbol table.
@@ -388,7 +463,16 @@ fn symbol_entries_from_package(
         .as_ref()
         .map(source_range_to_range)
         .unwrap_or(selection_range);
-    let description = format!("package '{}'", pkg.name);
+    let description = if pkg.name.is_empty() {
+        "Top-level package (namespace).".to_string()
+    } else {
+        format!("Package (namespace) '{}'. Contains members (parts, actions, etc.).", pkg.name)
+    };
+    let signature = if pkg.name.is_empty() {
+        None
+    } else {
+        Some(format!("package {} {{ }}", pkg.name))
+    };
     out.push(SymbolEntry {
         name: name.to_string(),
         uri: uri.clone(),
@@ -397,6 +481,7 @@ fn symbol_entries_from_package(
         container_name: container.map(String::from),
         detail: Some("package".to_string()),
         description: Some(description),
+        signature,
     });
     for m in &pkg.members {
         symbol_entries_from_member(m, uri, Some(name), out);
@@ -422,19 +507,30 @@ fn symbol_entries_from_member(
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
-            let description = format!(
-                "part def '{}'{}",
-                p.name,
-                p.type_ref
-                    .as_ref()
-                    .map(|t| format!(" : {}", t))
-                    .unwrap_or_else(|| {
-                        p.specializes
-                            .as_ref()
-                            .map(|s| format!(" :> {}", s))
-                            .unwrap_or_default()
-                    })
-            );
+            let type_part = p
+                .type_ref
+                .as_ref()
+                .map(|t| format!(" : {}", t))
+                .unwrap_or_else(|| {
+                    p.specializes
+                        .as_ref()
+                        .map(|s| format!(" :> {}", s))
+                        .unwrap_or_default()
+                });
+            let mult_str = p
+                .multiplicity
+                .as_ref()
+                .map(format_multiplicity)
+                .unwrap_or_default();
+            let description = format!("part def '{}'{}{}", p.name, type_part, mult_str);
+            let signature = {
+                let t = type_part.trim().trim_start_matches(':').trim();
+                if t.is_empty() {
+                    format!("part def {};", p.name)
+                } else {
+                    format!("part def {} : {};", p.name, t)
+                }
+            };
             out.push(SymbolEntry {
                 name: p.name.clone(),
                 uri: uri.clone(),
@@ -443,6 +539,7 @@ fn symbol_entries_from_member(
                 container_name: container.map(String::from),
                 detail: Some("part def".to_string()),
                 description: Some(description),
+                signature: Some(signature),
             });
             for m in &p.members {
                 symbol_entries_from_member(m, uri, Some(&p.name), out);
@@ -461,19 +558,28 @@ fn symbol_entries_from_member(
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
             if let Some(ref n) = p.name {
-                let description = format!(
-                    "part usage '{}'{}",
-                    n,
-                    p.type_ref
-                        .as_ref()
-                        .map(|t| format!(" : {}", t))
-                        .unwrap_or_else(|| {
-                            p.specializes
-                                .as_ref()
-                                .map(|s| format!(" :> {}", s))
-                                .unwrap_or_default()
-                        })
-                );
+                let type_part = p
+                    .type_ref
+                    .as_ref()
+                    .map(|t| format!(" : {}", t))
+                    .unwrap_or_else(|| {
+                        p.specializes
+                            .as_ref()
+                            .map(|s| format!(" :> {}", s))
+                            .unwrap_or_default()
+                    });
+                let mult_str = p
+                    .multiplicity
+                    .as_ref()
+                    .map(format_multiplicity)
+                    .unwrap_or_default();
+                let description = format!("part usage '{}'{}{}", n, type_part, mult_str);
+                let sig_type = type_part.trim().trim_start_matches(':').trim();
+                let signature = if sig_type.is_empty() {
+                    format!("part {};", n)
+                } else {
+                    format!("part {} : {};", n, sig_type)
+                };
                 out.push(SymbolEntry {
                     name: name.to_string(),
                     uri: uri.clone(),
@@ -482,6 +588,7 @@ fn symbol_entries_from_member(
                     container_name: container.map(String::from),
                     detail: Some("part".to_string()),
                     description: Some(description),
+                    signature: Some(signature),
                 });
             }
             for m in &p.members {
@@ -499,19 +606,28 @@ fn symbol_entries_from_member(
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
-            let description = format!(
-                "attribute def '{}'{}",
-                a.name,
-                a.type_ref
-                    .as_ref()
-                    .map(|t| format!(" : {}", t))
-                    .unwrap_or_else(|| {
-                        a.specializes
-                            .as_ref()
-                            .map(|s| format!(" :> {}", s))
-                            .unwrap_or_default()
-                    })
-            );
+            let type_part = a
+                .type_ref
+                .as_ref()
+                .map(|t| format!(" : {}", t))
+                .unwrap_or_else(|| {
+                    a.specializes
+                        .as_ref()
+                        .map(|s| format!(" :> {}", s))
+                        .unwrap_or_default()
+                });
+            let mult_str = a
+                .multiplicity
+                .as_ref()
+                .map(format_multiplicity)
+                .unwrap_or_default();
+            let description = format!("attribute def '{}'{}{}", a.name, type_part, mult_str);
+            let sig_type = type_part.trim().trim_start_matches(':').trim();
+            let signature = if sig_type.is_empty() {
+                format!("attribute def {};", a.name)
+            } else {
+                format!("attribute def {} : {};", a.name, sig_type)
+            };
             out.push(SymbolEntry {
                 name: a.name.clone(),
                 uri: uri.clone(),
@@ -520,6 +636,7 @@ fn symbol_entries_from_member(
                 container_name: container.map(String::from),
                 detail: Some("attribute def".to_string()),
                 description: Some(description),
+                signature: Some(signature),
             });
         }
         M::AttributeUsage(a) => {
@@ -533,14 +650,23 @@ fn symbol_entries_from_member(
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
-            let description = format!(
-                "attribute usage '{}'{}",
-                a.name,
-                a.type_ref
-                    .as_ref()
-                    .map(|t| format!(" : {}", t))
-                    .unwrap_or_default()
-            );
+            let type_part = a
+                .type_ref
+                .as_ref()
+                .map(|t| format!(" : {}", t))
+                .unwrap_or_default();
+            let mult_str = a
+                .multiplicity
+                .as_ref()
+                .map(format_multiplicity)
+                .unwrap_or_default();
+            let description = format!("attribute usage '{}'{}{}", a.name, type_part, mult_str);
+            let sig_type = type_part.trim().trim_start_matches(':').trim();
+            let signature = if sig_type.is_empty() {
+                format!("attribute {};", a.name)
+            } else {
+                format!("attribute {} : {};", a.name, sig_type)
+            };
             out.push(SymbolEntry {
                 name: a.name.clone(),
                 uri: uri.clone(),
@@ -549,6 +675,7 @@ fn symbol_entries_from_member(
                 container_name: container.map(String::from),
                 detail: Some("attribute".to_string()),
                 description: Some(description),
+                signature: Some(signature),
             });
         }
         M::PortDef(p) => {
@@ -562,14 +689,18 @@ fn symbol_entries_from_member(
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
-            let description = format!(
-                "port def '{}'{}",
-                p.name,
-                p.type_ref
-                    .as_ref()
-                    .map(|t| format!(" : {}", t))
-                    .unwrap_or_default()
-            );
+            let type_part = p
+                .type_ref
+                .as_ref()
+                .map(|t| format!(" : {}", t))
+                .unwrap_or_default();
+            let description = format!("port def '{}'{}", p.name, type_part);
+            let sig_type = type_part.trim().trim_start_matches(':').trim();
+            let signature = if sig_type.is_empty() {
+                format!("port def {};", p.name)
+            } else {
+                format!("port def {} : {};", p.name, sig_type)
+            };
             out.push(SymbolEntry {
                 name: p.name.clone(),
                 uri: uri.clone(),
@@ -578,6 +709,7 @@ fn symbol_entries_from_member(
                 container_name: container.map(String::from),
                 detail: Some("port def".to_string()),
                 description: Some(description),
+                signature: Some(signature),
             });
             for m in &p.members {
                 symbol_entries_from_member(m, uri, Some(&p.name), out);
@@ -596,6 +728,18 @@ fn symbol_entries_from_member(
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
             if let Some(ref n) = p.name {
+                let type_part = p
+                    .type_ref
+                    .as_ref()
+                    .map(|t| format!(" : {}", t))
+                    .unwrap_or_default();
+                let description = format!("port usage '{}'{}", n, type_part);
+                let sig_type = type_part.trim().trim_start_matches(':').trim();
+                let signature = if sig_type.is_empty() {
+                    format!("port {};", n)
+                } else {
+                    format!("port {} : {};", n, sig_type)
+                };
                 out.push(SymbolEntry {
                     name: name.to_string(),
                     uri: uri.clone(),
@@ -603,7 +747,8 @@ fn symbol_entries_from_member(
                     kind: SymbolKind::INTERFACE,
                     container_name: container.map(String::from),
                     detail: Some("port".to_string()),
-                    description: Some(format!("port usage '{}'", n)),
+                    description: Some(description),
+                    signature: Some(signature),
                 });
             }
             for m in &p.members {
@@ -629,6 +774,7 @@ fn symbol_entries_from_member(
                 container_name: container.map(String::from),
                 detail: Some("interface".to_string()),
                 description: Some(format!("interface def '{}'", i.name)),
+                signature: Some(format!("interface def {} {{ }}", i.name)),
             });
             for m in &i.members {
                 symbol_entries_from_member(m, uri, Some(&i.name), out);
@@ -650,6 +796,7 @@ fn symbol_entries_from_member(
                     container_name: container.map(String::from),
                     detail: Some("connection".to_string()),
                     description: Some(format!("connection '{}'", name)),
+                    signature: Some(format!("connection {} ();", name)),
                 });
             }
         }
@@ -672,6 +819,7 @@ fn symbol_entries_from_member(
                 container_name: container.map(String::from),
                 detail: Some("item def".to_string()),
                 description: Some(format!("item def '{}'", i.name)),
+                signature: Some(format!("item def {};", i.name)),
             });
             for m in &i.members {
                 symbol_entries_from_member(m, uri, Some(&i.name), out);
@@ -688,6 +836,23 @@ fn symbol_entries_from_member(
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let type_part = i
+                .type_ref
+                .as_ref()
+                .map(|t| format!(" : {}", t))
+                .unwrap_or_default();
+            let mult_str = i
+                .multiplicity
+                .as_ref()
+                .map(format_multiplicity)
+                .unwrap_or_default();
+            let description = format!("item usage '{}'{}{}", i.name, type_part, mult_str);
+            let sig_type = type_part.trim().trim_start_matches(':').trim();
+            let signature = if sig_type.is_empty() {
+                format!("item {};", i.name)
+            } else {
+                format!("item {} : {};", i.name, sig_type)
+            };
             out.push(SymbolEntry {
                 name: i.name.clone(),
                 uri: uri.clone(),
@@ -695,7 +860,8 @@ fn symbol_entries_from_member(
                 kind: SymbolKind::CONSTANT,
                 container_name: container.map(String::from),
                 detail: Some("item".to_string()),
-                description: Some(format!("item usage '{}'", i.name)),
+                description: Some(description),
+                signature: Some(signature),
             });
         }
         M::RequirementDef(r) => {
@@ -717,6 +883,7 @@ fn symbol_entries_from_member(
                 container_name: container.map(String::from),
                 detail: Some("requirement def".to_string()),
                 description: Some(format!("requirement def '{}'", r.name)),
+                signature: Some(format!("requirement def {};", r.name)),
             });
             for m in &r.members {
                 symbol_entries_from_member(m, uri, Some(&r.name), out);
@@ -741,6 +908,7 @@ fn symbol_entries_from_member(
                 container_name: container.map(String::from),
                 detail: Some("requirement".to_string()),
                 description: Some(format!("requirement usage '{}'", r.name)),
+                signature: Some(format!("requirement {};", r.name)),
             });
         }
         M::ActionDef(a) => {
@@ -762,6 +930,7 @@ fn symbol_entries_from_member(
                 container_name: container.map(String::from),
                 detail: Some("action def".to_string()),
                 description: Some(format!("action def '{}'", a.name)),
+                signature: Some(format!("action def {};", a.name)),
             });
         }
         M::Package(p) => symbol_entries_from_package(p, uri, container, out),
@@ -786,6 +955,7 @@ fn document_symbol_from_package(pkg: &kerml_parser::ast::Package) -> Option<Docu
         .map(source_range_to_range)
         .unwrap_or(selection_range);
     let children = document_symbols_from_members(&pkg.members);
+    let selection_range = selection_contained_in(selection_range, range);
     Some(DocumentSymbol {
         name: name.to_string(),
         detail: Some("package".to_string()),
@@ -822,6 +992,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             let children = document_symbols_from_members(&p.members);
             Some(DocumentSymbol {
                 name: p.name.clone(),
@@ -846,6 +1017,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             let children = document_symbols_from_members(&p.members);
             Some(DocumentSymbol {
                 name: name.to_string(),
@@ -869,6 +1041,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             Some(DocumentSymbol {
                 name: a.name.clone(),
                 detail: Some("attribute def".to_string()),
@@ -891,6 +1064,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             Some(DocumentSymbol {
                 name: a.name.clone(),
                 detail: Some("attribute".to_string()),
@@ -913,6 +1087,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             let children = document_symbols_from_members(&p.members);
             Some(DocumentSymbol {
                 name: p.name.clone(),
@@ -937,6 +1112,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             let children = document_symbols_from_members(&p.members);
             Some(DocumentSymbol {
                 name: name.to_string(),
@@ -984,6 +1160,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             Some(DocumentSymbol {
                 name: name.to_string(),
                 detail: Some("connection".to_string()),
@@ -1006,6 +1183,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             let children = document_symbols_from_members(&i.members);
             Some(DocumentSymbol {
                 name: i.name.clone(),
@@ -1029,6 +1207,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             Some(DocumentSymbol {
                 name: i.name.clone(),
                 detail: Some("item".to_string()),
@@ -1051,6 +1230,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             let children = document_symbols_from_members(&r.members);
             Some(DocumentSymbol {
                 name: r.name.clone(),
@@ -1074,6 +1254,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             Some(DocumentSymbol {
                 name: r.name.clone(),
                 detail: Some("requirement".to_string()),
@@ -1096,6 +1277,7 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 .as_ref()
                 .map(source_range_to_range)
                 .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
             Some(DocumentSymbol {
                 name: a.name.clone(),
                 detail: Some("action def".to_string()),
@@ -1424,6 +1606,7 @@ mod tests {
                         range: None,
                         is_abstract: false,
                         specializes: None,
+                        specializes_position: None,
                         type_ref: None,
                         type_ref_position: None,
                         multiplicity: None,
@@ -1658,5 +1841,118 @@ mod tests {
         assert_eq!(edits.len(), 1);
         let expected = "package P {\n  part def X {\n  }\n}\n";
         assert_eq!(edits[0].new_text, expected);
+    }
+
+    /// Validation test: parse VehicleDefinitions.sysml and write semantic tokens and symbol table
+    /// to target/ for review (semantic_tokens_vehicle_definitions.txt, symbol_table_vehicle_definitions.txt).
+    #[test]
+    fn test_vehicle_definitions_validation_output() {
+        let release_root = std::env::var_os("SYSML_V2_RELEASE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .unwrap()
+                    .join("temp")
+                    .join("SysML-v2-Release-2026-01")
+            });
+        let path = release_root
+            .join("sysml")
+            .join("src")
+            .join("examples")
+            .join("Vehicle Example")
+            .join("VehicleDefinitions.sysml");
+        if !path.exists() {
+            return; // skip when Vehicle Example not present (e.g. SYSML_V2_RELEASE_DIR unset)
+        }
+        let content = std::fs::read_to_string(&path).expect("read VehicleDefinitions.sysml");
+        let doc = kerml_parser::parse_sysml(&content).expect("parse");
+        let uri = Url::from_file_path(&path).unwrap_or_else(|_| Url::parse("file:///VehicleDefinitions.sysml").unwrap());
+
+        // Semantic tokens
+        let ranges = kerml_parser::ast::collect_semantic_ranges(&doc);
+        let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("target"));
+        let _ = std::fs::create_dir_all(&target_dir);
+        let tokens_path = target_dir.join("semantic_tokens_vehicle_definitions.txt");
+        write_semantic_ranges_for_review(&content, &ranges, &tokens_path);
+
+        // Symbol table
+        let entries = collect_symbol_entries(&doc, &uri);
+        let table_path = target_dir.join("symbol_table_vehicle_definitions.txt");
+        write_symbol_table_for_review(&entries, &table_path);
+    }
+
+    #[cfg(test)]
+    fn range_text_from_source(source: &str, r: &kerml_parser::ast::SourceRange) -> String {
+        let lines: Vec<&str> = source.lines().collect();
+        let line = match lines.get(r.start_line as usize) {
+            Some(l) => l,
+            None => return String::new(),
+        };
+        let start = r.start_character as usize;
+        let end = r.end_character as usize;
+        if start >= line.len() || end > line.len() || start >= end {
+            return String::new();
+        }
+        line.get(start..end).unwrap_or("").to_string()
+    }
+
+    #[cfg(test)]
+    fn write_semantic_ranges_for_review(
+        source: &str,
+        ranges: &[(kerml_parser::ast::SourceRange, kerml_parser::ast::SemanticRole)],
+        out_path: &std::path::Path,
+    ) {
+        use kerml_parser::ast::SemanticRole;
+        use std::io::Write;
+        fn role_str(r: SemanticRole) -> &'static str {
+            match r {
+                SemanticRole::Type => "Type",
+                SemanticRole::Namespace => "Namespace",
+                SemanticRole::Class => "Class",
+                SemanticRole::Interface => "Interface",
+                SemanticRole::Property => "Property",
+                SemanticRole::Function => "Function",
+            }
+        }
+        if let Ok(mut f) = std::fs::File::create(out_path) {
+            let _ = writeln!(f, "# Semantic token ranges (line/char 0-based)\n");
+            for (r, role) in ranges {
+                let text = range_text_from_source(source, r);
+                let text_escaped = text.replace('\n', "\\n").replace('\r', "\\r");
+                let _ = writeln!(
+                    f,
+                    "{}:{}..{} {} \"{}\"",
+                    r.start_line,
+                    r.start_character,
+                    r.end_character,
+                    role_str(*role),
+                    text_escaped
+                );
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn write_symbol_table_for_review(entries: &[SymbolEntry], out_path: &std::path::Path) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::File::create(out_path) {
+            let _ = writeln!(f, "# Symbol table (name | kind | container | range | signature)\n");
+            for e in entries {
+                let range_str = format!(
+                    "{}:{}..{}:{}",
+                    e.range.start.line,
+                    e.range.start.character,
+                    e.range.end.line,
+                    e.range.end.character
+                );
+                let kind_str = format!("{:?}", e.kind);
+                let container = e.container_name.as_deref().unwrap_or("-");
+                let sig = e.signature.as_deref().unwrap_or("-");
+                let _ = writeln!(f, "{} | {} | {} | {} | {}", e.name, kind_str, container, range_str, sig);
+            }
+        }
     }
 }

@@ -272,189 +272,173 @@ fn parse_import(pairs: Pairs<'_, Rule>, source: &str) -> Result<Import> {
     })
 }
 
+/// Mutable state used when parsing a package (name, imports, members, etc.).
+struct PackageParseState<'a> {
+    name: String,
+    name_position: Option<SourcePosition>,
+    is_library: bool,
+    seen_standard: bool,
+    seen_library: bool,
+    pending_metadata: Vec<MetadataAnnotation>,
+    imports: Vec<Import>,
+    members: Vec<Member>,
+    source: &'a str,
+}
+
+fn process_package_pair(
+    pair: &Pair<'_, Rule>,
+    state: &mut PackageParseState<'_>,
+) -> Result<()> {
+    let rule = pair.as_rule();
+    let text = pair.as_str();
+    let source = state.source;
+
+    match rule {
+        Rule::package_name | Rule::name | Rule::qualified_name | Rule::identifier | Rule::string_literal => {
+            if state.name.is_empty() {
+                state.name = pair.as_str().trim_matches('\'').trim_matches('"').to_string();
+                state.name_position = Some(span_to_position(pair.as_span(), source));
+                debug!("parse_package: Set package name to: {}", state.name);
+                if state.seen_standard || state.seen_library {
+                    state.is_library = true;
+                }
+            }
+        }
+        Rule::import_statement => {
+            match parse_import(pair.clone().into_inner(), source) {
+                Ok(import) => state.imports.push(import),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::member => {
+            match parse_member(pair.clone().into_inner(), source) {
+                Ok(member) => state.members.push(member),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::part_def => {
+            let member_span = pair.as_span();
+            match parse_part_def(pair.clone().into_inner(), source, member_span) {
+                Ok(mut part_def) => {
+                    let mut combined = state.pending_metadata.clone();
+                    combined.append(&mut part_def.metadata);
+                    part_def.metadata = combined;
+                    state.pending_metadata.clear();
+                    state.members.push(Member::PartDef(part_def));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::part_usage => {
+            let member_span = pair.as_span();
+            match parse_part_usage(pair.clone().into_inner(), source, member_span) {
+                Ok(mut part_usage) => {
+                    let mut combined = state.pending_metadata.clone();
+                    combined.append(&mut part_usage.metadata);
+                    part_usage.metadata = combined;
+                    state.pending_metadata.clear();
+                    state.members.push(Member::PartUsage(part_usage));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::requirement_def => {
+            let requirement_def_full_text = pair.as_str();
+            let member_span = pair.as_span();
+            match parse_requirement_def(pair.clone().into_inner(), requirement_def_full_text, source, member_span) {
+                Ok(req_def) => state.members.push(Member::RequirementDef(req_def)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::requirement_usage => {
+            let member_span = pair.as_span();
+            match parse_requirement_usage(pair.clone().into_inner(), source, member_span) {
+                Ok(req_usage) => state.members.push(Member::RequirementUsage(req_usage)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::action_def => {
+            let member_span = pair.as_span();
+            match parse_action_def(pair.clone().into_inner(), source, member_span) {
+                Ok(action_def) => state.members.push(Member::ActionDef(action_def)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::connection_usage => {
+            let conn_span = pair.as_span();
+            match parse_connection_usage(pair.clone().into_inner(), source, conn_span) {
+                Ok(conn) => state.members.push(Member::ConnectionUsage(conn)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::port_def => {
+            let member_span = pair.as_span();
+            match parse_port_def(pair.clone().into_inner(), source, member_span) {
+                Ok(port_def) => state.members.push(Member::PortDef(port_def)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::interface_def => {
+            let member_span = pair.as_span();
+            match parse_interface_def(pair.clone().into_inner(), source, member_span) {
+                Ok(interface_def) => state.members.push(Member::InterfaceDef(interface_def)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::COMMENT => {}
+        _ => {
+            let text_lower = text.to_lowercase();
+            if text_lower == "standard" {
+                state.seen_standard = true;
+            } else if text_lower == "library" {
+                state.seen_library = true;
+                state.is_library = true;
+            }
+            // Descend into block: package body is ("{" ~ (COMMENT | import_statement | ... | member)* ~ "}")
+            // so member/import pairs are inside a nested sequence; recurse to collect them.
+            let inner: Vec<_> = pair.clone().into_inner().collect();
+            for inner_pair in &inner {
+                process_package_pair(inner_pair, state)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn parse_package(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<Package> {
-    let mut is_library = false;
-    let mut name = String::new();
-    let mut name_position = None;
-    let mut imports = Vec::new();
-    let mut members = Vec::new();
-    
-    // Collect all pairs first for debugging
+    let mut state = PackageParseState {
+        name: String::new(),
+        name_position: None,
+        is_library: false,
+        seen_standard: false,
+        seen_library: false,
+        pending_metadata: Vec::new(),
+        imports: Vec::new(),
+        members: Vec::new(),
+        source,
+    };
+
     let all_pairs: Vec<_> = pairs.collect();
     debug!("parse_package: Processing {} top-level pairs", all_pairs.len());
-    
-    // Check for "standard library" or "library" keywords before package name
-    let mut seen_standard = false;
-    let mut seen_library = false;
-    
-    // Track metadata annotations that appear before members
-    let mut pending_metadata: Vec<MetadataAnnotation> = Vec::new();
-    
+
     for (idx, pair) in all_pairs.iter().enumerate() {
-        let rule = pair.as_rule();
-        let text = pair.as_str();
-        debug!("parse_package: Pair[{}] rule={:?}, text={:?}", idx, rule, text);
-        
-        // Check if this pair has inner pairs
-        let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
-        if !inner_pairs.is_empty() {
-            debug!("parse_package: Pair[{}] has {} inner pairs", idx, inner_pairs.len());
-            for (inner_idx, inner_pair) in inner_pairs.iter().enumerate() {
-                trace!("parse_package: Pair[{}].Inner[{}] rule={:?}, text={:?}", 
-                    idx, inner_idx, inner_pair.as_rule(), inner_pair.as_str());
-            }
-        }
-        
-        match rule {
-            Rule::package_name | Rule::name | Rule::qualified_name | Rule::identifier | Rule::string_literal => {
-                if name.is_empty() {
-                    name = pair.as_str().trim_matches('\'').trim_matches('"').to_string();
-                    name_position = Some(span_to_position(pair.as_span(), source));
-                    debug!("parse_package: Set package name to: {}", name);
-                    // If we've seen "standard" or "library" before the name, mark as library
-                    if seen_standard || seen_library {
-                        is_library = true;
-                    }
-                }
-            }
-            Rule::import_statement => {
-                debug!("parse_package: Found import_statement");
-                match parse_import(pair.clone().into_inner(), source) {
-                    Ok(import) => imports.push(import),
-                    Err(e) => return Err(e),
-                }
-            }
-            Rule::member => {
-                debug!("parse_package: Found member rule, parsing...");
-                match parse_member(pair.clone().into_inner(), source) {
-                    Ok(member) => {
-                        debug!("parse_package: Successfully parsed member");
-                        members.push(member);
-                    },
-                    Err(e) => {
-                        debug!("parse_package: Failed to parse member: {:?}", e);
-                        return Err(e);
-                    },
-                }
-            }
-            Rule::part_def => {
-                debug!("parse_package: Found part_def directly, parsing...");
-                let member_span = pair.as_span();
-                match parse_part_def(pair.clone().into_inner(), source, member_span) {
-                    Ok(mut part_def) => {
-                        let mut combined_metadata = pending_metadata.clone();
-                        combined_metadata.append(&mut part_def.metadata);
-                        part_def.metadata = combined_metadata;
-                        pending_metadata.clear();
-                        members.push(Member::PartDef(part_def));
-                    },
-                    Err(e) => {
-                        debug!("parse_package: Failed to parse part_def: {:?}", e);
-                        return Err(e);
-                    },
-                }
-            }
-            Rule::part_usage => {
-                debug!("parse_package: Found part_usage directly, parsing...");
-                let member_span = pair.as_span();
-                match parse_part_usage(pair.clone().into_inner(), source, member_span) {
-                    Ok(mut part_usage) => {
-                        let mut combined_metadata = pending_metadata.clone();
-                        combined_metadata.append(&mut part_usage.metadata);
-                        part_usage.metadata = combined_metadata;
-                        pending_metadata.clear();
-                        members.push(Member::PartUsage(part_usage));
-                    },
-                    Err(e) => {
-                        debug!("parse_package: Failed to parse part_usage: {:?}", e);
-                        return Err(e);
-                    },
-                }
-            }
-            Rule::requirement_def => {
-                debug!("parse_package: Found requirement_def directly, parsing...");
-                let requirement_def_full_text = pair.as_str();
-                let member_span = pair.as_span();
-                match parse_requirement_def(pair.clone().into_inner(), requirement_def_full_text, source, member_span) {
-                    Ok(req_def) => {
-                        members.push(Member::RequirementDef(req_def));
-                    },
-                    Err(e) => {
-                        debug!("parse_package: Failed to parse requirement_def: {:?}", e);
-                        return Err(e);
-                    },
-                }
-            }
-            Rule::requirement_usage => {
-                debug!("parse_package: Found requirement_usage directly, parsing...");
-                let member_span = pair.as_span();
-                match parse_requirement_usage(pair.clone().into_inner(), source, member_span) {
-                    Ok(req_usage) => {
-                        members.push(Member::RequirementUsage(req_usage));
-                    },
-                    Err(e) => {
-                        debug!("parse_package: Failed to parse requirement_usage: {:?}", e);
-                        return Err(e);
-                    },
-                }
-            }
-            Rule::action_def => {
-                debug!("parse_package: Found action_def directly, parsing...");
-                let member_span = pair.as_span();
-                match parse_action_def(pair.clone().into_inner(), source, member_span) {
-                    Ok(action_def) => {
-                        members.push(Member::ActionDef(action_def));
-                    },
-                    Err(e) => {
-                        debug!("parse_package: Failed to parse action_def: {:?}", e);
-                        return Err(e);
-                    },
-                }
-            }
-            Rule::connection_usage => {
-                debug!("parse_package: Found connection_usage directly, parsing...");
-                let conn_span = pair.as_span();
-                match parse_connection_usage(pair.clone().into_inner(), source, conn_span) {
-                    Ok(conn) => {
-                        members.push(Member::ConnectionUsage(conn));
-                    },
-                    Err(e) => {
-                        debug!("parse_package: Failed to parse connection_usage: {:?}", e);
-                        return Err(e);
-                    },
-                }
-            }
-            Rule::COMMENT => {
-                trace!("parse_package: Found COMMENT, skipping");
-            }
-            _ => {
-                trace!("parse_package: Matched other rule: {:?}, text: {:?}", rule, text);
-                // Check for "standard" or "library" keywords
-                let text_lower = text.to_lowercase();
-                if text_lower == "standard" {
-                    seen_standard = true;
-                } else if text_lower == "library" {
-                    seen_library = true;
-                    // If we see "library" (with or without "standard" before it), mark as library
-                    is_library = true;
-                }
-            }
-        }
+        debug!("parse_package: Pair[{}] rule={:?}", idx, pair.as_rule());
+        process_package_pair(pair, &mut state)?;
     }
-    
-    debug!("parse_package: Final package '{}' has {} members", name, members.len());
-    
-    if name.is_empty() {
+
+    debug!("parse_package: Final package '{}' has {} members", state.name, state.members.len());
+
+    if state.name.is_empty() {
         return Err(ParseError::Message("Package name is required".to_string()));
     }
-    
+
     Ok(Package {
-        name,
-        name_position,
+        name: state.name,
+        name_position: state.name_position,
         range: Some(span_to_source_range(span, source)),
-        is_library,
-        imports,
-        members,
+        is_library: state.is_library,
+        imports: state.imports,
+        members: state.members,
     })
 }
 
@@ -559,6 +543,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
                     range: None,
                     is_abstract: false,
                     specializes: None,
+                    specializes_position: None,
                     type_ref: None,
                     type_ref_position: None,
                     multiplicity: None,
@@ -578,6 +563,7 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
     let mut name_position = None;
     let mut is_abstract = false;
     let mut specializes = None;
+    let mut specializes_position = None;
     let mut type_ref = None;
     let mut type_ref_position = None;
     let mut multiplicity = None;
@@ -608,6 +594,7 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
                     debug!("parse_part_def: Set name to: {}", name);
                 } else if next_is_specialization {
                     specializes = Some(text.to_string());
+                    specializes_position = Some(span_to_position(pair.as_span(), source));
                     debug!("parse_part_def: Set specializes to: {:?}", specializes);
                     next_is_specialization = false;
                 } else if seen_colon {
@@ -620,6 +607,7 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
                     // and we haven't seen a colon, this is likely the specializes name from the :> pattern
                     // (Pest matches :> name but only exposes the name as a pair, not the :> tokens)
                     specializes = Some(text.to_string());
+                    specializes_position = Some(span_to_position(pair.as_span(), source));
                     debug!("parse_part_def: Inferred specializes from second identifier: {:?}", specializes);
                 } else {
                     debug!("parse_part_def: Ignoring identifier '{}' (seen_name={}, next_is_specialization={}, seen_colon={}, specializes={:?}, type_ref={:?})", text, seen_name, next_is_specialization, seen_colon, specializes, type_ref);
@@ -724,6 +712,7 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
         range: Some(span_to_source_range(span, source)),
         is_abstract,
         specializes,
+        specializes_position,
         type_ref,
         type_ref_position,
         multiplicity,
@@ -737,6 +726,7 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
     let mut name = None;
     let mut name_position = None;
     let mut specializes = None;
+    let mut specializes_position = None;
     let mut type_ref = None;
     let mut type_ref_position = None;
     let mut multiplicity = None;
@@ -772,6 +762,7 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
                     debug!("parse_part_usage: Set name to: {:?}", name);
                 } else if next_is_specialization {
                     specializes = Some(text.to_string());
+                    specializes_position = Some(span_to_position(pair.as_span(), source));
                     next_is_specialization = false;
                 } else if next_is_type || (!next_is_redefines && !next_is_subsets && type_ref.is_none()) {
                     // If we've seen the name and no other flags are set, and we haven't set type_ref yet,
@@ -874,6 +865,7 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
         name_position,
         range: Some(span_to_source_range(span, source)),
         specializes,
+        specializes_position,
         type_ref,
         type_ref_position,
         multiplicity,
@@ -940,6 +932,7 @@ fn parse_attribute_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_
     
     // Position tracking
     let mut name_position: Option<SourcePosition> = None;
+    let mut specializes_position: Option<SourcePosition> = None;
     let mut type_ref_position: Option<SourcePosition> = None;
     let mut default_value_position: Option<SourcePosition> = None;
     
@@ -956,6 +949,7 @@ fn parse_attribute_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_
                     debug!("parse_attribute_def: Set name to: '{}' at line {}", name, name_position.as_ref().unwrap().line);
                 } else if next_is_specialization {
                     specializes = Some(text.to_string());
+                    specializes_position = Some(span_to_position(pair.as_span(), source));
                     next_is_specialization = false;
                 } else if next_is_type {
                     type_ref = Some(text.to_string());
@@ -1042,6 +1036,7 @@ fn parse_attribute_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_
         name,
         visibility,
         specializes,
+        specializes_position,
         type_ref,
         multiplicity,
         redefines,
@@ -1146,6 +1141,7 @@ struct PortDefAccumulator {
     name: String,
     name_position: Option<SourcePosition>,
     specializes: Option<String>,
+    specializes_position: Option<SourcePosition>,
     type_ref: Option<String>,
     type_ref_position: Option<SourcePosition>,
     members: Vec<Member>,
@@ -1166,13 +1162,14 @@ fn process_port_def_pair(
                 acc.metadata.push(meta);
             }
         }
-        Rule::name => {
-            let text = pair.as_str();
+        Rule::name | Rule::identifier | Rule::qualified_name | Rule::string_literal => {
+            let text = pair.as_str().trim_matches('\'').trim_matches('"');
             if acc.name.is_empty() {
                 acc.name = text.to_string();
                 acc.name_position = Some(span_to_position(pair.as_span(), source));
             } else if acc.next_is_specialization {
                 acc.specializes = Some(text.to_string());
+                acc.specializes_position = Some(span_to_position(pair.as_span(), source));
                 acc.next_is_specialization = false;
             } else if acc.next_is_type {
                 acc.type_ref = Some(text.to_string());
@@ -1210,6 +1207,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
         name: String::new(),
         name_position: None,
         specializes: None,
+        specializes_position: None,
         type_ref: None,
         type_ref_position: None,
         members: Vec::new(),
@@ -1225,6 +1223,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
         name_position: acc.name_position,
         range: Some(span_to_source_range(span, source)),
         specializes: acc.specializes,
+        specializes_position: acc.specializes_position,
         type_ref: acc.type_ref,
         type_ref_position: acc.type_ref_position,
         metadata: acc.metadata,
@@ -1411,8 +1410,8 @@ fn parse_interface_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_
 
     for pair in pairs {
         match pair.as_rule() {
-            Rule::name => {
-                let text = pair.as_str();
+            Rule::name | Rule::identifier | Rule::qualified_name | Rule::string_literal => {
+                let text = pair.as_str().trim_matches('\'').trim_matches('"');
                 if name.is_empty() {
                     name = text.to_string();
                     name_position = Some(span_to_position(pair.as_span(), source));
