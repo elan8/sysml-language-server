@@ -494,6 +494,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
             // These are recognized but not fully parsed yet - just skip them for now
             Rule::flow_statement | Rule::succession_flow_statement | Rule::assign_statement | Rule::transition_statement |
             Rule::accept_statement | Rule::state_machine_statement | Rule::variation_statement |
+            Rule::send_node_statement |
             Rule::state_def | Rule::exhibit_state | Rule::subject_statement |
             Rule::end_statement | Rule::dependency_statement | Rule::occurrence_def | Rule::occurrence_usage |
             Rule::enum_def | Rule::constraint_def | Rule::use_case | Rule::actor_statement |
