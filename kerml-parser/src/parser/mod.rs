@@ -459,6 +459,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
             Rule::interface_def => Ok(Member::InterfaceDef(parse_interface_def(pair.into_inner(), source, span)?)),
             Rule::item_def => Ok(Member::ItemDef(parse_item_def(pair.into_inner(), source, span)?)),
             Rule::item_usage => Ok(Member::ItemUsage(parse_item_usage(pair.into_inner(), source, span)?)),
+            Rule::ref_item => Ok(Member::ItemUsage(parse_ref_item(pair.into_inner(), source, span)?)),
             Rule::requirement_def => {
                 let full_text = pair.as_str();
                 Ok(Member::RequirementDef(parse_requirement_def(pair.into_inner(), full_text, source, span)?))
@@ -1515,6 +1516,47 @@ fn parse_item_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
     
     Ok(ItemUsage {
         direction,
+        name,
+        name_position,
+        range: Some(span_to_source_range(span, source)),
+        type_ref,
+        multiplicity,
+    })
+}
+
+/// Parse "ref item name : Type { ... }" into ItemUsage (body members are not stored).
+fn parse_ref_item(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) -> Result<ItemUsage> {
+    let mut name = String::new();
+    let mut name_position = None;
+    let mut type_ref = None;
+    let mut multiplicity = None;
+    let mut next_is_type = false;
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::name | Rule::qualified_name => {
+                let text = pair.as_str();
+                if name.is_empty() {
+                    name = text.to_string();
+                    name_position = Some(span_to_position(pair.as_span(), source));
+                } else if next_is_type {
+                    type_ref = Some(text.to_string());
+                    next_is_type = false;
+                }
+            }
+            Rule::metadata_annotation => {}
+            Rule::member => {}
+            _ => {
+                let text = pair.as_str();
+                if text == ":" || text == ":>" {
+                    next_is_type = true;
+                } else if text.starts_with('[') {
+                    multiplicity = parse_multiplicity_str(text);
+                }
+            }
+        }
+    }
+    Ok(ItemUsage {
+        direction: ItemDirection::In,
         name,
         name_position,
         range: Some(span_to_source_range(span, source)),

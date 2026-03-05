@@ -88,6 +88,7 @@ member = _{
     connection_def |
     connection_usage |
     ref_part |
+    ref_item |
     ref_state_usage |
     ref_statement |
     item_def |
@@ -447,6 +448,19 @@ ref_part = {
     ("{" ~ member* ~ "}" | ";")
 }
 
+// Ref item - e.g. "ref item fuel : Fuel { ... }"
+// Supports qualified_name in type position
+ref_item = {
+    "ref" ~ "item" ~ name ~
+    (":" ~ ">" ~ (qualified_name | name))? ~
+    (":" ~ (qualified_name | name))? ~
+    ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
+    ("nonunique")? ~
+    ("=" ~ (string_literal ~ "::" ~ name | expr_value))? ~
+    (metadata_annotation)* ~
+    ("{" ~ member* ~ "}" | ";")
+}
+
 // Ref statement (without "part") - supports :>> syntax without name
 // Supports type annotation: ref name : Type;
 // Also supports bodies and assignments: ref name : Type { } or ref name = expr;
@@ -559,14 +573,14 @@ statement = _{
 
 // Transition statement (can appear in state machine context)
 // Also supports bodies: transition 'name' { }
-// Supports: transition name first state accept Signal if guard do action then target { }
+// Supports: transition name first state accept Signal via port if guard do action then target { }
 transition_statement = {
     "transition" ~ (string_literal | name)? ~ 
     ("first" ~ (string_literal | name))? ~
     (
         ("accept" ~ "at" ~ expr_value) |
         ("accept" ~ "when" ~ expr_value) |
-        ("accept" ~ (string_literal | name) ~ (":" ~ (qualified_name | name))?)
+        ("accept" ~ (string_literal | name) ~ (":" ~ (qualified_name | name))? ~ ("via" ~ (qualified_name | name))?)
     )? ~
     ("if" ~ expr_value)? ~
     ("do" ~ ("send" ~ "new"? ~ expr_value ~ "to" ~ expr_value | "action" ~ (string_literal | name)? ~ ("{" ~ (statement | member)* ~ "}")?))? ~

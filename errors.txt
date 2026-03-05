@@ -1,0 +1,126 @@
+Parse error:    --> 192:26
+    |
+192 |                 ref item fuel:Fuel{
+    |                          ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 193:21
+    |
+193 |                     attribute :>> fuelMass;
+    |                     ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 194:17
+    |
+194 |                 }
+    |                 ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 195:17
+    |
+195 |                 attribute fuelKind:FuelKind;
+    |                 ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 196:17
+    |
+196 |                 attribute fuelMassMax:>ISQ::mass;
+    |                 ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 197:17
+    |
+197 |                 assert constraint fuelConstraint {fuel.fuelMass<=fuelMassMax}
+    |                 ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 198:17
+    |
+198 |                 port fuelOutPort:FuelPort;
+    |                 ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 199:17
+    |
+199 |                 port fuelInPort:~FuelPort;
+    |                 ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 200:13
+    |
+200 |             }
+    |             ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 201:13
+    |
+201 |             part def BodyAssy;
+    |             ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 202:13
+    |
+202 |             part def Body{
+    |             ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 203:17
+    |
+203 |                 attribute color:Colors;
+    |                 ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 204:13
+    |
+204 |             }
+    |             ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 205:13
+    |
+205 |             part def Thermostat;
+    |             ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 206:13
+    |
+206 |             part def WaterHose;
+    |             ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 207:13
+    |
+207 |             part def Road{
+    |             ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 208:17
+    |
+208 |                 attribute incline:Real;
+    |                 ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 209:17
+    |
+209 |                 attribute friction:Real;
+    |                 ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 210:13
+    |
+210 |             }
+    |             ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 211:13
+    |
+211 |             part def Engine4Cyl;
+    |             ^---
+    |
+    = expected metadata_annotation
+Parse error:    --> 212:13
+    |
+212 |             part def Engine6Cyl;
+    |             ^---
+    |
+    = expected metadata_annotation
