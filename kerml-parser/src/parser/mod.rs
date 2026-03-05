@@ -467,6 +467,7 @@ fn parse_member(mut pairs: Pairs<'_, Rule>, source: &str) -> Result<Member> {
                     is_abstract: false,
                     specializes: None,
                     type_ref: None,
+                    type_ref_position: None,
                     multiplicity: None,
                     ordered: false,
                     members: Vec::new(),
@@ -485,6 +486,7 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
     let mut is_abstract = false;
     let mut specializes = None;
     let mut type_ref = None;
+    let mut type_ref_position = None;
     let mut multiplicity = None;
     let mut ordered = false;
     let mut members = Vec::new();
@@ -517,6 +519,7 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
                     next_is_specialization = false;
                 } else if seen_colon {
                     type_ref = Some(text.to_string());
+                    type_ref_position = Some(span_to_position(pair.as_span(), source));
                     debug!("parse_part_def: Set type_ref to: {:?}", type_ref);
                     seen_colon = false;
                 } else if specializes.is_none() && type_ref.is_none() {
@@ -629,6 +632,7 @@ fn parse_part_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
         is_abstract,
         specializes,
         type_ref,
+        type_ref_position,
         multiplicity,
         ordered,
         metadata,
@@ -641,6 +645,7 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
     let mut name_position = None;
     let mut specializes = None;
     let mut type_ref = None;
+    let mut type_ref_position = None;
     let mut multiplicity = None;
     let mut ordered = false;
     let mut redefines = None;
@@ -679,6 +684,7 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
                     // If we've seen the name and no other flags are set, and we haven't set type_ref yet,
                     // then this must be the type_ref (the `:` is consumed by Pest's sequence matching)
                     type_ref = Some(text.to_string());
+                    type_ref_position = Some(span_to_position(pair.as_span(), source));
                     next_is_type = false;
                     debug!("parse_part_usage: Set type_ref to: {:?}", type_ref);
                 } else if next_is_redefines {
@@ -776,6 +782,7 @@ fn parse_part_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
         range: Some(span_to_source_range(span, source)),
         specializes,
         type_ref,
+        type_ref_position,
         multiplicity,
         ordered,
         redefines,
@@ -1047,6 +1054,7 @@ struct PortDefAccumulator {
     name_position: Option<SourcePosition>,
     specializes: Option<String>,
     type_ref: Option<String>,
+    type_ref_position: Option<SourcePosition>,
     members: Vec<Member>,
     metadata: Vec<MetadataAnnotation>,
     next_is_specialization: bool,
@@ -1075,6 +1083,7 @@ fn process_port_def_pair(
                 acc.next_is_specialization = false;
             } else if acc.next_is_type {
                 acc.type_ref = Some(text.to_string());
+                acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
                 acc.next_is_type = false;
             }
         }
@@ -1109,6 +1118,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
         name_position: None,
         specializes: None,
         type_ref: None,
+        type_ref_position: None,
         members: Vec::new(),
         metadata: Vec::new(),
         next_is_specialization: false,
@@ -1123,6 +1133,7 @@ fn parse_port_def(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) ->
         range: Some(span_to_source_range(span, source)),
         specializes: acc.specializes,
         type_ref: acc.type_ref,
+        type_ref_position: acc.type_ref_position,
         metadata: acc.metadata,
         members: acc.members,
     })
@@ -1133,6 +1144,7 @@ struct PortUsageAccumulator {
     name: Option<String>,
     name_position: Option<SourcePosition>,
     type_ref: Option<String>,
+    type_ref_position: Option<SourcePosition>,
     members: Vec<Member>,
     metadata: Vec<MetadataAnnotation>,
     next_is_type: bool,
@@ -1157,6 +1169,7 @@ fn process_port_usage_pair(
                 acc.name_position = Some(span_to_position(pair.as_span(), source));
             } else if acc.next_is_type {
                 acc.type_ref = Some(text.to_string());
+                acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
                 acc.next_is_type = false;
             }
         }
@@ -1187,6 +1200,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
         name: None,
         name_position: None,
         type_ref: None,
+        type_ref_position: None,
         members: Vec::new(),
         metadata: Vec::new(),
         next_is_type: false,
@@ -1199,6 +1213,7 @@ fn parse_port_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest::Span<'_>) 
         name_position: acc.name_position,
         range: Some(span_to_source_range(span, source)),
         type_ref: acc.type_ref,
+        type_ref_position: acc.type_ref_position,
         metadata: acc.metadata,
         members: acc.members,
     })

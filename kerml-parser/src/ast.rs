@@ -16,6 +16,18 @@ pub struct SourcePosition {
     pub length: u32,
 }
 
+impl SourcePosition {
+    /// Converts this position to a single-line source range.
+    pub fn to_range(&self) -> SourceRange {
+        SourceRange {
+            start_line: self.line,
+            start_character: self.character,
+            end_line: self.line,
+            end_character: self.character + self.length,
+        }
+    }
+}
+
 /// Full source range (start and end position)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceRange {
@@ -202,6 +214,9 @@ pub struct PartDef {
     pub specializes: Option<String>,
     /// Type reference (after :)
     pub type_ref: Option<String>,
+    /// Source position of the type reference (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_ref_position: Option<SourcePosition>,
     /// Multiplicity
     pub multiplicity: Option<Multiplicity>,
     /// Whether ordered
@@ -227,6 +242,9 @@ pub struct PartUsage {
     pub specializes: Option<String>,
     /// Type reference (after :)
     pub type_ref: Option<String>,
+    /// Source position of the type reference (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_ref_position: Option<SourcePosition>,
     /// Multiplicity
     pub multiplicity: Option<Multiplicity>,
     /// Whether ordered
@@ -320,6 +338,9 @@ pub struct PortDef {
     pub specializes: Option<String>,
     /// Type reference (after :)
     pub type_ref: Option<String>,
+    /// Source position of the type reference (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_ref_position: Option<SourcePosition>,
     /// Metadata annotations (e.g., @Tag(value = "x"))
     #[serde(default)]
     pub metadata: Vec<MetadataAnnotation>,
@@ -340,6 +361,9 @@ pub struct PortUsage {
     pub range: Option<SourceRange>,
     /// Type reference
     pub type_ref: Option<String>,
+    /// Source position of the type reference (when present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_ref_position: Option<SourcePosition>,
     /// Metadata annotations (e.g., @Tag(value = "x"))
     #[serde(default)]
     pub metadata: Vec<MetadataAnnotation>,
@@ -536,6 +560,75 @@ pub enum Literal {
     String(String),
     /// Boolean literal
     Boolean(bool),
+}
+
+/// Collects all source ranges where a type reference appears in the document.
+/// Used by the language server to classify those spans as "type" for semantic highlighting.
+pub fn collect_type_ref_ranges(doc: &SysMLDocument) -> Vec<SourceRange> {
+    let mut out = Vec::new();
+    for pkg in &doc.packages {
+        collect_type_ref_ranges_members(&pkg.members, &mut out);
+    }
+    out
+}
+
+fn collect_type_ref_ranges_members(members: &[Member], out: &mut Vec<SourceRange>) {
+    for m in members {
+        match m {
+            Member::AttributeDef(a) => {
+                if let Some(ref pos) = a.type_ref_position {
+                    out.push(pos.to_range());
+                }
+                collect_type_ref_ranges_members(&a.members, out);
+            }
+            Member::PartDef(p) => {
+                if let Some(ref pos) = p.type_ref_position {
+                    out.push(pos.to_range());
+                }
+                collect_type_ref_ranges_members(&p.members, out);
+            }
+            Member::PartUsage(p) => {
+                if let Some(ref pos) = p.type_ref_position {
+                    out.push(pos.to_range());
+                }
+                collect_type_ref_ranges_members(&p.members, out);
+            }
+            Member::PortDef(p) => {
+                if let Some(ref pos) = p.type_ref_position {
+                    out.push(pos.to_range());
+                }
+                collect_type_ref_ranges_members(&p.members, out);
+            }
+            Member::PortUsage(p) => {
+                if let Some(ref pos) = p.type_ref_position {
+                    out.push(pos.to_range());
+                }
+                collect_type_ref_ranges_members(&p.members, out);
+            }
+            Member::InterfaceDef(i) => {
+                collect_type_ref_ranges_members(&i.members, out);
+            }
+            Member::ItemDef(i) => {
+                collect_type_ref_ranges_members(&i.members, out);
+            }
+            Member::ItemUsage(_) => {
+                // ItemUsage has no nested members
+            }
+            Member::RequirementDef(r) => {
+                collect_type_ref_ranges_members(&r.members, out);
+            }
+            Member::RequirementUsage(r) => {
+                collect_type_ref_ranges_members(&r.members, out);
+            }
+            Member::ActionDef(_) => {
+                // ActionDef has body (statements), not members; skip for type ref collection
+            }
+            Member::Package(p) => {
+                collect_type_ref_ranges_members(&p.members, out);
+            }
+            _ => {}
+        }
+    }
 }
 
 

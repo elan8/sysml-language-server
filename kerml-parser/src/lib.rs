@@ -20,4 +20,5 @@ mod validation_tests;
 
 pub use parser::parse_sysml;
 pub use error::{ParseError, Result};
+pub use ast::collect_type_ref_ranges;
 

@@ -627,12 +627,15 @@ impl LanguageServer for Backend {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
-            Some(t) => t.to_string(),
+        let (text, type_ref_ranges) = match state.index.get(&uri) {
+            Some(e) => (
+                e.content.clone(),
+                e.parsed.as_ref().map(kerml_parser::collect_type_ref_ranges),
+            ),
             None => return Ok(None),
         };
         drop(state);
-        let tokens = semantic_tokens_full(&text);
+        let tokens = semantic_tokens_full(&text, type_ref_ranges.as_deref());
         Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
 
@@ -643,8 +646,11 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let range = params.range;
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
-            Some(t) => t.to_string(),
+        let (text, type_ref_ranges) = match state.index.get(&uri) {
+            Some(e) => (
+                e.content.clone(),
+                e.parsed.as_ref().map(kerml_parser::collect_type_ref_ranges),
+            ),
             None => return Ok(None),
         };
         drop(state);
@@ -654,6 +660,7 @@ impl LanguageServer for Backend {
             range.start.character,
             range.end.line,
             range.end.character,
+            type_ref_ranges.as_deref(),
         );
         Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
     }

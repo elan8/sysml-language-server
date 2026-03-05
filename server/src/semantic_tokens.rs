@@ -1,6 +1,10 @@
 //! Semantic tokenization for SysML: classifies tokens so the editor can apply
-//! semantic highlighting (keyword, string, number, comment, operator, variable).
+//! semantic highlighting (keyword, string, number, comment, operator, variable, type).
+//!
+//! When the parser has successfully built an AST, we use it to refine type references
+//! (parser knows exactly which identifiers are types); otherwise we use heuristics (e.g. after `:`).
 
+use kerml_parser::ast::SourceRange;
 use tower_lsp::lsp_types::{
     SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
 };
@@ -285,6 +289,42 @@ fn tokenize_line(line: &str, line_index: u32, in_block_comment: bool) -> (Vec<(u
     (tokens, still_in_block_comment)
 }
 
+/// Returns true if the token span is entirely inside one of the type ref ranges.
+fn token_in_type_ref_range(
+    line: u32,
+    start_char: u32,
+    length: u32,
+    type_ref_ranges: &[SourceRange],
+) -> bool {
+    let end_char = start_char + length;
+    for r in type_ref_ranges {
+        if line >= r.start_line && line <= r.end_line {
+            let range_start = if line == r.start_line { r.start_character } else { 0 };
+            let range_end = if line == r.end_line {
+                r.end_character
+            } else {
+                u32::MAX
+            };
+            if start_char >= range_start && end_char <= range_end {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Refine variable tokens to type when they fall inside parser-known type ref ranges.
+fn apply_type_ref_ranges(
+    tokens: &mut [(u32, u32, u32, u32)],
+    type_ref_ranges: &[SourceRange],
+) {
+    for (line, start, len, type_idx) in tokens.iter_mut() {
+        if *type_idx == TYPE_VARIABLE && token_in_type_ref_range(*line, *start, *len, type_ref_ranges) {
+            *type_idx = TYPE_TYPE;
+        }
+    }
+}
+
 /// Encode tokens into LSP semantic tokens (delta encoding).
 fn encode(tokens: &[(u32, u32, u32, u32)]) -> Vec<SemanticToken> {
     let mut data = Vec::with_capacity(tokens.len());
@@ -313,13 +353,21 @@ fn encode(tokens: &[(u32, u32, u32, u32)]) -> Vec<SemanticToken> {
 }
 
 /// Produce semantic tokens for the full document.
-pub fn semantic_tokens_full(text: &str) -> SemanticTokens {
+/// When `type_ref_ranges` is Some (from a successful parse), those ranges classify
+/// identifiers as type; otherwise the lexer uses heuristics (e.g. identifier after `:`).
+pub fn semantic_tokens_full(
+    text: &str,
+    type_ref_ranges: Option<&[SourceRange]>,
+) -> SemanticTokens {
     let mut all_tokens = Vec::new();
     let mut in_block_comment = false;
     for (line_index, line) in text.lines().enumerate() {
         let (line_tokens, still_in) = tokenize_line(line, line_index as u32, in_block_comment);
         in_block_comment = still_in;
         all_tokens.extend(line_tokens);
+    }
+    if let Some(ranges) = type_ref_ranges {
+        apply_type_ref_ranges(&mut all_tokens, ranges);
     }
     SemanticTokens {
         result_id: None,
@@ -339,12 +387,14 @@ fn block_comment_state_after_line(lines: &[&str], through_line: u32) -> bool {
 
 /// Produce semantic tokens for a range (for textDocument/semanticTokens/range).
 /// Only tokens that overlap the given range are included.
+/// When `type_ref_ranges` is Some, those ranges refine variable -> type.
 pub fn semantic_tokens_range(
     text: &str,
     start_line: u32,
     start_character: u32,
     end_line: u32,
     end_character: u32,
+    type_ref_ranges: Option<&[SourceRange]>,
 ) -> SemanticTokens {
     let mut all_tokens = Vec::new();
     let lines: Vec<&str> = text.lines().collect();
@@ -375,6 +425,10 @@ pub fn semantic_tokens_range(
             }
             all_tokens.push((ln, start_char, length, token_type));
         }
+    }
+
+    if let Some(ranges) = type_ref_ranges {
+        apply_type_ref_ranges(&mut all_tokens, ranges);
     }
 
     SemanticTokens {
