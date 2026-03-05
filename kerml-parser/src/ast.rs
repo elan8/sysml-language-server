@@ -775,7 +775,7 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
             }
             Member::PortDef(p) => {
                 if let Some(ref pos) = p.name_position {
-                    out.push((pos.to_range(), SemanticRole::Property));
+                    out.push((pos.to_range(), SemanticRole::Type));
                 }
                 if let (Some(ref spec), Some(ref pos)) = (&p.specializes, &p.specializes_position) {
                     let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
