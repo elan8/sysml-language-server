@@ -1,4 +1,23 @@
 // Pest grammar for SysML v2 (KerML)
+// Aligned with SysML v2 Textual BNF (Clause 8.2.2), SysML-textual-bnf.kebnf
+//
+// BNF Lexical (8.2.2.1.2): RESERVED_KEYWORD =
+//   about, abstract, accept, action, actor, after, alias, all, allocate, allocation,
+//   analysis, and, as, assert, assign, assume, at, attribute, bind, binding, by, calc,
+//   case, comment, concern, connect, connection, constant, constraint, crosses, decide,
+//   def, default, defined, dependency, derived, do, doc, else, end, entry, enum,
+//   event, exhibit, exit, expose, false, filter, first, flow, for, fork, frame, from,
+//   hastype, if, implies, import, in, include, individual, inout, interface, istype,
+//   item, join, language, library, locale, loop, merge, message, meta, metadata,
+//   nonunique, not, null, objective, occurrence, of, or, ordered, out, package, parallel,
+//   part, perform, port, private, protected, public, redefines, ref, references, render,
+//   rendering, rep, require, requirement, return, satisfy, send, snapshot, specializes,
+//   stakeholder, standard, state, subject, subsets, succession, terminate, then, timeslice,
+//   to, transition, true, until, use, variant, variation, verification, verify, via,
+//   view, viewpoint, when, while, xor
+//
+// BNF operator alternatives: DEFINED_BY = ':' | 'defined' 'by'; SPECIALIZES = ':>' | 'specializes';
+// SUBSETS = ':>' | 'subsets'; REFERENCES = '::>' | 'references'; CROSSES = '=>' | 'crosses'; REDEFINES = ':>>' | 'redefines'
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 // Support both standard comments and //* ... */ pattern (commented-out block comments)
@@ -32,6 +51,14 @@ name = _{ qualified_name | identifier | string_literal }
 
 package_name = _{ qualified_name | string_literal | identifier }
 
+// BNF operator alternatives (Clause 8.2.2.1.2)
+defined_by = _{ ":" | "defined" ~ "by" }
+specializes_keyword = _{ ":>" | "specializes" }
+subsets_keyword = _{ ":>" | "subsets" }
+references_keyword = _{ "::>" | "references" }
+crosses_keyword = _{ "=>" | "crosses" }
+redefines_keyword = _{ ":>>" | "redefines" }
+
 // Literals - supports scientific notation (1E20, 1.5e-10)
 // Note: integers with scientific notation are actually floats
 // Order matters: float must come before integer to match "3.50" correctly
@@ -50,12 +77,13 @@ document = { SOI ~ (import_statement | package | allocate_statement | metadata_a
 // Supports both "import X;" and "import X { ... }" patterns
 // Supports recursive imports: import name::** or import name::**[@Filter]
 // Supports filter expressions: import name::**[@Safety or @Security]
+// BNF Import: visibility 'import' ( isImportAll ?= 'all' )? ImportDeclaration RelationshipBody
 import_statement ={ 
-    visibility? ~ "import" ~ name ~ ("::" ~ ("**" | "*"))? ~ 
+    visibility? ~ "import" ~ ("all")? ~ name ~ ("::" ~ ("**" | "*"))? ~ 
     ("[" ~ filter_expr ~ (("|" | "or" | "and") ~ filter_expr)* ~ "]")? ~
     (("{" ~ (COMMENT | member)* ~ "}") | (";" | COMMENT))
 }
-visibility = _{ "private" | "public" }
+visibility = _{ "private" | "public" | "protected" }
 
 // Package declaration - supports library modifier and optional body
 // Supports filter statements inside packages
@@ -196,8 +224,8 @@ part_def = {
     (metadata_annotation)* ~
     ("abstract")? ~ "part" ~ "def" ~ name ~ 
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~ 
-    (":" ~ ">" ~ name)? ~ 
-    (":" ~ (qualified_name | name))? ~
+    (specializes_keyword ~ name)? ~ 
+    (defined_by ~ (qualified_name | name))? ~
     ("ordered")? ~
     (metadata_annotation)* ~
     ("{" ~ (import_statement | member)* ~ "}" | ";")
@@ -215,15 +243,15 @@ part_def = {
 part_usage = {
     "part" ~ 
     (metadata_annotation)* ~
-    (":>>" ~ name | name)? ~ 
+    (redefines_keyword ~ name | name)? ~ 
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
-    (":" ~ ">" ~ name)? ~
-    (":" ~ (qualified_name | name))? ~
+    (specializes_keyword ~ name)? ~
+    (defined_by ~ (qualified_name | name))? ~
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
     ("ordered")? ~
     (metadata_annotation)* ~
-    ("redefines" ~ name)? ~
-    ("subsets" ~ name)? ~
+    (redefines_keyword ~ name)? ~
+    (subsets_keyword ~ name)? ~
     ("=" ~ expr_value)? ~
     (metadata_annotation)* ~
     ("{" ~ (import_statement | member)* ~ "}" | ";")
@@ -233,13 +261,13 @@ part_usage = {
 // Supports range expressions in multiplicities like [0..1]
 // Supports :>> syntax: abstract part :>> name
 abstract_part_usage = {
-    "abstract" ~ "part" ~ (":>>" ~ name | name)? ~
+    "abstract" ~ "part" ~ (redefines_keyword ~ name | name)? ~
     ("[" ~ (expr_value ~ (".." ~ expr_value)? | "*") ~ "]")? ~
-    (":" ~ ">" ~ name)? ~
-    (":" ~ (qualified_name | name))? ~
-    ("redefines" ~ name)? ~
+    (specializes_keyword ~ name)? ~
+    (defined_by ~ (qualified_name | name))? ~
+    (redefines_keyword ~ name)? ~
     ("ordered")? ~
-    ("subsets" ~ name)? ~
+    (subsets_keyword ~ name)? ~
     ("=" ~ expr_value)? ~
     (metadata_annotation)* ~
     ("{" ~ member* ~ "}" | ";")
@@ -265,12 +293,12 @@ variant_part_usage = {
 // Supports short ID syntax: attribute <'id'> name
 // Supports "attribute redefines name default ..." (name optional when redefines present)
 attribute_def = {
-    visibility? ~ "attribute" ~ ("def")? ~ (short_id)? ~ (("redefines" ~ name) | (name ~ ("redefines" ~ name)?)) ~ 
+    visibility? ~ "attribute" ~ ("def")? ~ (short_id)? ~ ((redefines_keyword ~ name) | (name ~ (redefines_keyword ~ name)?)) ~ 
     ("[" ~ (expr_value ~ ".." ~ ("*" | expr_value) | expr_value | "*") ~ "]")? ~
     ("nonunique")? ~
-    (":" ~ ">" ~ name)? ~
-    (":" ~ (qualified_name | name))? ~
-    ("redefines" ~ name)? ~
+    (specializes_keyword ~ name)? ~
+    (defined_by ~ (qualified_name | name))? ~
+    (redefines_keyword ~ name)? ~
     ("default" ~ ("=" ~ expr_value | expr_value))? ~
     ("=" ~ expr_value)? ~
     ("{" ~ attribute_body* ~ "}" | ";")
@@ -380,9 +408,9 @@ port_body = { member* }
 
 port_def = {
     "port" ~ "def" ~ name ~
-    (":" ~ ">" ~ name)? ~
-    (":" ~ (qualified_name | name))? ~
-    ("redefines" ~ name)? ~
+    (specializes_keyword ~ name)? ~
+    (defined_by ~ (qualified_name | name))? ~
+    (redefines_keyword ~ name)? ~
     (metadata_annotation)* ~
     ("{" ~ port_body ~ "}" | ";")
 }
@@ -828,11 +856,11 @@ constraint_usage = {
     ("{" ~ (in_statement | expr_value | member)* ~ "}" | ";")
 }
 
-// Assert constraint
+// Assert constraint - BNF: 'assert' ( isNegated ?= 'not' )? ( ... | 'constraint' ConstraintUsageDeclaration ) CalculationBody
 // Supports comparison operators in the expression
-// Also supports named constraints: assert constraint name { expr }
+// Also supports named constraints: assert constraint name { expr }; assert not constraint { expr }
 assert_constraint = {
-    "assert" ~ "constraint" ~ (name)? ~
+    "assert" ~ ("not")? ~ "constraint" ~ (name)? ~
     (":" ~ (qualified_name | name))? ~
     ("{" ~ (in_statement | expr_value | member)* ~ "}" | expr_value ~ ";" | ";")
 }
@@ -1474,9 +1502,10 @@ in_statement = {
     ("{" ~ member* ~ "}" | ";")
 }
 
-// Satisfy statement (e.g., "satisfy name by name;")
+// Satisfy statement - BNF SatisfyRequirementUsage: 'assert' ( isNegated ?= 'not' ) 'satisfy' ... ValuePart? ( 'by' ... )? RequirementBody
+// (e.g., "satisfy name by name;", "assert satisfy req by x;", "assert not satisfy req by x;")
 satisfy_statement = {
-    "satisfy" ~ (string_literal | qualified_name | name) ~
+    ("assert" ~ ("not")?)? ~ "satisfy" ~ (string_literal | qualified_name | name) ~
     ("by" ~ (string_literal | qualified_name | name))? ~
     ("{" ~ member* ~ "}" | ";")
 }
