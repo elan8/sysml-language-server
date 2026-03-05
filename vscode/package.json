@@ -2,7 +2,7 @@
   "name": "sysml-language-server",
   "displayName": "SysML Language Server",
   "description": "LSP client for SysML v2 (KerML) via sysml-language-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "repository": {
     "type": "git",
