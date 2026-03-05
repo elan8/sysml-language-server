@@ -68,6 +68,12 @@
           "type": "string",
           "default": "sysml-language-server",
           "description": "Path to the sysml-language-server binary (or 'sysml-language-server' if on PATH)."
+        },
+        "sysml-language-server.libraryPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Paths to SysML library roots (e.g. SysML-v2-Release clone or custom libraries). Files under these paths are indexed for hover, go-to-definition, and completion."
         }
       }
     }

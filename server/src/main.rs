@@ -70,6 +70,8 @@ struct IndexEntry {
 struct ServerState {
     /// Workspace root URIs from initialize (workspace_folders or root_uri).
     workspace_roots: Vec<Url>,
+    /// Library path roots from config (e.g. SysML-v2-Release). Indexed like workspace_roots.
+    library_paths: Vec<Url>,
     /// One source of truth: URI -> (content, parsed). Open docs and workspace-scanned files.
     index: std::collections::HashMap<Url, IndexEntry>,
     /// Workspace-wide symbol table: flat list of definable symbols, updated when index changes.
@@ -91,6 +93,39 @@ fn update_symbol_table_for_uri(
 /// Removes all symbol table entries for `uri`.
 fn remove_symbol_table_entries_for_uri(state: &mut ServerState, uri: &Url) {
     state.symbol_table.retain(|e| e.uri != *uri);
+}
+
+/// Returns true if `uri` is under any of the library path roots (path prefix check).
+fn uri_under_any_library(uri: &Url, library_paths: &[Url]) -> bool {
+    let uri_path = match uri.to_file_path() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    for lib in library_paths {
+        if let Ok(lib_path) = lib.to_file_path() {
+            if uri_path.starts_with(&lib_path) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Parse library paths from LSP config (initialization_options or didChangeConfiguration settings).
+fn parse_library_paths_from_value(value: Option<&serde_json::Value>) -> Vec<Url> {
+    value
+        .and_then(|opts| opts.get("libraryPaths"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str())
+                .filter_map(|path_str| {
+                    let path = std::path::PathBuf::from(path_str);
+                    Url::from_file_path(path).ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Builds Markdown for symbol hover: title (kind + name), code block with signature or description, container, optional location.
@@ -136,9 +171,11 @@ impl LanguageServer for Backend {
             .map(|folders| folders.iter().map(|f| f.uri.clone()).collect())
             .or_else(|| params.root_uri.as_ref().map(|u| vec![u.clone()]))
             .unwrap_or_default();
+        let library_paths: Vec<Url> = parse_library_paths_from_value(params.initialization_options.as_ref());
         {
             let mut state = self.state.write().await;
             state.workspace_roots = roots;
+            state.library_paths = library_paths;
         }
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
@@ -179,14 +216,24 @@ impl LanguageServer for Backend {
             .log_message(MessageType::INFO, "sysml-language-server initialized")
             .await;
         let state = Arc::clone(&self.state);
-        let roots = state.read().await.workspace_roots.clone();
-        if roots.is_empty() {
+        let (workspace_roots, library_paths) = {
+            let st = state.read().await;
+            (
+                st.workspace_roots.clone(),
+                st.library_paths.clone(),
+            )
+        };
+        let scan_roots: Vec<Url> = workspace_roots
+            .into_iter()
+            .chain(library_paths)
+            .collect();
+        if scan_roots.is_empty() {
             return;
         }
         tokio::spawn(async move {
             let entries: Vec<(Url, String)> = tokio::task::spawn_blocking(move || {
                 let mut out = Vec::new();
-                for root in roots {
+                for root in scan_roots {
                     let path = match root.to_file_path() {
                         Ok(p) => p,
                         Err(_) => continue,
@@ -329,6 +376,78 @@ impl LanguageServer for Backend {
                 remove_symbol_table_entries_for_uri(&mut state, &event.uri);
             }
         }
+    }
+
+    async fn did_change_configuration(&self, params: tower_lsp::lsp_types::DidChangeConfigurationParams) {
+        let new_library_paths = params
+            .settings
+            .get("sysml-language-server")
+            .map(|v| parse_library_paths_from_value(Some(v)))
+            .unwrap_or_else(|| parse_library_paths_from_value(Some(&params.settings)));
+        let mut state = self.state.write().await;
+        let old_library_paths = std::mem::take(&mut state.library_paths);
+        if new_library_paths == old_library_paths {
+            state.library_paths = old_library_paths;
+            return;
+        }
+        let uris_to_remove: Vec<Url> = state
+            .index
+            .keys()
+            .filter(|uri| uri_under_any_library(uri, &old_library_paths))
+            .cloned()
+            .collect();
+        for uri in &uris_to_remove {
+            state.index.remove(uri);
+            remove_symbol_table_entries_for_uri(&mut state, uri);
+        }
+        state.library_paths = new_library_paths.clone();
+        drop(state);
+        let state = Arc::clone(&self.state);
+        tokio::spawn(async move {
+            let entries: Vec<(Url, String)> = tokio::task::spawn_blocking(move || {
+                let mut out = Vec::new();
+                for root in new_library_paths {
+                    let path = match root.to_file_path() {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+                    for entry in WalkDir::new(path)
+                        .follow_links(false)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
+                        if !entry.file_type().is_file() {
+                            continue;
+                        }
+                        let ext = entry.path().extension().and_then(|e| e.to_str());
+                        if ext != Some("sysml") && ext != Some("kerml") {
+                            continue;
+                        }
+                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                            if let Ok(uri) = Url::from_file_path(entry.path()) {
+                                out.push((uri, content));
+                            }
+                        }
+                    }
+                }
+                out
+            })
+            .await
+            .unwrap_or_default();
+            let mut st = state.write().await;
+            for (uri, content) in entries {
+                let parsed = kerml_parser::parse_sysml(&content).ok();
+                let new_entries = parsed.as_ref().map(|doc| collect_symbol_entries(doc, &uri));
+                st.index.insert(
+                    uri.clone(),
+                    IndexEntry {
+                        content,
+                        parsed,
+                    },
+                );
+                update_symbol_table_for_uri(&mut st, &uri, new_entries.as_deref());
+            }
+        });
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {

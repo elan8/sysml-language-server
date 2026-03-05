@@ -18,6 +18,10 @@ Language server for [SysML v2](https://www.omg.org/sysml/sysmlv2/) (and KerML). 
 
 The server is **workspace-aware**: hover, completion, go to definition, find references, rename, and workspace symbol search use all `.sysml` and `.kerml` files in the workspace (from workspace folders or root URI). The workspace is indexed on startup and kept in sync via open/close and file watcher events.
 
+### Library paths
+
+For the standard library (e.g. [SysML-v2-Release](https://github.com/Systems-Modeling/SysML-v2-Release)) and custom libraries, add their roots to **`sysml-language-server.libraryPaths`** in settings (array of paths). The server indexes `.sysml` and `.kerml` under those paths so hover, go-to-definition, and completion work for symbols from those libraries. You can add multiple paths (e.g. one for the OMG release and one for an internal library). Paths are resolved relative to the first workspace folder if not absolute. Changing the setting updates the index without restarting the server.
+
 ## Editor features (VS Code extension)
 
 - [x] Syntax highlighting (TextMate grammar for `.sysml` / `.kerml`)

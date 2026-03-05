@@ -31,6 +31,11 @@ function getBundledServerCommand(extensionPath: string): string {
 export function activate(context: ExtensionContext): void {
   const config = workspace.getConfiguration("sysml-language-server");
   const serverPath = config.get<string>("serverPath") ?? "sysml-language-server";
+  const libraryPathsRaw = config.get<string[]>("libraryPaths") ?? [];
+  const workspaceRoot = workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+  const libraryPaths = libraryPathsRaw.map((p) =>
+    path.isAbsolute(p) ? p : path.resolve(workspaceRoot, p)
+  );
 
   let serverCommand: string;
   if (serverPath === "sysml-language-server") {
@@ -38,10 +43,7 @@ export function activate(context: ExtensionContext): void {
   } else if (path.isAbsolute(serverPath)) {
     serverCommand = serverPath;
   } else {
-    serverCommand = path.resolve(
-      workspace.workspaceFolders?.[0]?.uri.fsPath ?? "",
-      serverPath
-    );
+    serverCommand = path.resolve(workspaceRoot, serverPath);
   }
 
   const serverOptions: ServerOptions = {
@@ -57,6 +59,9 @@ export function activate(context: ExtensionContext): void {
     ],
     synchronize: {
       fileEvents: workspace.createFileSystemWatcher("**/*.{sysml,kerml}"),
+    },
+    initializationOptions: {
+      libraryPaths,
     },
   };
 
