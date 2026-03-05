@@ -38,6 +38,7 @@ jobs:
     steps:
       - name: Resolve tag and version
         id: version
+        shell: bash
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
