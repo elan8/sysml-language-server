@@ -285,41 +285,18 @@ export function createExportHandler(opts: ExportHandlerOpts) {
     }
 
     function exportSVG(): void {
-        const { currentView, cy } = getViewState();
-
-        if (currentView === 'sysml' && cy) {
-            if (typeof (cy as any).svg === 'function') {
-                const svgContent = (cy as any).svg({ scale: 1, full: true });
-                const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
-                const reader = new FileReader();
-                reader.onloadend = function () {
-                    postMessage({
-                        command: 'export',
-                        format: 'svg',
-                        data: reader.result
-                    });
-                };
-                reader.readAsDataURL(svgBlob);
-            } else {
+        const svgString = getSvgStringForExport();
+        if (!svgString) {
+            // Fallback to PNG for Cytoscape when svg() is not available
+            const { currentView, cy } = getViewState();
+            if (currentView === 'sysml' && cy) {
                 exportPNG();
+            } else {
+                console.error('No SVG available for export');
             }
             return;
         }
-
-        const svgElement = document.querySelector('#visualization svg') as SVGSVGElement | null;
-        if (!svgElement) {
-            console.error('No SVG element found for SVG export');
-            return;
-        }
-
-        const preparedSvg = prepareSvgForExport(svgElement);
-        if (!preparedSvg) {
-            console.error('Failed to prepare SVG for export');
-            return;
-        }
-
-        const svgData = new XMLSerializer().serializeToString(preparedSvg);
-        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
         const reader = new FileReader();
         reader.onloadend = function () {
             postMessage({
@@ -331,10 +308,34 @@ export function createExportHandler(opts: ExportHandlerOpts) {
         reader.readAsDataURL(svgBlob);
     }
 
+    /**
+     * Returns the current diagram as an SVG string for testing/debugging.
+     * Returns null if no SVG is available (e.g. placeholder or loading).
+     */
+    function getSvgStringForExport(): string | null {
+        const { currentView, cy } = getViewState();
+
+        if (currentView === 'sysml' && cy) {
+            if (typeof (cy as any).svg === 'function') {
+                return (cy as any).svg({ scale: 1, full: true });
+            }
+            return null;
+        }
+
+        const svgElement = document.querySelector('#visualization svg') as SVGSVGElement | null;
+        if (!svgElement) return null;
+
+        const preparedSvg = prepareSvgForExport(svgElement);
+        if (!preparedSvg) return null;
+
+        return new XMLSerializer().serializeToString(preparedSvg);
+    }
+
     return {
         exportJSON,
         exportPNG,
         exportSVG,
-        prepareSvgForExport
+        prepareSvgForExport,
+        getSvgStringForExport
     };
 }

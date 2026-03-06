@@ -80,8 +80,24 @@ function createMessageDispatcher(ctx) {
                 setLastContentHash('');
                 updateVisualization(true);
                 break;
+            case 'testDiagramExported':
+                handleTestDiagramExported(message.viewId, message.svgString).catch(err => 
+                // eslint-disable-next-line no-console
+                console.error('[SysML Visualizer] Failed to write test diagram:', err));
+                break;
         }
     };
+}
+async function handleTestDiagramExported(viewId, svgString) {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder)
+        return;
+    const outputDir = vscode.Uri.joinPath(workspaceFolder.uri, 'test-output', 'diagrams');
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, 'test-output'));
+    await vscode.workspace.fs.createDirectory(outputDir);
+    const safeViewId = (viewId || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileUri = vscode.Uri.joinPath(outputDir, `${safeViewId}.svg`);
+    await vscode.workspace.fs.writeFile(fileUri, Buffer.from(svgString, 'utf8'));
 }
 function createMessageHandlers(context) {
     const { panel, document, lspModelProvider, fileUris, updateVisualization, setNavigating } = context;

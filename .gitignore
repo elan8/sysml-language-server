@@ -1,5 +1,6 @@
 target/
 vscode/node_modules/
 vscode/.vscode-test/
+vscode/testFixture/test-output/
 temp
 kerml-parser/test-logs/

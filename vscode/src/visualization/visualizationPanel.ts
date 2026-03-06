@@ -161,6 +161,11 @@ export class VisualizationPanel {
         return this._document;
     }
 
+    /** Exposes webview for tests (e.g. postMessage exportDiagramForTest). */
+    public getWebview(): vscode.Webview {
+        return this._panel.webview;
+    }
+
     /** Update the LspModelProvider. */
     public setLspModelProvider(provider: LspModelProvider): void {
         this._lspModelProvider = provider;

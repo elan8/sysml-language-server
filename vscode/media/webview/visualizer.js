@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  // src/visualization/webview/prepareData.ts
+  // src/visualization/prepareData.ts
   function prepareDataForView(data, view) {
     if (!data) {
       return data;
@@ -5000,37 +5000,17 @@
       img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
     }
     function exportSVG() {
-      const { currentView: currentView2, cy: cy2 } = getViewState();
-      if (currentView2 === "sysml" && cy2) {
-        if (typeof cy2.svg === "function") {
-          const svgContent = cy2.svg({ scale: 1, full: true });
-          const svgBlob2 = new Blob([svgContent], { type: "image/svg+xml;charset=utf-8" });
-          const reader2 = new FileReader();
-          reader2.onloadend = function() {
-            postMessage({
-              command: "export",
-              format: "svg",
-              data: reader2.result
-            });
-          };
-          reader2.readAsDataURL(svgBlob2);
-        } else {
+      const svgString = getSvgStringForExport();
+      if (!svgString) {
+        const { currentView: currentView2, cy: cy2 } = getViewState();
+        if (currentView2 === "sysml" && cy2) {
           exportPNG();
+        } else {
+          console.error("No SVG available for export");
         }
         return;
       }
-      const svgElement = document.querySelector("#visualization svg");
-      if (!svgElement) {
-        console.error("No SVG element found for SVG export");
-        return;
-      }
-      const preparedSvg = prepareSvgForExport(svgElement);
-      if (!preparedSvg) {
-        console.error("Failed to prepare SVG for export");
-        return;
-      }
-      const svgData = new XMLSerializer().serializeToString(preparedSvg);
-      const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+      const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
       const reader = new FileReader();
       reader.onloadend = function() {
         postMessage({
@@ -5041,11 +5021,26 @@
       };
       reader.readAsDataURL(svgBlob);
     }
+    function getSvgStringForExport() {
+      const { currentView: currentView2, cy: cy2 } = getViewState();
+      if (currentView2 === "sysml" && cy2) {
+        if (typeof cy2.svg === "function") {
+          return cy2.svg({ scale: 1, full: true });
+        }
+        return null;
+      }
+      const svgElement = document.querySelector("#visualization svg");
+      if (!svgElement) return null;
+      const preparedSvg = prepareSvgForExport(svgElement);
+      if (!preparedSvg) return null;
+      return new XMLSerializer().serializeToString(preparedSvg);
+    }
     return {
       exportJSON,
       exportPNG,
       exportSVG,
-      prepareSvgForExport
+      prepareSvgForExport,
+      getSvgStringForExport
     };
   }
 
@@ -5218,6 +5213,14 @@
         vscode.postMessage({
           command: "currentViewResponse",
           view: currentView
+        });
+        break;
+      case "exportDiagramForTest":
+        const svgString = exportHandler.getSvgStringForExport();
+        vscode.postMessage({
+          command: "testDiagramExported",
+          viewId: currentView,
+          svgString: svgString ?? ""
         });
         break;
     }

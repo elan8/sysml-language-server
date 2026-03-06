@@ -21,6 +21,8 @@ export declare class VisualizationPanel {
     exportVisualization(format: string, scale?: number): void;
     private updateVisualization;
     getDocument(): vscode.TextDocument;
+    /** Exposes webview for tests (e.g. postMessage exportDiagramForTest). */
+    getWebview(): vscode.Webview;
     /** Update the LspModelProvider. */
     setLspModelProvider(provider: LspModelProvider): void;
     changeView(viewId: string): void;

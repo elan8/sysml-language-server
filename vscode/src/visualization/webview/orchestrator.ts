@@ -4,7 +4,7 @@
 // Orchestrator: message handling, state, and dispatch to modular renderers.
 // Config (elkWorkerUrl) is set by a minimal inline script in HTML before this bundle loads.
 
-import { prepareDataForView } from './prepareData';
+import { prepareDataForView } from '../prepareData';
 import {
     quickHash,
     buildElementDisplayLabel,
@@ -286,6 +286,15 @@ let lastPillarStats = {};
                 vscode.postMessage({
                     command: 'currentViewResponse',
                     view: currentView
+                });
+                break;
+            case 'exportDiagramForTest':
+                // Export current diagram SVG for testing/review (writes to test-output/diagrams/)
+                const svgString = exportHandler.getSvgStringForExport();
+                vscode.postMessage({
+                    command: 'testDiagramExported',
+                    viewId: currentView,
+                    svgString: svgString ?? ''
                 });
                 break;
         }

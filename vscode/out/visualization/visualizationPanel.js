@@ -149,6 +149,10 @@ class VisualizationPanel {
     getDocument() {
         return this._document;
     }
+    /** Exposes webview for tests (e.g. postMessage exportDiagramForTest). */
+    getWebview() {
+        return this._panel.webview;
+    }
     /** Update the LspModelProvider. */
     setLspModelProvider(provider) {
         this._lspModelProvider = provider;

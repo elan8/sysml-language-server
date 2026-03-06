@@ -119,6 +119,18 @@ export function activate(context: vscode.ExtensionContext): void {
     serverCommand = path.resolve(workspaceRoot, serverPath);
   }
 
+  // On Windows, if the path doesn't exist but path.exe does, use that (e.g. target/release/sysml-language-server)
+  if (
+    process.platform === "win32" &&
+    !fs.existsSync(serverCommand) &&
+    !serverCommand.endsWith(".exe")
+  ) {
+    const withExe = `${serverCommand}.exe`;
+    if (fs.existsSync(withExe)) {
+      serverCommand = withExe;
+    }
+  }
+
   log("Server command:", serverCommand, "libraryPaths:", libraryPaths);
 
   const serverOptions: ServerOptions = {
