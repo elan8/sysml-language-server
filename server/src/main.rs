@@ -6,6 +6,7 @@ mod semantic_tokens;
 
 use kerml_parser::ast::SysMLDocument;
 use std::sync::Arc;
+use std::time::Instant;
 use tower_lsp::lsp_types::Range;
 
 /// Applies an incremental content change (range + new text) to the document.
@@ -52,11 +53,13 @@ use tower_lsp::lsp_types::*;
 use semantic_tokens::{ast_semantic_ranges, legend, semantic_tokens_full, semantic_tokens_range};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use walkdir::WalkDir;
+use serde::{Deserialize, Serialize};
 
 use language::{
     collect_definition_ranges, collect_document_symbols, collect_symbol_entries, completion_prefix,
-    find_reference_ranges, format_document, is_reserved_keyword, keyword_doc, keyword_hover_markdown,
-    line_prefix_at_position, suggest_wrap_in_package, sysml_keywords, word_at_position, SymbolEntry,
+    collect_folding_ranges, find_reference_ranges, format_document, is_reserved_keyword, keyword_doc,
+    keyword_hover_markdown, line_prefix_at_position, suggest_wrap_in_package, sysml_keywords,
+    word_at_position, SymbolEntry,
 };
 
 /// Per-file index entry: content and optional parsed AST (invalidated when content changes).
@@ -76,6 +79,142 @@ struct ServerState {
     index: std::collections::HashMap<Url, IndexEntry>,
     /// Workspace-wide symbol table: flat list of definable symbols, updated when index changes.
     symbol_table: Vec<SymbolEntry>,
+}
+
+// -------------------------
+// Custom requests (extension)
+// -------------------------
+
+#[derive(Debug, Deserialize)]
+struct SysmlModelParams {
+    #[serde(rename = "textDocument")]
+    text_document: TextDocumentIdentifier,
+    scope: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct PositionDto {
+    line: u32,
+    character: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct RangeDto {
+    start: PositionDto,
+    end: PositionDto,
+}
+
+#[derive(Debug, Serialize)]
+struct RelationshipDto {
+    #[serde(rename = "type")]
+    rel_type: String,
+    source: String,
+    target: String,
+    name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SysmlElementDto {
+    #[serde(rename = "type")]
+    element_type: String,
+    name: String,
+    range: RangeDto,
+    children: Vec<SysmlElementDto>,
+    attributes: std::collections::HashMap<String, serde_json::Value>,
+    relationships: Vec<RelationshipDto>,
+    errors: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct SysmlModelStatsDto {
+    #[serde(rename = "totalElements")]
+    total_elements: u32,
+    #[serde(rename = "resolvedElements")]
+    resolved_elements: u32,
+    #[serde(rename = "unresolvedElements")]
+    unresolved_elements: u32,
+    #[serde(rename = "parseTimeMs")]
+    parse_time_ms: u32,
+    #[serde(rename = "modelBuildTimeMs")]
+    model_build_time_ms: u32,
+    #[serde(rename = "parseCached")]
+    parse_cached: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct SysmlModelResultDto {
+    version: u32,
+    elements: Option<Vec<SysmlElementDto>>,
+    relationships: Option<Vec<RelationshipDto>>,
+    stats: Option<SysmlModelStatsDto>,
+}
+
+#[derive(Debug, Serialize)]
+struct SysmlServerStatsDto {
+    uptime: u64,
+    memory: SysmlServerMemoryDto,
+    caches: SysmlServerCachesDto,
+}
+
+#[derive(Debug, Serialize)]
+struct SysmlServerMemoryDto {
+    /// Resident set size in MB (best-effort). Currently 0 when not available.
+    rss: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct SysmlServerCachesDto {
+    documents: usize,
+    #[serde(rename = "symbolTables")]
+    symbol_tables: usize,
+    #[serde(rename = "semanticTokens")]
+    semantic_tokens: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct SysmlClearCacheResultDto {
+    documents: usize,
+    #[serde(rename = "symbolTables")]
+    symbol_tables: usize,
+    #[serde(rename = "semanticTokens")]
+    semantic_tokens: usize,
+}
+
+fn range_to_dto(r: Range) -> RangeDto {
+    RangeDto {
+        start: PositionDto {
+            line: r.start.line,
+            character: r.start.character,
+        },
+        end: PositionDto {
+            line: r.end.line,
+            character: r.end.character,
+        },
+    }
+}
+
+fn doc_symbol_to_element(sym: &DocumentSymbol) -> SysmlElementDto {
+    let children = sym
+        .children
+        .as_ref()
+        .map(|c| c.iter().map(doc_symbol_to_element).collect())
+        .unwrap_or_default();
+    SysmlElementDto {
+        element_type: sym.detail.clone().unwrap_or_else(|| "symbol".to_string()),
+        name: sym.name.clone(),
+        range: range_to_dto(sym.range),
+        children,
+        attributes: std::collections::HashMap::new(),
+        relationships: vec![],
+        errors: None,
+    }
+}
+
+fn count_elements(elements: &[SysmlElementDto]) -> u32 {
+    fn rec(e: &SysmlElementDto) -> u32 {
+        1 + e.children.iter().map(rec).sum::<u32>()
+    }
+    elements.iter().map(rec).sum()
 }
 
 /// Removes all symbol table entries for `uri`, then appends `new_entries` if provided.
@@ -159,6 +298,7 @@ fn symbol_hover_markdown(entry: &SymbolEntry, show_location: bool) -> String {
 struct Backend {
     client: Client,
     state: Arc<RwLock<ServerState>>,
+    start_time: Instant,
 }
 
 #[tower_lsp::async_trait]
@@ -195,6 +335,7 @@ impl LanguageServer for Backend {
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 })),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
@@ -736,6 +877,23 @@ impl LanguageServer for Backend {
         Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 
+    async fn folding_range(
+        &self,
+        params: FoldingRangeParams,
+    ) -> Result<Option<Vec<FoldingRange>>> {
+        let uri = params.text_document.uri;
+        let state = self.state.read().await;
+        let entry = match state.index.get(&uri) {
+            Some(e) => e,
+            None => return Ok(None),
+        };
+        let doc = match &entry.parsed {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        Ok(Some(collect_folding_ranges(doc)))
+    }
+
     async fn symbol(
         &self,
         params: tower_lsp::lsp_types::WorkspaceSymbolParams,
@@ -840,6 +998,99 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
+    async fn sysml_model(&self, params: SysmlModelParams) -> Result<SysmlModelResultDto> {
+        let uri = params.text_document.uri;
+        let scope = params.scope.unwrap_or_default();
+        let want_elements = scope.is_empty() || scope.iter().any(|s| s == "elements");
+        let want_stats = scope.is_empty() || scope.iter().any(|s| s == "stats");
+        let want_relationships = scope.iter().any(|s| s == "relationships");
+
+        let build_start = Instant::now();
+        let state = self.state.read().await;
+        let entry = match state.index.get(&uri) {
+            Some(e) => e,
+            None => {
+                return Ok(SysmlModelResultDto {
+                    version: 0,
+                    elements: Some(vec![]),
+                    relationships: Some(vec![]),
+                    stats: Some(SysmlModelStatsDto {
+                        total_elements: 0,
+                        resolved_elements: 0,
+                        unresolved_elements: 0,
+                        parse_time_ms: 0,
+                        model_build_time_ms: build_start.elapsed().as_millis() as u32,
+                        parse_cached: true,
+                    }),
+                })
+            }
+        };
+        let doc = match &entry.parsed {
+            Some(d) => d,
+            None => return Ok(SysmlModelResultDto { version: 0, elements: Some(vec![]), relationships: Some(vec![]), stats: None }),
+        };
+
+        let elements = if want_elements {
+            let symbols = collect_document_symbols(doc);
+            Some(symbols.iter().map(doc_symbol_to_element).collect::<Vec<_>>())
+        } else {
+            None
+        };
+
+        let relationships = if want_relationships {
+            Some(vec![])
+        } else {
+            None
+        };
+
+        let stats = if want_stats {
+            let total = elements.as_ref().map(|e| count_elements(e)).unwrap_or(0);
+            Some(SysmlModelStatsDto {
+                total_elements: total,
+                resolved_elements: 0,
+                unresolved_elements: 0,
+                parse_time_ms: 0,
+                model_build_time_ms: build_start.elapsed().as_millis() as u32,
+                parse_cached: true,
+            })
+        } else {
+            None
+        };
+
+        Ok(SysmlModelResultDto {
+            version: 0,
+            elements,
+            relationships,
+            stats,
+        })
+    }
+
+    async fn sysml_server_stats(&self, _params: serde_json::Value) -> Result<SysmlServerStatsDto> {
+        let state = self.state.read().await;
+        Ok(SysmlServerStatsDto {
+            uptime: self.start_time.elapsed().as_secs(),
+            memory: SysmlServerMemoryDto { rss: 0 },
+            caches: SysmlServerCachesDto {
+                documents: state.index.len(),
+                symbol_tables: state.symbol_table.len(),
+                semantic_tokens: 0,
+            },
+        })
+    }
+
+    async fn sysml_clear_cache(&self, _params: serde_json::Value) -> Result<SysmlClearCacheResultDto> {
+        let mut state = self.state.write().await;
+        let docs = state.index.len();
+        let syms = state.symbol_table.len();
+        state.index.clear();
+        state.symbol_table.clear();
+        Ok(SysmlClearCacheResultDto {
+            documents: docs,
+            symbol_tables: syms,
+            semantic_tokens: 0,
+        })
+    }
+
     async fn publish_diagnostics_for_document(
         &self,
         uri: tower_lsp::lsp_types::Url,
@@ -874,9 +1125,15 @@ impl Backend {
 async fn main() {
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
     let state = Arc::new(RwLock::new(ServerState::default()));
-    let (service, socket) = LspService::new(move |client| Backend {
+    let start_time = Instant::now();
+    let (service, socket) = LspService::build(move |client| Backend {
         client,
         state: Arc::clone(&state),
-    });
+        start_time,
+    })
+    .custom_method("sysml/model", Backend::sysml_model)
+    .custom_method("sysml/serverStats", Backend::sysml_server_stats)
+    .custom_method("sysml/clearCache", Backend::sysml_clear_cache)
+    .finish();
     Server::new(stdin, stdout, socket).serve(service).await;
 }

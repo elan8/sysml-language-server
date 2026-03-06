@@ -5,8 +5,8 @@
 use kerml_parser::ast::{Member, Multiplicity, SourcePosition, SourceRange, SysMLDocument};
 use tower_lsp::lsp_types::{
     CodeAction, DocumentSymbol, FormattingOptions, Location, OneOf,
-    OptionalVersionedTextDocumentIdentifier, Position, Range, SymbolInformation, SymbolKind,
-    TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
+    FoldingRange, FoldingRangeKind, OptionalVersionedTextDocumentIdentifier, Position, Range,
+    SymbolInformation, SymbolKind, TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
 };
 
 /// Converts (line, character) to byte offset in `text`. LSP uses 0-based line and character
@@ -417,6 +417,39 @@ pub fn collect_document_symbols(doc: &SysMLDocument) -> Vec<DocumentSymbol> {
             out.push(sym);
         }
     }
+    out
+}
+
+/// Collects folding ranges from the AST. This reuses the document-symbol outline ranges and
+/// produces one folding range per symbol whose extent spans multiple lines.
+pub fn collect_folding_ranges(doc: &SysMLDocument) -> Vec<FoldingRange> {
+    let symbols = collect_document_symbols(doc);
+    let mut out = Vec::new();
+
+    fn push_symbol(symbol: &DocumentSymbol, out: &mut Vec<FoldingRange>) {
+        let start = symbol.range.start.line;
+        let end = symbol.range.end.line;
+        if end > start {
+            out.push(FoldingRange {
+                start_line: start,
+                start_character: None,
+                end_line: end,
+                end_character: None,
+                kind: Some(FoldingRangeKind::Region),
+                collapsed_text: None,
+            });
+        }
+        if let Some(children) = symbol.children.as_ref() {
+            for c in children {
+                push_symbol(c, out);
+            }
+        }
+    }
+
+    for s in &symbols {
+        push_symbol(s, &mut out);
+    }
+
     out
 }
 

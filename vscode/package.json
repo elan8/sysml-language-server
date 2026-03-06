@@ -30,7 +30,12 @@
   ],
   "activationEvents": [
     "onLanguage:sysml",
-    "onLanguage:kerml"
+    "onLanguage:kerml",
+    "onCommand:sysml.showModelExplorer",
+    "onCommand:sysml.showVisualizer",
+    "onCommand:sysml.formatDocument",
+    "onCommand:sysml.validateModel",
+    "onCommand:sysml.restartServer"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -70,6 +75,87 @@
         "path": "./syntaxes/sysml.tmLanguage.json"
       }
     ],
+    "snippets": [
+      {
+        "language": "sysml",
+        "path": "./snippets/sysml.json"
+      },
+      {
+        "language": "kerml",
+        "path": "./snippets/sysml.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "sysml.formatDocument",
+        "title": "Format SysML Document",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.validateModel",
+        "title": "Validate SysML Model",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.restartServer",
+        "title": "Restart SysML Language Server",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.showModelExplorer",
+        "title": "Show SysML Model Explorer",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.refreshModelTree",
+        "title": "Refresh SysML Model Explorer",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.showVisualizer",
+        "title": "Show SysML Visualizer",
+        "category": "SysML"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "sysml.formatDocument",
+          "when": "resourceLangId == sysml || resourceLangId == kerml"
+        },
+        {
+          "command": "sysml.validateModel",
+          "when": "resourceLangId == sysml || resourceLangId == kerml"
+        },
+        {
+          "command": "sysml.restartServer"
+        },
+        {
+          "command": "sysml.showModelExplorer"
+        },
+        {
+          "command": "sysml.refreshModelTree"
+        },
+        {
+          "command": "sysml.showVisualizer"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "sysmlModelExplorer",
+          "name": "SysML Model Explorer",
+          "when": "sysml.modelLoaded"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sysmlModelExplorer",
+        "contents": "No SysML model loaded.\\n\\n- Open a `.sysml` or `.kerml` file\\n- Or run **SysML: Show SysML Model Explorer**"
+      }
+    ],
     "configuration": {
       "title": "SysML Language Server",
       "properties": {
@@ -83,6 +169,11 @@
           "items": { "type": "string" },
           "default": [],
           "description": "Paths to SysML library roots (e.g. SysML-v2-Release clone or custom libraries). Files under these paths are indexed for hover, go-to-definition, and completion."
+        },
+        "sysml-language-server.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a SysML status bar item with error/warning counts for the active SysML/KerML file."
         }
       }
     }
