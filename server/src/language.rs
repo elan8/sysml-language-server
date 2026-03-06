@@ -92,7 +92,37 @@ pub fn completion_prefix(line_prefix: &str) -> &str {
     trimmed.get(start..end).unwrap_or("")
 }
 
-/// SysML/KerML keywords used for hover docs and completion.
+/// SysML v2 / KerML reserved keywords (BNF 8.2.2.1.2 RESERVED_KEYWORD, plus grammar extensions:
+/// value, provides, requires).
+/// Single source of truth for semantic token fallback and keyword checks (goto-def, rename).
+/// Note: "position" is a contextual keyword (position_statement) only, not reserved—valid as identifier.
+pub const RESERVED_KEYWORDS: &[&str] = &[
+    "about", "abstract", "accept", "action", "actor", "after", "alias", "all", "allocate",
+    "allocation", "analysis", "and", "as", "assert", "assign", "assume", "at", "attribute",
+    "bind", "binding", "by", "calc", "case", "comment", "concern", "connect", "connection",
+    "constant", "constraint", "crosses", "decide", "def", "default", "defined", "dependency",
+    "derived", "do", "doc", "else", "end", "entry", "enum", "event", "exhibit", "exit",
+    "expose", "false", "filter", "first", "flow", "for", "fork", "frame", "from", "hastype",
+    "if", "implies", "import", "in", "include", "individual", "inout", "interface",
+    "istype", "item", "join", "language", "library", "locale", "loop", "merge", "message",
+    "meta", "metadata", "nonunique", "not", "null", "objective", "occurrence", "of", "or",
+    "ordered", "out", "package", "parallel", "part", "perform", "port", "private",
+    "protected", "provides", "public", "redefines", "ref", "references", "render", "rendering",
+    "rep", "require", "requirement", "requires", "return", "satisfy", "send", "snapshot",
+    "specializes", "stakeholder", "standard", "state", "subject", "subsets", "succession",
+    "terminate", "then", "timeslice", "to", "transition", "true", "until", "use", "value",
+    "variant", "variation", "verification", "verify", "via", "view", "viewpoint", "when",
+    "while", "xor",
+];
+
+/// Returns true if the word is a SysML v2 reserved keyword. Use this for semantic tokens
+/// fallback and for suppressing goto-definition/rename on keywords.
+pub fn is_reserved_keyword(word: &str) -> bool {
+    RESERVED_KEYWORDS.contains(&word)
+}
+
+/// Curated subset of reserved keywords used for completion suggestions and hover docs.
+/// All entries must be in RESERVED_KEYWORDS.
 pub fn sysml_keywords() -> &'static [&'static str] {
     &[
         "package", "library", "part", "attribute", "port", "connection", "interface", "item",
@@ -1652,6 +1682,22 @@ mod tests {
         assert!(kw.contains(&"package"));
         assert!(kw.contains(&"part"));
         assert!(kw.contains(&"attribute"));
+    }
+
+    #[test]
+    fn test_sysml_keywords_subset_of_reserved() {
+        for kw in sysml_keywords() {
+            assert!(
+                is_reserved_keyword(kw),
+                "sysml_keywords() must only contain reserved keywords; '{}' is not reserved",
+                kw
+            );
+        }
+    }
+
+    #[test]
+    fn test_position_not_reserved() {
+        assert!(!is_reserved_keyword("position"));
     }
 
     #[test]

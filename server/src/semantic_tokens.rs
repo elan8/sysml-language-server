@@ -67,22 +67,8 @@ pub fn ast_semantic_ranges(doc: &kerml_parser::ast::SysMLDocument) -> Vec<(Sourc
         .collect()
 }
 
-static KEYWORDS: &[&str] = &[
-    "package", "library", "import", "part", "def", "attribute", "port", "connection",
-    "interface", "item", "value", "action", "requirement", "ref", "alias", "view",
-    "metadata", "filter", "connector", "bind", "allocate", "connect", "variant",
-    "abstract", "occurrence", "calc", "constraint", "exhibit", "transition", "accept",
-    "entry", "exit", "do", "then", "first", "if", "send", "new", "to", "for", "perform",
-    "assert", "assume", "require", "doc", "standard", "expose", "verify", "position",
-    "satisfy", "return", "in", "out", "provides", "requires", "nonunique", "ordered",
-    "redefines", "subsets", "default", "istype", "at", "when", "render", "pin", "connect",
-    "state", "individual", "flow", "succession", "end",
-];
-
-static KEYWORDS_OTHER: &[&str] = &["private", "public", "true", "false"];
-
 fn is_keyword(w: &str) -> bool {
-    KEYWORDS.contains(&w) || KEYWORDS_OTHER.contains(&w)
+    crate::language::is_reserved_keyword(w)
 }
 
 /// Token: (line, start_char, length, type_index).
@@ -330,6 +316,30 @@ fn tokenize_line(line: &str, line_index: u32, in_block_comment: bool) -> (Vec<(u
     (tokens, still_in_block_comment)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_position_is_not_a_keyword() {
+        // Regression: "position" is a common attribute name (e.g. telemetry),
+        // and is not a reserved keyword in SysML v2. It should not be colored as keyword
+        // in the lexer-only fallback.
+        let line = "\tout position : String;";
+        let (tokens, _still_in_comment) = tokenize_line(line, 0, false);
+
+        let mut saw_position = false;
+        for (ln, start, len, ty) in tokens {
+            assert_eq!(ln, 0);
+            if &line[start as usize..(start + len) as usize] == "position" {
+                saw_position = true;
+                assert_eq!(ty, TYPE_VARIABLE);
+            }
+        }
+        assert!(saw_position, "expected to tokenize 'position'");
+    }
+}
+
 /// Returns the AST semantic type for a token span if it is entirely inside one of the given ranges.
 fn token_ast_type(
     line: u32,
@@ -359,8 +369,7 @@ fn token_ast_type(
 }
 
 /// Override token types using AST-derived (range, type) pairs. VARIABLE, NAMESPACE, and KEYWORD
-/// tokens are overridden when the AST has a role for that span (e.g. attribute name "position"
-/// is a keyword in the lexer but Property in the AST).
+/// tokens are overridden when the AST has a role for that span (e.g. Property, Class).
 fn apply_ast_semantic_ranges(
     tokens: &mut [(u32, u32, u32, u32)],
     ast_ranges: &[(SourceRange, u32)],

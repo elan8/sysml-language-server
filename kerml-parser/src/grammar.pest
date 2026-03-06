@@ -853,22 +853,25 @@ requirement_references = {
 // Calc definition - can contain attribute definitions, attribute shorthand, return statements, and other members
 // Supports qualified_name in type position
 // Supports abstract modifier
+// BNF: CalculationBodyPart = CalculationBodyItem* (ResultExpressionMember)?
+// Result expression (e.g. "capacity / currentDraw") is written without final semicolon (SysML v2 7.19.2)
 calc_def = {
     ("abstract")? ~ "calc" ~ "def" ~ name ~
     (":" ~ ">" ~ name)? ~
     (":" ~ (qualified_name | name))? ~
     (metadata_annotation)* ~
-    ("{" ~ (position_statement | attribute_def | attribute_usage | attribute_shorthand | attribute_statement | return_statement | statement | member)* ~ "}" | ";")
+    ("{" ~ (position_statement | attribute_def | attribute_usage | attribute_shorthand | attribute_statement | return_statement | statement | member | expr_value)* ~ "}" | ";")
 }
 
 // Calc usage (e.g., "calc :>> evaluationFunction { ... }" or "calc cityScenario : NominalScenario;")
 // Supports :>> syntax and type annotations
 // Supports in_statement in body (e.g., "in part anEngine :>> alternative : Engine;")
+// Result expression supported (SysML v2 7.19.2)
 calc_usage = {
     "calc" ~ (":>>" ~ name | name)? ~
     (":" ~ (qualified_name | name))? ~
     (metadata_annotation)* ~
-    ("{" ~ (position_statement | in_statement | attribute_def | attribute_usage | attribute_shorthand | attribute_statement | return_statement | statement | member)* ~ "}" | ";")
+    ("{" ~ (position_statement | in_statement | attribute_def | attribute_usage | attribute_shorthand | attribute_statement | return_statement | statement | member | expr_value)* ~ "}" | ";")
 }
 
 // Constraint usage (without assert)

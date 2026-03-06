@@ -55,8 +55,8 @@ use walkdir::WalkDir;
 
 use language::{
     collect_definition_ranges, collect_document_symbols, collect_symbol_entries, completion_prefix,
-    find_reference_ranges, format_document, keyword_doc, keyword_hover_markdown, line_prefix_at_position,
-    suggest_wrap_in_package, sysml_keywords, word_at_position, SymbolEntry,
+    find_reference_ranges, format_document, is_reserved_keyword, keyword_doc, keyword_hover_markdown,
+    line_prefix_at_position, suggest_wrap_in_package, sysml_keywords, word_at_position, SymbolEntry,
 };
 
 /// Per-file index entry: content and optional parsed AST (invalidated when content changes).
@@ -571,7 +571,7 @@ impl LanguageServer for Backend {
             None => return Ok(None),
         };
 
-        if language::sysml_keywords().contains(&word.as_str()) {
+        if is_reserved_keyword(&word) {
             return Ok(None);
         }
 
@@ -660,7 +660,7 @@ impl LanguageServer for Backend {
             Some(t) => t,
             None => return Ok(None),
         };
-        if language::sysml_keywords().contains(&word.as_str()) {
+        if is_reserved_keyword(&word) {
             return Ok(None);
         }
         let range = Range::new(
@@ -683,7 +683,7 @@ impl LanguageServer for Backend {
             Some(t) => t,
             None => return Ok(None),
         };
-        if language::sysml_keywords().contains(&word.as_str()) {
+        if is_reserved_keyword(&word) {
             return Ok(None);
         }
 

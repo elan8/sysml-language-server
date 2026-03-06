@@ -374,6 +374,31 @@ package Test {
         assert!(result.is_ok(), "Failed to parse typed attributes with qualified types: {:?}", result.err());
     }
 
+    /// Test calc def with result expression (SysML v2 7.19.2 - expression without semicolon)
+    #[test]
+    fn test_calc_def_result_expression() {
+        init_test_logger();
+
+        let input = r#"
+package Test {
+    calc def FlightTimeEstimate {
+        doc /* Flight time from capacity and current draw. */
+        in capacity : Real;
+        in currentDraw : Real;
+        return flightTime : Real;
+        capacity / currentDraw
+    }
+}
+"#;
+
+        let result = parse_sysml(input);
+        assert!(
+            result.is_ok(),
+            "Failed to parse calc def with result expression: {:?}",
+            result.err()
+        );
+    }
+
     /// Test typed attribute with unit expression
     #[test]
     fn test_typed_attribute_with_unit() {
