@@ -1,6 +1,6 @@
 {
   "name": "sysml-language-server",
-  "displayName": "SysML v2 Language Support",
+  "displayName": "SysML v2 Tools",
   "publisher": "Elan8",
   "icon": "logo/elan8.png",
   "description": "Language support for SysML v2 including syntax validation, navigation and diagnostics.",
@@ -326,14 +326,17 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build:webview-assets && npm run compile",
+    "vscode:prepublish": "npm run build:webview-assets && npm run build:webview && npm run compile",
     "build:webview-assets": "node scripts/copy-webview-assets.js",
+    "build:webview": "node scripts/build-webview.js",
+    "extract-styles": "node scripts/extract-styles.js",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "vscode-test",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
+    "esbuild": "^0.24.0",
     "@types/mocha": "^10.0.0",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
