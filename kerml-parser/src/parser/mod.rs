@@ -22,6 +22,8 @@ mod item;
 mod port;
 mod requirement;
 mod part;
+mod state;
+mod usecase;
 mod member;
 mod package;
 mod document;

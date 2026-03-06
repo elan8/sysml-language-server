@@ -272,6 +272,78 @@ pub enum Member {
     InStatement(InStatement),
     /// End statement (e.g., end item in interface def body)
     EndStatement(EndStatement),
+    /// State definition
+    StateDef(StateDef),
+    /// Exhibit state (state usage in state machine)
+    ExhibitState(ExhibitState),
+    /// Transition statement (inside state machine; source/target for state diagram)
+    TransitionStatement(TransitionStatement),
+    /// Use case
+    UseCase(UseCase),
+    /// Actor definition/statement
+    ActorDef(ActorDef),
+}
+
+/// Transition statement (e.g., "transition name first StateA then StateB { }")
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransitionStatement {
+    /// Transition name (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Source state (from "first X"; if absent, the containing state)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Target state (from "then X")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
+}
+
+/// State definition (state def name or state name : Type { ... })
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StateDef {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_position: Option<SourcePosition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
+    pub members: Vec<Member>,
+}
+
+/// Exhibit state (exhibit state name { ... })
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExhibitState {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_position: Option<SourcePosition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
+    pub members: Vec<Member>,
+}
+
+/// Use case (use case name { ... })
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UseCase {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_position: Option<SourcePosition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
+    pub members: Vec<Member>,
+}
+
+/// Actor (actor name : Type or actor :>> name)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActorDef {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_position: Option<SourcePosition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<String>,
+    pub members: Vec<Member>,
 }
 
 /// A part definition
@@ -599,8 +671,17 @@ pub struct ActionDef {
 pub enum Statement {
     /// Assignment statement
     Assignment(Assignment),
-    /// Call statement
+    /// Call statement (including perform action ref)
     Call(Call),
+    /// Perform action (explicit "perform action X" or "perform X")
+    PerformAction(PerformAction),
+}
+
+/// Perform action statement (e.g., "perform action doSomething" or "perform doSomething")
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PerformAction {
+    /// Action reference (the invoked action name)
+    pub action_ref: String,
 }
 
 /// An assignment statement
@@ -893,6 +974,35 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                     out.push((pos.to_range(), SemanticRole::Namespace));
                 }
                 collect_semantic_ranges_members(&p.members, out);
+            }
+            Member::StateDef(s) => {
+                if let Some(ref pos) = s.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
+                collect_semantic_ranges_members(&s.members, out);
+            }
+            Member::ExhibitState(s) => {
+                if let Some(ref pos) = s.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
+                collect_semantic_ranges_members(&s.members, out);
+            }
+            Member::UseCase(u) => {
+                if let Some(ref pos) = u.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
+                collect_semantic_ranges_members(&u.members, out);
+            }
+            Member::ActorDef(a) => {
+                if let Some(ref pos) = a.name_position {
+                    out.push((pos.to_range(), SemanticRole::Property));
+                }
+                collect_semantic_ranges_members(&a.members, out);
+            }
+            Member::TransitionStatement(t) => {
+                if let Some(ref r) = t.range {
+                    out.push((r.clone(), SemanticRole::Property));
+                }
             }
             _ => {}
         }

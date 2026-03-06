@@ -15,6 +15,8 @@ use super::interface;
 use super::item;
 use super::requirement;
 use super::action;
+use super::state;
+use super::usecase;
 use super::statements::{parse_allocate_statement, parse_bind_statement, parse_provides_statement, parse_requires_statement};
 
 /// Default implementation of MemberParser used by the public API.
@@ -53,6 +55,10 @@ pub(super) fn parse_member_impl<P: MemberParser>(mut pairs: Pairs<'_, Rule>, sou
             Rule::requirement_usage => Ok(Member::RequirementUsage(requirement::parse_requirement_usage(pair.into_inner(), source, span, parser)?)),
             Rule::requirement_references => Ok(Member::RequirementUsage(requirement::parse_requirement_references(pair.into_inner(), source, span, parser)?)),
             Rule::action_def => Ok(Member::ActionDef(action::parse_action_def(pair.into_inner(), source, span)?)),
+            Rule::state_def => Ok(Member::StateDef(state::parse_state_def(pair.into_inner(), source, span, parser)?)),
+            Rule::exhibit_state => Ok(Member::ExhibitState(state::parse_exhibit_state(pair.into_inner(), source, span, parser)?)),
+            Rule::use_case => Ok(Member::UseCase(usecase::parse_use_case(pair.into_inner(), source, span, parser)?)),
+            Rule::actor_statement => Ok(Member::ActorDef(usecase::parse_actor_statement(pair.into_inner(), source, span, parser)?)),
             Rule::package => Ok(Member::Package(super::package::parse_package(pair.into_inner(), source, span, parser)?)),
             Rule::language_extension => {
                 let mut inner = pair.into_inner();
@@ -80,9 +86,9 @@ pub(super) fn parse_member_impl<P: MemberParser>(mut pairs: Pairs<'_, Rule>, sou
             Rule::flow_statement | Rule::succession_statement | Rule::succession_flow_statement | Rule::assign_statement | Rule::transition_statement |
             Rule::accept_statement | Rule::state_machine_statement | Rule::variation_statement |
             Rule::send_node_statement |
-            Rule::state_def | Rule::exhibit_state | Rule::subject_statement |
+            Rule::subject_statement |
             Rule::dependency_statement | Rule::occurrence_def | Rule::occurrence_usage |
-            Rule::enum_def | Rule::constraint_def | Rule::use_case | Rule::actor_statement |
+            Rule::enum_def | Rule::constraint_def |
             Rule::calc_def | Rule::assert_constraint | Rule::perform_action | Rule::value_def |
             Rule::value_usage | Rule::action_usage | Rule::action_statement | Rule::ref_part |
             Rule::ref_statement | Rule::connection_def | Rule::alias_statement | Rule::metadata_def |

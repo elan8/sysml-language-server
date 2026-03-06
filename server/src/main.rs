@@ -2,6 +2,7 @@
 #![allow(deprecated)] // LSP deprecated field in SymbolInformation; use tags in future
 
 mod language;
+mod model;
 mod semantic_tokens;
 
 use kerml_parser::ast::SysMLDocument;
@@ -179,10 +180,15 @@ struct SysmlModelStatsDto {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SysmlModelResultDto {
     version: u32,
     elements: Option<Vec<SysmlElementDto>>,
     relationships: Option<Vec<RelationshipDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activity_diagrams: Option<Vec<model::ActivityDiagramDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sequence_diagrams: Option<Vec<model::SequenceDiagramDto>>,
     stats: Option<SysmlModelStatsDto>,
 }
 
@@ -1034,6 +1040,8 @@ fn empty_model_response(build_start: Instant) -> SysmlModelResultDto {
         version: 0,
         elements: Some(vec![]),
         relationships: Some(vec![]),
+        activity_diagrams: None,
+        sequence_diagrams: None,
         stats: Some(SysmlModelStatsDto {
             total_elements: 0,
             resolved_elements: 0,
@@ -1051,6 +1059,8 @@ impl Backend {
         let want_elements = scope.is_empty() || scope.iter().any(|s| s == "elements");
         let want_stats = scope.is_empty() || scope.iter().any(|s| s == "stats");
         let want_relationships = scope.iter().any(|s| s == "relationships");
+        let want_activity_diagrams = scope.is_empty() || scope.iter().any(|s| s == "activityDiagrams");
+        let want_sequence_diagrams = scope.is_empty() || scope.iter().any(|s| s == "sequenceDiagrams");
 
         let build_start = Instant::now();
         let state = self.state.read().await;
@@ -1062,18 +1072,27 @@ impl Backend {
         };
         let doc = match &entry.parsed {
             Some(d) => d,
-            None => return Ok(SysmlModelResultDto { version: 0, elements: Some(vec![]), relationships: Some(vec![]), stats: None }),
+            None => {
+                return Ok(SysmlModelResultDto {
+                    version: 0,
+                    elements: Some(vec![]),
+                    relationships: Some(vec![]),
+                    activity_diagrams: None,
+                    sequence_diagrams: None,
+                    stats: None,
+                });
+            }
         };
 
         let elements = if want_elements {
-            let model_elements = collect_model_elements(&doc);
+            let model_elements = collect_model_elements(doc);
             Some(model_elements.iter().map(model_element_to_dto).collect::<Vec<_>>())
         } else {
             None
         };
 
         let relationships = if want_relationships {
-            let rels = collect_relationships(&doc);
+            let rels = collect_relationships(doc);
             Some(
                 rels.iter()
                     .map(|r| RelationshipDto {
@@ -1084,6 +1103,18 @@ impl Backend {
                     })
                     .collect(),
             )
+        } else {
+            None
+        };
+
+        let activity_diagrams = if want_activity_diagrams {
+            Some(model::extract_activity_diagrams(doc))
+        } else {
+            None
+        };
+
+        let sequence_diagrams = if want_sequence_diagrams {
+            Some(model::extract_sequence_diagrams(doc))
         } else {
             None
         };
@@ -1106,6 +1137,8 @@ impl Backend {
             version: 0,
             elements,
             relationships,
+            activity_diagrams,
+            sequence_diagrams,
             stats,
         })
     }

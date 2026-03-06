@@ -578,6 +578,28 @@ fn relationships_from_member(
         M::ItemDef(i) => relationships_from_package_contents(&i.members, container_prefix, &i.name, out),
         M::RequirementDef(r) => relationships_from_package_contents(&r.members, container_prefix, &r.name, out),
         M::RequirementUsage(r) => relationships_from_package_contents(&r.members, container_prefix, &r.name, out),
+        M::StateDef(s) => {
+            relationships_from_package_contents(&s.members, container_prefix, &s.name, out);
+        }
+        M::ExhibitState(s) => relationships_from_package_contents(&s.members, container_prefix, &s.name, out),
+        M::TransitionStatement(t) => {
+            if let Some(ref target) = t.target {
+                let source = t
+                    .source
+                    .as_ref()
+                    .map(String::from)
+                    .or_else(|| container_prefix.map(str::to_string))
+                    .unwrap_or_default();
+                out.push(ModelRelationship {
+                    rel_type: "transition".to_string(),
+                    source,
+                    target: target.clone(),
+                    name: t.name.clone(),
+                });
+            }
+        }
+        M::UseCase(u) => relationships_from_package_contents(&u.members, container_prefix, &u.name, out),
+        M::ActorDef(a) => relationships_from_package_contents(&a.members, container_prefix, &a.name, out),
         _ => {}
     }
 }
@@ -832,6 +854,46 @@ fn model_element_from_member(member: &Member) -> Option<ModelElement> {
                 name: a.name.clone(),
                 range,
                 children: vec![],
+                attributes: std::collections::HashMap::new(),
+            })
+        }
+        M::StateDef(s) => {
+            let range = member_range(s.range.as_ref(), s.name_position.as_ref());
+            Some(ModelElement {
+                element_type: "state def".to_string(),
+                name: s.name.clone(),
+                range,
+                children: model_elements_from_members(&s.members),
+                attributes: std::collections::HashMap::new(),
+            })
+        }
+        M::ExhibitState(s) => {
+            let range = member_range(s.range.as_ref(), s.name_position.as_ref());
+            Some(ModelElement {
+                element_type: "state".to_string(),
+                name: s.name.clone(),
+                range,
+                children: model_elements_from_members(&s.members),
+                attributes: std::collections::HashMap::new(),
+            })
+        }
+        M::UseCase(u) => {
+            let range = member_range(u.range.as_ref(), u.name_position.as_ref());
+            Some(ModelElement {
+                element_type: "use case def".to_string(),
+                name: u.name.clone(),
+                range,
+                children: model_elements_from_members(&u.members),
+                attributes: std::collections::HashMap::new(),
+            })
+        }
+        M::ActorDef(a) => {
+            let range = member_range(a.range.as_ref(), a.name_position.as_ref());
+            Some(ModelElement {
+                element_type: "actor def".to_string(),
+                name: a.name.clone(),
+                range,
+                children: model_elements_from_members(&a.members),
                 attributes: std::collections::HashMap::new(),
             })
         }
@@ -1520,6 +1582,111 @@ fn symbol_entries_from_member(
                 signature: Some(format!("action def {};", a.name)),
             });
         }
+        M::StateDef(s) => {
+            let selection_range = s
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = s
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            out.push(SymbolEntry {
+                name: s.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::VARIABLE,
+                container_name: container.map(String::from),
+                detail: Some("state def".to_string()),
+                description: Some(format!("state def '{}'", s.name)),
+                signature: Some(format!("state def {};", s.name)),
+            });
+            for m in &s.members {
+                symbol_entries_from_member(m, uri, Some(&s.name), out);
+            }
+        }
+        M::ExhibitState(s) => {
+            let selection_range = s
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = s
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            out.push(SymbolEntry {
+                name: s.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::VARIABLE,
+                container_name: container.map(String::from),
+                detail: Some("state".to_string()),
+                description: Some(format!("state '{}'", s.name)),
+                signature: Some(format!("state {};", s.name)),
+            });
+            for m in &s.members {
+                symbol_entries_from_member(m, uri, Some(&s.name), out);
+            }
+        }
+        M::UseCase(u) => {
+            let selection_range = u
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = u
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            out.push(SymbolEntry {
+                name: u.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::FUNCTION,
+                container_name: container.map(String::from),
+                detail: Some("use case".to_string()),
+                description: Some(format!("use case '{}'", u.name)),
+                signature: Some(format!("use case {};", u.name)),
+            });
+            for m in &u.members {
+                symbol_entries_from_member(m, uri, Some(&u.name), out);
+            }
+        }
+        M::ActorDef(a) => {
+            let selection_range = a
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = a
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let type_part = a
+                .type_ref
+                .as_ref()
+                .map(|t| format!(" : {}", t))
+                .unwrap_or_default();
+            out.push(SymbolEntry {
+                name: a.name.clone(),
+                uri: uri.clone(),
+                range,
+                kind: SymbolKind::CLASS,
+                container_name: container.map(String::from),
+                detail: Some("actor def".to_string()),
+                description: Some(format!("actor def '{}'{}", a.name, type_part)),
+                signature: Some(format!("actor def {}{};", a.name, type_part)),
+            });
+            for m in &a.members {
+                symbol_entries_from_member(m, uri, Some(&a.name), out);
+            }
+        }
         M::Package(p) => symbol_entries_from_package(p, uri, container, out),
         _ => {}
     }
@@ -1874,6 +2041,102 @@ fn document_symbol_from_member(member: &Member) -> Option<DocumentSymbol> {
                 range,
                 selection_range,
                 children: None,
+            })
+        }
+        M::StateDef(s) => {
+            let selection_range = s
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = s
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
+            let children = document_symbols_from_members(&s.members);
+            Some(DocumentSymbol {
+                name: s.name.clone(),
+                detail: Some("state def".to_string()),
+                kind: SymbolKind::VARIABLE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::ExhibitState(s) => {
+            let selection_range = s
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = s
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
+            let children = document_symbols_from_members(&s.members);
+            Some(DocumentSymbol {
+                name: s.name.clone(),
+                detail: Some("state".to_string()),
+                kind: SymbolKind::VARIABLE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::UseCase(u) => {
+            let selection_range = u
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = u
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
+            let children = document_symbols_from_members(&u.members);
+            Some(DocumentSymbol {
+                name: u.name.clone(),
+                detail: Some("use case".to_string()),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
+            })
+        }
+        M::ActorDef(a) => {
+            let selection_range = a
+                .name_position
+                .as_ref()
+                .map(source_position_to_range)
+                .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+            let range = a
+                .range
+                .as_ref()
+                .map(source_range_to_range)
+                .unwrap_or(selection_range);
+            let selection_range = selection_contained_in(selection_range, range);
+            let children = document_symbols_from_members(&a.members);
+            Some(DocumentSymbol {
+                name: a.name.clone(),
+                detail: Some("actor def".to_string()),
+                kind: SymbolKind::CLASS,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: if children.is_empty() { None } else { Some(children) },
             })
         }
         M::Package(p) => document_symbol_from_package(p),

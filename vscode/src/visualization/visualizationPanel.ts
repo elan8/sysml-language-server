@@ -1646,11 +1646,11 @@ export class VisualizationPanel {
         <div id="about-backdrop">
             <div id="about-popup">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 10px;">
-                    <span style="font-weight: 700; font-size: 15px;">SysML v2 Extension</span>
+                    <span style="font-weight: 700; font-size: 15px;">SysML v2 Language Support</span>
                     <button id="about-close-btn" style="background: none; border: none; color: var(--vscode-editor-foreground); cursor: pointer; font-size: 18px; padding: 0 4px; opacity: 0.7;" title="Close">✕</button>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5;">
-                    <p style="margin: 0;">A comprehensive SysML v2.0 language support extension for VS Code with syntax highlighting, formatting, validation, navigation, and interactive visualizations.</p>
+                    <p style="margin: 0;">Language support for SysML v2 including syntax validation, navigation, diagnostics, and interactive model visualizations. Powered by the Rust sysml-language-server.</p>
                     <div style="display: flex; gap: 10px; margin-top: 8px;">
                         <button id="about-rate-link" class="action-btn" style="font-size: 11px; cursor: pointer;" title="Rate on marketplace">⭐ Rate</button>
                         <button id="about-repo-link" class="action-btn" style="font-size: 11px; cursor: pointer;" title="View source on GitHub">🔗 GitHub</button>
@@ -14017,13 +14017,13 @@ export class VisualizationPanel {
 
             if (aboutRateLink) {
                 aboutRateLink.addEventListener('click', () => {
-                    vscode.postMessage({ command: 'openExternal', url: 'https://marketplace.visualstudio.com/items?itemName=JamieD.sysml-v2-support' });
+                    vscode.postMessage({ command: 'openExternal', url: 'https://marketplace.visualstudio.com/items?itemName=Elan8.sysml-language-server' });
                 });
             }
 
             if (aboutRepoLink) {
                 aboutRepoLink.addEventListener('click', () => {
-                    vscode.postMessage({ command: 'openExternal', url: 'https://github.com/daltskin/VSCode_SysML_Extension' });
+                    vscode.postMessage({ command: 'openExternal', url: 'https://github.com/elan8/sysml-language-server' });
                 });
             }
         })();
