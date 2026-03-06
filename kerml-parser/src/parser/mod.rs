@@ -50,6 +50,30 @@ fn improve_pest_error_message(raw: &str) -> String {
         "unexpected token; perhaps missing closing brace"
     } else if raw.contains(r#"expected "{"#) || raw.contains("expected {") {
         "unexpected token; perhaps missing opening brace"
+    } else if raw.contains("expected package") || raw.contains(r#"expected "package"#) {
+        "unexpected token; perhaps missing 'package' or invalid package declaration"
+    } else if raw.contains("expected member") {
+        "unexpected token; expected a member (e.g. part, attribute, action)"
+    } else if raw.contains("expected name") || raw.contains("expected qualified_name") {
+        "unexpected token; expected a name or qualified name"
+    } else if raw.contains("expected identifier") || raw.contains("expected package_name") {
+        "unexpected token; expected an identifier or name"
+    } else if raw.contains("expected import_statement") || raw.contains(r#"expected "import"#) {
+        "unexpected token; perhaps missing or invalid import statement"
+    } else if raw.contains(r#"expected ":"#) || raw.contains("expected defined") {
+        "unexpected token; perhaps missing ':' or 'defined by'"
+    } else if raw.contains(r#"expected "="#) || raw.contains("expected \"=\"") {
+        "unexpected token; perhaps missing '='"
+    } else if raw.contains(r#"expected "("#) || raw.contains("expected \"(\"") {
+        "unexpected token; perhaps missing opening parenthesis"
+    } else if raw.contains(r#"expected ")"#) || raw.contains("expected \")\"") {
+        "unexpected token; perhaps missing closing parenthesis"
+    } else if raw.contains("expected expr_value") || raw.contains("expected expr_atom") {
+        "unexpected token; expected an expression"
+    } else if raw.contains("expected literal") || raw.contains("expected string_literal") {
+        "unexpected token; expected a literal or string"
+    } else if raw.contains("expected COMMENT") {
+        "unexpected token; expected a comment"
     } else {
         return raw.to_string();
     };
