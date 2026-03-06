@@ -454,6 +454,75 @@
     }
   }
 
+  // src/visualization/webview/constants.ts
+  var MIN_CANVAS_ZOOM = 0.04;
+  var MAX_CANVAS_ZOOM = 5;
+  var MIN_SYSML_ZOOM = 0.04;
+  var MAX_SYSML_ZOOM = 5;
+  var STRUCTURAL_VIEWS = /* @__PURE__ */ new Set(["general-view"]);
+  var ORIENTATION_LABELS = {
+    horizontal: "Horizontal",
+    linear: "Linear (Top-Down)"
+  };
+  var VIEW_OPTIONS = {
+    "general-view": { label: "General View" },
+    "interconnection-view": { label: "Interconnection View" },
+    "action-flow-view": { label: "Action Flow View" },
+    "state-transition-view": { label: "State Transition View" },
+    "sequence-view": { label: "Sequence View" }
+  };
+  var GENERAL_VIEW_PALETTE = {
+    structural: {
+      part: "#2D8A6E",
+      port: "#0E7C7B",
+      attribute: "#4A9B7F",
+      item: "#5A9B6E",
+      interface: "#7BAA7D"
+    },
+    behavior: {
+      action: "#D4A02C",
+      state: "#B85C38",
+      calc: "#C9A227"
+    },
+    requirements: {
+      requirement: "#5B8FC4",
+      useCase: "#6B9BD1"
+    },
+    other: {
+      allocation: "#9CA3AF",
+      constraint: "#E07C5A",
+      default: "var(--vscode-panel-border)"
+    }
+  };
+  var GENERAL_VIEW_TYPE_COLORS = {
+    "part def": GENERAL_VIEW_PALETTE.structural.part,
+    part: GENERAL_VIEW_PALETTE.structural.part,
+    "port def": GENERAL_VIEW_PALETTE.structural.port,
+    port: GENERAL_VIEW_PALETTE.structural.port,
+    "attribute def": GENERAL_VIEW_PALETTE.structural.attribute,
+    attribute: GENERAL_VIEW_PALETTE.structural.attribute,
+    "action def": GENERAL_VIEW_PALETTE.behavior.action,
+    action: GENERAL_VIEW_PALETTE.behavior.action,
+    "state def": GENERAL_VIEW_PALETTE.behavior.state,
+    state: GENERAL_VIEW_PALETTE.behavior.state,
+    "interface def": GENERAL_VIEW_PALETTE.structural.interface,
+    interface: GENERAL_VIEW_PALETTE.structural.interface,
+    "requirement def": GENERAL_VIEW_PALETTE.requirements.requirement,
+    requirement: GENERAL_VIEW_PALETTE.requirements.requirement,
+    "use case def": GENERAL_VIEW_PALETTE.requirements.useCase,
+    "use case": GENERAL_VIEW_PALETTE.requirements.useCase,
+    verification: GENERAL_VIEW_PALETTE.behavior.calc,
+    analysis: GENERAL_VIEW_PALETTE.behavior.action,
+    allocation: GENERAL_VIEW_PALETTE.other.allocation,
+    "item def": GENERAL_VIEW_PALETTE.structural.item,
+    item: GENERAL_VIEW_PALETTE.structural.item,
+    "calc def": GENERAL_VIEW_PALETTE.behavior.calc,
+    calc: GENERAL_VIEW_PALETTE.behavior.calc,
+    "constraint def": GENERAL_VIEW_PALETTE.other.constraint,
+    constraint: GENERAL_VIEW_PALETTE.other.constraint,
+    default: GENERAL_VIEW_PALETTE.other.default
+  };
+
   // src/visualization/webview/shared.ts
   var DANGEROUS_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
   function cloneElements(elements) {
@@ -533,41 +602,13 @@
     }
     return attrs.isStandardType === true || attrs.isStandardElement === true;
   }
-  var typeColors = {
-    "part def": "#4EC9B0",
-    "part": "#4EC9B0",
-    "port def": "#C586C0",
-    "port": "#C586C0",
-    "attribute def": "#9CDCFE",
-    "attribute": "#9CDCFE",
-    "action def": "#DCDCAA",
-    "action": "#DCDCAA",
-    "state def": "#CE9178",
-    "state": "#CE9178",
-    "interface def": "#D7BA7D",
-    "interface": "#D7BA7D",
-    "requirement def": "#B5CEA8",
-    "requirement": "#B5CEA8",
-    "use case def": "#569CD6",
-    "use case": "#569CD6",
-    "verification": "#C586C0",
-    "analysis": "#DCDCAA",
-    "allocation": "#D4D4D4",
-    "item def": "#6A9955",
-    "item": "#6A9955",
-    "calc def": "#DCDCAA",
-    "calc": "#DCDCAA",
-    "constraint def": "#F14C4C",
-    "constraint": "#F14C4C",
-    "default": "var(--vscode-panel-border)"
-  };
   function getTypeColor(type) {
     const t = (type || "").toLowerCase();
-    if (typeColors[t]) return typeColors[t];
-    for (const key in typeColors) {
-      if (key !== "default" && t.includes(key)) return typeColors[key];
+    if (GENERAL_VIEW_TYPE_COLORS[t]) return GENERAL_VIEW_TYPE_COLORS[t];
+    for (const key of Object.keys(GENERAL_VIEW_TYPE_COLORS)) {
+      if (key !== "default" && t.includes(key)) return GENERAL_VIEW_TYPE_COLORS[key];
     }
-    return typeColors["default"];
+    return GENERAL_VIEW_TYPE_COLORS["default"];
   }
   function isActorElement(elementOrType) {
     const typeValue = typeof elementOrType === "string" ? elementOrType : elementOrType?.type;
@@ -601,24 +642,6 @@
     }
     return hash.toString(16);
   }
-
-  // src/visualization/webview/constants.ts
-  var MIN_CANVAS_ZOOM = 0.04;
-  var MAX_CANVAS_ZOOM = 5;
-  var MIN_SYSML_ZOOM = 0.04;
-  var MAX_SYSML_ZOOM = 5;
-  var STRUCTURAL_VIEWS = /* @__PURE__ */ new Set(["general-view"]);
-  var ORIENTATION_LABELS = {
-    horizontal: "Horizontal",
-    linear: "Linear (Top-Down)"
-  };
-  var VIEW_OPTIONS = {
-    "general-view": { label: "General View" },
-    "interconnection-view": { label: "Interconnection View" },
-    "action-flow-view": { label: "Action Flow View" },
-    "state-transition-view": { label: "State Transition View" },
-    "sequence-view": { label: "Sequence View" }
-  };
 
   // src/visualization/webview/helpers.ts
   function isMetadataElement(type) {
@@ -1421,7 +1444,7 @@
       const portsHeight = partPorts.length * 16 + 10;
       const totalHeight = Math.max(80, headerHeight + contentHeight + portsHeight);
       const partG = partGroup.append("g").attr("transform", "translate(" + pos.x + "," + pos.y + ")").attr("class", "ibd-part" + (isDefinition ? " definition-node" : " usage-node")).attr("data-element-name", part.name).style("cursor", "pointer");
-      const _ibdStroke = isLibValidated ? "#4EC9B0" : typeColor;
+      const _ibdStroke = isLibValidated ? GENERAL_VIEW_PALETTE.structural.part : typeColor;
       const _ibdStrokeW = isUsage ? "3px" : "2px";
       partG.append("rect").attr("width", partWidth).attr("height", totalHeight).attr("rx", isUsage ? 8 : 4).attr("data-original-stroke", _ibdStroke).attr("data-original-width", _ibdStrokeW).style("fill", "var(--vscode-editor-background)").style("stroke", _ibdStroke).style("stroke-width", _ibdStrokeW).style("stroke-dasharray", isDefinition ? "6,3" : "none");
       partG.append("rect").attr("width", partWidth).attr("height", 5).attr("rx", 2).style("fill", typeColor);
@@ -1450,7 +1473,7 @@
       const inoutPorts = partPorts.filter((p) => p && p.name && !inPorts.includes(p) && !outPorts.includes(p));
       inPorts.forEach((p, i) => {
         const portY = portStartY + i * portSpacing;
-        const portColor = "#C586C0";
+        const portColor = GENERAL_VIEW_PALETTE.structural.port;
         partG.append("rect").attr("class", "port-icon").attr("x", -portSize / 2).attr("y", portY - portSize / 2).attr("width", portSize).attr("height", portSize).style("fill", portColor).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "2px");
         partG.append("path").attr("d", "M" + (-portSize / 2 + 2) + "," + portY + " L" + (portSize / 2 - 2) + "," + portY + " M" + (portSize / 2 - 4) + "," + (portY - 2) + " L" + (portSize / 2 - 2) + "," + portY + " L" + (portSize / 2 - 4) + "," + (portY + 2)).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "1.5px").style("fill", "none");
         const portLabel = p.name.length > 14 ? p.name.substring(0, 12) + ".." : p.name;
@@ -1458,7 +1481,7 @@
       });
       outPorts.forEach((p, i) => {
         const portY = portStartY + i * portSpacing;
-        const portColor = "#4EC9B0";
+        const portColor = GENERAL_VIEW_PALETTE.structural.part;
         partG.append("rect").attr("class", "port-icon").attr("x", partWidth - portSize / 2).attr("y", portY - portSize / 2).attr("width", portSize).attr("height", portSize).style("fill", portColor).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "2px");
         partG.append("path").attr("d", "M" + (partWidth - portSize / 2 + 2) + "," + portY + " L" + (partWidth + portSize / 2 - 2) + "," + portY + " M" + (partWidth + portSize / 2 - 4) + "," + (portY - 2) + " L" + (partWidth + portSize / 2 - 2) + "," + portY + " L" + (partWidth + portSize / 2 - 4) + "," + (portY + 2)).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "1.5px").style("fill", "none");
         const portLabel = p.name.length > 14 ? p.name.substring(0, 12) + ".." : p.name;
@@ -1467,7 +1490,7 @@
       const inoutStartY = portStartY + inPorts.length * portSpacing;
       inoutPorts.forEach((p, i) => {
         const portY = inoutStartY + i * portSpacing;
-        const portColor = "#9CDCFE";
+        const portColor = GENERAL_VIEW_PALETTE.structural.attribute;
         partG.append("rect").attr("class", "port-icon").attr("x", -portSize / 2).attr("y", portY - portSize / 2).attr("width", portSize).attr("height", portSize).style("fill", portColor).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "2px");
         partG.append("path").attr("d", "M" + (-portSize / 2 + 3) + "," + portY + " L" + (portSize / 2 - 3) + "," + portY).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "1.5px").style("fill", "none");
         const portLabel = p.name.length > 14 ? p.name.substring(0, 12) + ".." : p.name;
@@ -2695,8 +2718,11 @@
           if (drawnEdges.has(edgeKey)) return;
           drawnEdges.add(edgeKey);
           const pairKey = [conn.source, conn.target].sort().join("--");
-          edgeOffsets[pairKey] = (edgeOffsets[pairKey] || 0) + 1;
-          const offset = (edgeOffsets[pairKey] - 1) * 15;
+          const pairCount = (edgeOffsets[pairKey] || 0) + 1;
+          edgeOffsets[pairKey] = pairCount;
+          const offsetStep = 22;
+          const isReverse = conn.source > conn.target;
+          const offset = (pairCount - 1) * offsetStep * (isReverse && pairCount > 1 ? -1 : 1);
           const srcCx = srcPos.x + srcPos.width / 2;
           const srcCy = srcPos.y + srcPos.height / 2;
           const tgtCx = tgtPos.x + tgtPos.width / 2;
@@ -2725,22 +2751,22 @@
           }
           let strokeColor, strokeDash, markerEnd, strokeWidth;
           if (conn.isSpecialization || conn.type === "specializes") {
-            strokeColor = "#C586C0";
+            strokeColor = GENERAL_VIEW_PALETTE.structural.port;
             strokeDash = "none";
             markerEnd = "url(#general-specializes)";
             strokeWidth = "1.5px";
           } else if (conn.isTypedBy || conn.type === "typed by" || conn.type === "typing") {
-            strokeColor = "#569CD6";
+            strokeColor = GENERAL_VIEW_PALETTE.requirements.requirement;
             strokeDash = "5,3";
             markerEnd = "url(#general-typed-by)";
             strokeWidth = "1.5px";
           } else if (conn.isContains || conn.type === "contains" || conn.type === "containment") {
-            strokeColor = "#4EC9B0";
+            strokeColor = GENERAL_VIEW_PALETTE.structural.part;
             strokeDash = "none";
             markerEnd = "url(#general-contains)";
             strokeWidth = "1.5px";
           } else if (conn.type === "connect" || conn.type === "connection" || conn.type === "interface") {
-            strokeColor = "#D7BA7D";
+            strokeColor = GENERAL_VIEW_PALETTE.structural.interface;
             strokeDash = "none";
             markerEnd = "url(#general-connect)";
             strokeWidth = "2px";
@@ -2750,27 +2776,27 @@
             markerEnd = "none";
             strokeWidth = "1px";
           } else if (conn.type === "allocate" || conn.type === "allocation") {
-            strokeColor = "#B5CEA8";
+            strokeColor = GENERAL_VIEW_PALETTE.other.allocation;
             strokeDash = "8,4";
             markerEnd = "url(#general-arrow)";
             strokeWidth = "1.5px";
           } else if (conn.type === "flow") {
-            strokeColor = "#4EC9B0";
+            strokeColor = GENERAL_VIEW_PALETTE.structural.part;
             strokeDash = "none";
             markerEnd = "url(#general-arrow)";
             strokeWidth = "2px";
           } else if (conn.type === "subsetting" || conn.type === "redefinition") {
-            strokeColor = "#CE9178";
+            strokeColor = GENERAL_VIEW_PALETTE.behavior.state;
             strokeDash = "4,2";
             markerEnd = "url(#general-arrow)";
             strokeWidth = "1.5px";
           } else if (conn.type === "satisfy" || conn.type === "verify") {
-            strokeColor = "#DCDCAA";
+            strokeColor = GENERAL_VIEW_PALETTE.behavior.action;
             strokeDash = "6,3";
             markerEnd = "url(#general-arrow)";
             strokeWidth = "1.5px";
           } else if (conn.type === "dependency") {
-            strokeColor = "#D4D4D4";
+            strokeColor = GENERAL_VIEW_PALETTE.other.allocation;
             strokeDash = "6,3";
             markerEnd = "url(#general-arrow)";
             strokeWidth = "1.5px";
@@ -2816,7 +2842,7 @@
             else if (conn.type === "connect") labelText = "connect";
             else if (conn.type === "bind") labelText = "=";
             else if (conn.type.length > 12) labelText = conn.type.substring(0, 10) + "..";
-            edgeGroup.append("rect").attr("x", labelX - 20).attr("y", labelY - 8).attr("width", 40).attr("height", 12).attr("rx", 2).style("fill", "var(--vscode-editor-background)").style("opacity", 0.9);
+            edgeGroup.append("rect").attr("x", labelX - 22).attr("y", labelY - 9).attr("width", 44).attr("height", 14).attr("rx", 7).style("fill", "var(--vscode-editor-background)").style("opacity", 0.92);
             edgeGroup.append("text").attr("x", labelX).attr("y", labelY).attr("text-anchor", "middle").text(labelText).style("font-size", "9px").style("font-weight", "bold").style("fill", strokeColor);
           }
         });
@@ -2882,7 +2908,7 @@
             pathD = "M" + x1 + "," + y1 + " L" + x1 + "," + midY + " L" + x2 + "," + midY + " L" + x2 + "," + y2;
           }
           const isBind = pConn.type === "bind";
-          const strokeColor = isBind ? "#569CD6" : "#D7BA7D";
+          const strokeColor = isBind ? GENERAL_VIEW_PALETTE.requirements.requirement : GENERAL_VIEW_PALETTE.structural.interface;
           const strokeDash = isBind ? "4,2" : "none";
           const portOrigStroke = strokeColor;
           const portOrigWidth = "2px";
@@ -2976,13 +3002,14 @@
         );
         return;
       }
+      const elementCount = topLevelElements.length;
       const nodeWidth = 150;
       const nodeBaseHeight = 44;
       const lineHeight = 13;
       const sectionGap = 5;
-      const padding = 20;
-      const hSpacing = 30;
-      const vSpacing = 30;
+      const padding = 24;
+      const hSpacing = elementCount > 25 ? 40 : 34;
+      const vSpacing = elementCount > 25 ? 36 : 32;
       const nodePositions = /* @__PURE__ */ new Map();
       const portPositions = /* @__PURE__ */ new Map();
       const availableWidth = width - padding * 2;
@@ -3020,8 +3047,8 @@
       });
       const categoryStartPositions = /* @__PURE__ */ new Map();
       let currentY = padding;
-      const groupSpacing = ctx.showCategoryHeaders ? 40 : 0;
-      const categoryLabelHeight = ctx.showCategoryHeaders ? 25 : 0;
+      const groupSpacing = ctx.showCategoryHeaders ? 65 : 45;
+      const categoryLabelHeight = ctx.showCategoryHeaders ? 28 : 0;
       categoryOrder.forEach((catId) => {
         const group = groupedNodes[catId];
         if (!group || group.length === 0) return;
@@ -3056,6 +3083,8 @@
         currentY += totalGroupHeight + groupSpacing;
       });
       const defs = svg2.select("defs").empty() ? svg2.append("defs") : svg2.select("defs");
+      defs.selectAll("#general-node-shadow").remove();
+      defs.append("filter").attr("id", "general-node-shadow").attr("x", "-20%").attr("y", "-20%").attr("width", "140%").attr("height", "140%").append("feDropShadow").attr("dx", 0).attr("dy", 1).attr("stdDeviation", 2).attr("flood-color", "#000").attr("flood-opacity", 0.15);
       defs.selectAll("#general-arrow").remove();
       defs.append("marker").attr("id", "general-arrow").attr("viewBox", "0 -5 10 10").attr("refX", 8).attr("refY", 0).attr("markerWidth", 5).attr("markerHeight", 5).attr("orient", "auto").append("path").attr("d", "M0,-4L10,0L0,4").style("fill", "var(--vscode-charts-blue)");
       if (ctx.showCategoryHeaders) {
@@ -3064,19 +3093,19 @@
           const category = ctx.GENERAL_VIEW_CATEGORIES.find((c) => c.id === catId);
           if (!category) return;
           const headerG = headerGroup.append("g").attr("transform", "translate(" + padding + "," + info.y + ")");
-          headerG.append("text").attr("x", 0).attr("y", 16).style("font-size", "13px").style("font-weight", "bold").style("fill", category.color).text(category.label + " (" + info.count + ")");
-          headerG.append("line").attr("x1", 0).attr("y1", 22).attr("x2", availableWidth).attr("y2", 22).style("stroke", category.color).style("stroke-width", "2px").style("opacity", 0.5);
+          headerG.append("text").attr("x", 0).attr("y", 16).style("font-size", "14px").style("font-weight", "600").style("fill", category.color).text(category.label + " (" + info.count + ")");
+          headerG.append("line").attr("x1", 0).attr("y1", 24).attr("x2", availableWidth).attr("y2", 24).style("stroke", category.color).style("stroke-width", "2px").style("opacity", 0.35);
         });
       }
       const nodeGroup = g2.append("g").attr("class", "general-nodes");
       defs.selectAll("#general-specializes").remove();
-      defs.append("marker").attr("id", "general-specializes").attr("viewBox", "0 -6 12 12").attr("refX", 11).attr("refY", 0).attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5Z").style("fill", "var(--vscode-editor-background)").style("stroke", "#C586C0").style("stroke-width", "1.5px");
+      defs.append("marker").attr("id", "general-specializes").attr("viewBox", "0 -6 12 12").attr("refX", 11).attr("refY", 0).attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5Z").style("fill", "var(--vscode-editor-background)").style("stroke", GENERAL_VIEW_PALETTE.structural.port).style("stroke-width", "1.5px");
       defs.selectAll("#general-typed-by").remove();
-      defs.append("marker").attr("id", "general-typed-by").attr("viewBox", "0 -5 10 10").attr("refX", 9).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-4L10,0L0,4Z").style("fill", "#569CD6");
+      defs.append("marker").attr("id", "general-typed-by").attr("viewBox", "0 -5 10 10").attr("refX", 9).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-4L10,0L0,4Z").style("fill", GENERAL_VIEW_PALETTE.requirements.requirement);
       defs.selectAll("#general-contains").remove();
-      defs.append("marker").attr("id", "general-contains").attr("viewBox", "-6 -6 12 12").attr("refX", 0).attr("refY", 0).attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto").append("path").attr("d", "M-5,0L0,-4L5,0L0,4Z").style("fill", "#4EC9B0");
+      defs.append("marker").attr("id", "general-contains").attr("viewBox", "-6 -6 12 12").attr("refX", 0).attr("refY", 0).attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto").append("path").attr("d", "M-5,0L0,-4L5,0L0,4Z").style("fill", GENERAL_VIEW_PALETTE.structural.part);
       defs.selectAll("#general-connect").remove();
-      defs.append("marker").attr("id", "general-connect").attr("viewBox", "0 -4 8 8").attr("refX", 4).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("circle").attr("cx", 4).attr("cy", 0).attr("r", 3).style("fill", "#D7BA7D");
+      defs.append("marker").attr("id", "general-connect").attr("viewBox", "0 -4 8 8").attr("refX", 4).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("circle").attr("cx", 4).attr("cy", 0).attr("r", 3).style("fill", GENERAL_VIEW_PALETTE.structural.interface);
       defs.selectAll("#general-arrow").remove();
       defs.append("marker").attr("id", "general-arrow").attr("viewBox", "0 -5 10 10").attr("refX", 8).attr("refY", 0).attr("markerWidth", 5).attr("markerHeight", 5).attr("orient", "auto").append("path").attr("d", "M0,-4L10,0L0,4").style("fill", "var(--vscode-charts-blue)");
       nodePositions.forEach((pos, name) => {
@@ -3092,9 +3121,9 @@
         }
         if (!typedByName && el.partType) typedByName = el.partType;
         const nodeG = nodeGroup.append("g").attr("transform", "translate(" + pos.x + "," + pos.y + ")").attr("class", "general-node" + (isDefinition ? " definition-node" : " usage-node")).attr("data-element-name", name).style("cursor", "pointer");
-        const _nodeStroke = isLibValidated ? "#4EC9B0" : typeColor;
+        const _nodeStroke = isLibValidated ? GENERAL_VIEW_PALETTE.structural.part : typeColor;
         const _nodeStrokeW = isUsage ? "3px" : "2px";
-        nodeG.append("rect").attr("class", "node-background").attr("width", pos.width).attr("height", pos.height).attr("rx", isDefinition ? 4 : 8).attr("data-original-stroke", _nodeStroke).attr("data-original-width", _nodeStrokeW).style("fill", "var(--vscode-editor-background)").style("stroke", _nodeStroke).style("stroke-width", _nodeStrokeW).style("stroke-dasharray", isDefinition ? "6,3" : "none");
+        nodeG.append("rect").attr("class", "node-background").attr("width", pos.width).attr("height", pos.height).attr("rx", isDefinition ? 5 : 10).attr("data-original-stroke", _nodeStroke).attr("data-original-width", _nodeStrokeW).style("fill", "var(--vscode-editor-background)").style("stroke", _nodeStroke).style("stroke-width", _nodeStrokeW).style("stroke-dasharray", isDefinition ? "6,3" : "none").style("filter", "url(#general-node-shadow)");
         nodeG.append("rect").attr("width", pos.width).attr("height", 5).attr("rx", 2).style("fill", typeColor);
         nodeG.append("rect").attr("y", 5).attr("width", pos.width).attr("height", typedByName ? 36 : 28).style("fill", "var(--vscode-button-secondaryBackground)");
         let stereoDisplay = el.type || "element";
@@ -3117,7 +3146,7 @@
         const displayName = truncateText2(name, 26);
         nodeG.append("text").attr("class", "node-name-text").attr("data-element-name", name).attr("x", pos.width / 2).attr("y", 31).attr("text-anchor", "middle").text(displayName).style("font-size", "11px").style("font-weight", "bold").style("fill", "var(--vscode-editor-foreground)");
         if (typedByName) {
-          nodeG.append("text").attr("x", pos.width / 2).attr("y", 43).attr("text-anchor", "middle").text(": " + truncateText2(typedByName, 24)).style("font-size", "10px").style("font-style", "italic").style("fill", "#569CD6");
+          nodeG.append("text").attr("x", pos.width / 2).attr("y", 43).attr("text-anchor", "middle").text(": " + truncateText2(typedByName, 24)).style("font-size", "10px").style("font-style", "italic").style("fill", GENERAL_VIEW_PALETTE.requirements.requirement);
         }
         const contentStartY = typedByName ? 50 : 38;
         const clipId = "clip-" + name.replace(/[^a-zA-Z0-9]/g, "_");
@@ -3222,15 +3251,15 @@
         leftPorts.forEach((port, i) => {
           const py = portStartY + i * portSpacing;
           if (py > pos.height - 20) return;
-          nodeG.append("rect").attr("class", "port-icon").attr("x", -portSize / 2).attr("y", py - portSize / 2).attr("width", portSize).attr("height", portSize).style("fill", port.direction === "in" ? "#C586C0" : port.direction === "out" ? "#4EC9B0" : "#9CDCFE").style("stroke", "var(--vscode-editor-background)").style("stroke-width", "1px");
-          nodeG.append("text").attr("x", -portSize - 3).attr("y", py + 3).attr("text-anchor", "end").text(port.name).style("font-size", "8px").style("fill", "#C586C0");
+          nodeG.append("rect").attr("class", "port-icon").attr("x", -portSize / 2).attr("y", py - portSize / 2).attr("width", portSize).attr("height", portSize).style("fill", port.direction === "in" ? GENERAL_VIEW_PALETTE.structural.port : port.direction === "out" ? GENERAL_VIEW_PALETTE.structural.part : GENERAL_VIEW_PALETTE.structural.attribute).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "1px");
+          nodeG.append("text").attr("x", -portSize - 3).attr("y", py + 3).attr("text-anchor", "end").text(port.name).style("font-size", "8px").style("fill", GENERAL_VIEW_PALETTE.structural.port);
           portPositions.set(port.name, { ownerName: name, x: pos.x, y: pos.y + py, side: "left" });
         });
         rightPorts.forEach((port, i) => {
           const py = portStartY + i * portSpacing;
           if (py > pos.height - 20) return;
-          nodeG.append("rect").attr("class", "port-icon").attr("x", pos.width - portSize / 2).attr("y", py - portSize / 2).attr("width", portSize).attr("height", portSize).style("fill", port.direction === "in" ? "#C586C0" : port.direction === "out" ? "#4EC9B0" : "#9CDCFE").style("stroke", "var(--vscode-editor-background)").style("stroke-width", "1px");
-          nodeG.append("text").attr("x", pos.width + portSize + 3).attr("y", py + 3).attr("text-anchor", "start").text(port.name).style("font-size", "8px").style("fill", "#C586C0");
+          nodeG.append("rect").attr("class", "port-icon").attr("x", pos.width - portSize / 2).attr("y", py - portSize / 2).attr("width", portSize).attr("height", portSize).style("fill", port.direction === "in" ? GENERAL_VIEW_PALETTE.structural.port : port.direction === "out" ? GENERAL_VIEW_PALETTE.structural.part : GENERAL_VIEW_PALETTE.structural.attribute).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "1px");
+          nodeG.append("text").attr("x", pos.width + portSize + 3).attr("y", py + 3).attr("text-anchor", "start").text(port.name).style("font-size", "8px").style("fill", GENERAL_VIEW_PALETTE.structural.port);
           portPositions.set(port.name, { ownerName: name, x: pos.x + pos.width, y: pos.y + py, side: "right" });
         });
       });
@@ -4287,16 +4316,16 @@
     });
   }
   var GENERAL_VIEW_CATEGORIES = [
-    { id: "parts", label: "Parts", keywords: ["part"], color: "#4EC9B0" },
-    { id: "attributes", label: "Attributes", keywords: ["attribute", "attr"], color: "#9CDCFE" },
-    { id: "ports", label: "Ports", keywords: ["port"], color: "#C586C0" },
-    { id: "actions", label: "Actions", keywords: ["action"], color: "#DCDCAA" },
-    { id: "states", label: "States", keywords: ["state"], color: "#CE9178" },
-    { id: "requirements", label: "Requirements", keywords: ["requirement", "req"], color: "#B5CEA8" },
-    { id: "interfaces", label: "Interfaces", keywords: ["interface"], color: "#D7BA7D" },
-    { id: "usecases", label: "Use Cases", keywords: ["use case", "usecase"], color: "#569CD6" },
-    { id: "concerns", label: "Concerns", keywords: ["concern", "viewpoint", "stakeholder", "frame"], color: "#E5C07B" },
-    { id: "items", label: "Items", keywords: ["item"], color: "#6A9955" },
+    { id: "parts", label: "Parts", keywords: ["part"], color: GENERAL_VIEW_PALETTE.structural.part },
+    { id: "attributes", label: "Attributes", keywords: ["attribute", "attr"], color: GENERAL_VIEW_PALETTE.structural.attribute },
+    { id: "ports", label: "Ports", keywords: ["port"], color: GENERAL_VIEW_PALETTE.structural.port },
+    { id: "actions", label: "Actions", keywords: ["action"], color: GENERAL_VIEW_PALETTE.behavior.action },
+    { id: "states", label: "States", keywords: ["state"], color: GENERAL_VIEW_PALETTE.behavior.state },
+    { id: "requirements", label: "Requirements", keywords: ["requirement", "req"], color: GENERAL_VIEW_PALETTE.requirements.requirement },
+    { id: "interfaces", label: "Interfaces", keywords: ["interface"], color: GENERAL_VIEW_PALETTE.structural.interface },
+    { id: "usecases", label: "Use Cases", keywords: ["use case", "usecase"], color: GENERAL_VIEW_PALETTE.requirements.useCase },
+    { id: "concerns", label: "Concerns", keywords: ["concern", "viewpoint", "stakeholder", "frame"], color: GENERAL_VIEW_PALETTE.other.allocation },
+    { id: "items", label: "Items", keywords: ["item"], color: GENERAL_VIEW_PALETTE.structural.item },
     { id: "other", label: "Other", keywords: [], color: "#808080" }
   ];
   var expandedGeneralCategories = new Set(GENERAL_VIEW_CATEGORIES.map((c) => c.id));
@@ -4721,8 +4750,8 @@
       {
         selector: 'edge[relType = "typing"]',
         style: {
-          "line-color": "#569CD6",
-          "target-arrow-color": "#569CD6",
+          "line-color": GENERAL_VIEW_PALETTE.requirements.requirement,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.requirements.requirement,
           "line-style": "dashed",
           "width": 2,
           "target-arrow-shape": "triangle",
@@ -4732,8 +4761,8 @@
       {
         selector: 'edge[relType = "specializes"]',
         style: {
-          "line-color": "#C586C0",
-          "target-arrow-color": "#C586C0",
+          "line-color": GENERAL_VIEW_PALETTE.structural.port,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.structural.port,
           "line-style": "solid",
           "width": 2,
           "target-arrow-shape": "triangle-backcurve",
@@ -4743,12 +4772,12 @@
       {
         selector: 'edge[relType = "containment"]',
         style: {
-          "line-color": "#4EC9B0",
-          "target-arrow-color": "#4EC9B0",
+          "line-color": GENERAL_VIEW_PALETTE.structural.part,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.structural.part,
           "line-style": "solid",
           "width": 2,
           "source-arrow-shape": "diamond",
-          "source-arrow-color": "#4EC9B0",
+          "source-arrow-color": GENERAL_VIEW_PALETTE.structural.part,
           "source-arrow-fill": "filled",
           "arrow-scale": 1
         }
@@ -4756,8 +4785,8 @@
       {
         selector: 'edge[relType = "connect"]',
         style: {
-          "line-color": "#D7BA7D",
-          "target-arrow-color": "#D7BA7D",
+          "line-color": GENERAL_VIEW_PALETTE.structural.interface,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.structural.interface,
           "line-style": "solid",
           "width": 2.5,
           "target-arrow-shape": "none"
@@ -4766,8 +4795,8 @@
       {
         selector: 'edge[relType = "interface"]',
         style: {
-          "line-color": "#D7BA7D",
-          "target-arrow-color": "#D7BA7D",
+          "line-color": GENERAL_VIEW_PALETTE.structural.interface,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.structural.interface,
           "line-style": "solid",
           "width": 2.5,
           "target-arrow-shape": "circle",
@@ -4777,8 +4806,8 @@
       {
         selector: 'edge[relType = "flow"]',
         style: {
-          "line-color": "#4EC9B0",
-          "target-arrow-color": "#4EC9B0",
+          "line-color": GENERAL_VIEW_PALETTE.structural.part,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.structural.part,
           "line-style": "solid",
           "width": 2.5,
           "target-arrow-shape": "triangle",
@@ -4798,8 +4827,8 @@
       {
         selector: 'edge[relType = "allocation"]',
         style: {
-          "line-color": "#B5CEA8",
-          "target-arrow-color": "#B5CEA8",
+          "line-color": GENERAL_VIEW_PALETTE.other.allocation,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.other.allocation,
           "line-style": "dashed",
           "width": 2,
           "target-arrow-shape": "triangle",
@@ -4809,8 +4838,8 @@
       {
         selector: 'edge[relType = "dependency"]',
         style: {
-          "line-color": "#D4D4D4",
-          "target-arrow-color": "#D4D4D4",
+          "line-color": GENERAL_VIEW_PALETTE.other.allocation,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.other.allocation,
           "line-style": "dashed",
           "width": 1.5,
           "target-arrow-shape": "triangle",
@@ -4820,8 +4849,8 @@
       {
         selector: 'edge[type = "hierarchy"]',
         style: {
-          "line-color": "#6A9955",
-          "target-arrow-color": "#6A9955",
+          "line-color": GENERAL_VIEW_PALETTE.structural.item,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.structural.item,
           "target-arrow-shape": "triangle",
           "line-style": "dotted",
           "width": 1.5,

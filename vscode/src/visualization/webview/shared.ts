@@ -5,6 +5,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { GENERAL_VIEW_TYPE_COLORS } from './constants';
+
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export function cloneElements(elements: any): any[] {
@@ -111,42 +113,13 @@ export function getNodeBorderStyle(element: any): string {
     return '1px';
 }
 
-const typeColors: Record<string, string> = {
-    'part def': '#4EC9B0',
-    'part': '#4EC9B0',
-    'port def': '#C586C0',
-    'port': '#C586C0',
-    'attribute def': '#9CDCFE',
-    'attribute': '#9CDCFE',
-    'action def': '#DCDCAA',
-    'action': '#DCDCAA',
-    'state def': '#CE9178',
-    'state': '#CE9178',
-    'interface def': '#D7BA7D',
-    'interface': '#D7BA7D',
-    'requirement def': '#B5CEA8',
-    'requirement': '#B5CEA8',
-    'use case def': '#569CD6',
-    'use case': '#569CD6',
-    'verification': '#C586C0',
-    'analysis': '#DCDCAA',
-    'allocation': '#D4D4D4',
-    'item def': '#6A9955',
-    'item': '#6A9955',
-    'calc def': '#DCDCAA',
-    'calc': '#DCDCAA',
-    'constraint def': '#F14C4C',
-    'constraint': '#F14C4C',
-    'default': 'var(--vscode-panel-border)'
-};
-
 export function getTypeColor(type: string | null | undefined): string {
     const t = (type || '').toLowerCase();
-    if (typeColors[t]) return typeColors[t];
-    for (const key in typeColors) {
-        if (key !== 'default' && t.includes(key)) return typeColors[key];
+    if (GENERAL_VIEW_TYPE_COLORS[t]) return GENERAL_VIEW_TYPE_COLORS[t];
+    for (const key of Object.keys(GENERAL_VIEW_TYPE_COLORS)) {
+        if (key !== 'default' && t.includes(key)) return GENERAL_VIEW_TYPE_COLORS[key];
     }
-    return typeColors['default'];
+    return GENERAL_VIEW_TYPE_COLORS['default'];
 }
 
 export function isActorElement(elementOrType: any): boolean {

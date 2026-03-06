@@ -321,6 +321,12 @@
           "minimum": 1,
           "maximum": 4,
           "description": "Scale factor for PNG/SVG export of the visualization."
+        },
+        "sysml-language-server.visualization.generalViewPalette": {
+          "type": "string",
+          "enum": ["distinct", "classic"],
+          "default": "distinct",
+          "description": "Color palette for General View: 'distinct' (semantic SysML pillar colors) or 'classic' (VS Code default syntax colors)."
         }
       }
     }

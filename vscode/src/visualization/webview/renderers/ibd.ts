@@ -4,6 +4,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type { RenderContext } from '../types';
+import { GENERAL_VIEW_PALETTE } from '../constants';
 import { getTypeColor, isLibraryValidated } from '../shared';
 
 declare const d3: any;
@@ -805,7 +806,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
             .attr('data-element-name', part.name)
             .style('cursor', 'pointer');
 
-        const _ibdStroke = isLibValidated ? '#4EC9B0' : typeColor;
+        const _ibdStroke = isLibValidated ? GENERAL_VIEW_PALETTE.structural.part : typeColor;
         const _ibdStrokeW = isUsage ? '3px' : '2px';
         partG.append('rect')
             .attr('width', partWidth)
@@ -889,7 +890,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
 
         inPorts.forEach((p: any, i: number) => {
             const portY = portStartY + i * portSpacing;
-            const portColor = '#C586C0';
+            const portColor = GENERAL_VIEW_PALETTE.structural.port;
             partG.append('rect')
                 .attr('class', 'port-icon')
                 .attr('x', -portSize/2)
@@ -917,7 +918,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
 
         outPorts.forEach((p: any, i: number) => {
             const portY = portStartY + i * portSpacing;
-            const portColor = '#4EC9B0';
+            const portColor = GENERAL_VIEW_PALETTE.structural.part;
             partG.append('rect')
                 .attr('class', 'port-icon')
                 .attr('x', partWidth - portSize/2)
@@ -946,7 +947,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
         const inoutStartY = portStartY + inPorts.length * portSpacing;
         inoutPorts.forEach((p: any, i: number) => {
             const portY = inoutStartY + i * portSpacing;
-            const portColor = '#9CDCFE';
+            const portColor = GENERAL_VIEW_PALETTE.structural.attribute;
             partG.append('rect')
                 .attr('class', 'port-icon')
                 .attr('x', -portSize/2)

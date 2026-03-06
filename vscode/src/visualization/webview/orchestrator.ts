@@ -28,7 +28,8 @@ import {
     ORIENTATION_LABELS,
     STATE_LAYOUT_LABELS,
     STATE_LAYOUT_ICONS,
-    VIEW_OPTIONS
+    VIEW_OPTIONS,
+    GENERAL_VIEW_PALETTE
 } from './constants';
 import {
     convertToHierarchy,
@@ -786,16 +787,16 @@ let lastPillarStats = {};
 
     // General View type filter state
     const GENERAL_VIEW_CATEGORIES = [
-        { id: 'parts', label: 'Parts', keywords: ['part'], color: '#4EC9B0' },
-        { id: 'attributes', label: 'Attributes', keywords: ['attribute', 'attr'], color: '#9CDCFE' },
-        { id: 'ports', label: 'Ports', keywords: ['port'], color: '#C586C0' },
-        { id: 'actions', label: 'Actions', keywords: ['action'], color: '#DCDCAA' },
-        { id: 'states', label: 'States', keywords: ['state'], color: '#CE9178' },
-        { id: 'requirements', label: 'Requirements', keywords: ['requirement', 'req'], color: '#B5CEA8' },
-        { id: 'interfaces', label: 'Interfaces', keywords: ['interface'], color: '#D7BA7D' },
-        { id: 'usecases', label: 'Use Cases', keywords: ['use case', 'usecase'], color: '#569CD6' },
-        { id: 'concerns', label: 'Concerns', keywords: ['concern', 'viewpoint', 'stakeholder', 'frame'], color: '#E5C07B' },
-        { id: 'items', label: 'Items', keywords: ['item'], color: '#6A9955' },
+        { id: 'parts', label: 'Parts', keywords: ['part'], color: GENERAL_VIEW_PALETTE.structural.part },
+        { id: 'attributes', label: 'Attributes', keywords: ['attribute', 'attr'], color: GENERAL_VIEW_PALETTE.structural.attribute },
+        { id: 'ports', label: 'Ports', keywords: ['port'], color: GENERAL_VIEW_PALETTE.structural.port },
+        { id: 'actions', label: 'Actions', keywords: ['action'], color: GENERAL_VIEW_PALETTE.behavior.action },
+        { id: 'states', label: 'States', keywords: ['state'], color: GENERAL_VIEW_PALETTE.behavior.state },
+        { id: 'requirements', label: 'Requirements', keywords: ['requirement', 'req'], color: GENERAL_VIEW_PALETTE.requirements.requirement },
+        { id: 'interfaces', label: 'Interfaces', keywords: ['interface'], color: GENERAL_VIEW_PALETTE.structural.interface },
+        { id: 'usecases', label: 'Use Cases', keywords: ['use case', 'usecase'], color: GENERAL_VIEW_PALETTE.requirements.useCase },
+        { id: 'concerns', label: 'Concerns', keywords: ['concern', 'viewpoint', 'stakeholder', 'frame'], color: GENERAL_VIEW_PALETTE.other.allocation },
+        { id: 'items', label: 'Items', keywords: ['item'], color: GENERAL_VIEW_PALETTE.structural.item },
         { id: 'other', label: 'Other', keywords: [], color: '#808080' }
     ];
     const expandedGeneralCategories = new Set(GENERAL_VIEW_CATEGORIES.map(c => c.id));
@@ -1299,8 +1300,8 @@ let lastPillarStats = {};
             {
                 selector: 'edge[relType = "typing"]',
                 style: {
-                    'line-color': '#569CD6',
-                    'target-arrow-color': '#569CD6',
+                    'line-color': GENERAL_VIEW_PALETTE.requirements.requirement,
+                    'target-arrow-color': GENERAL_VIEW_PALETTE.requirements.requirement,
                     'line-style': 'dashed',
                     'width': 2,
                     'target-arrow-shape': 'triangle',
@@ -1310,8 +1311,8 @@ let lastPillarStats = {};
             {
                 selector: 'edge[relType = "specializes"]',
                 style: {
-                    'line-color': '#C586C0',
-                    'target-arrow-color': '#C586C0',
+                    'line-color': GENERAL_VIEW_PALETTE.structural.port,
+                    'target-arrow-color': GENERAL_VIEW_PALETTE.structural.port,
                     'line-style': 'solid',
                     'width': 2,
                     'target-arrow-shape': 'triangle-backcurve',
@@ -1321,12 +1322,12 @@ let lastPillarStats = {};
             {
                 selector: 'edge[relType = "containment"]',
                 style: {
-                    'line-color': '#4EC9B0',
-                    'target-arrow-color': '#4EC9B0',
+                    'line-color': GENERAL_VIEW_PALETTE.structural.part,
+                    'target-arrow-color': GENERAL_VIEW_PALETTE.structural.part,
                     'line-style': 'solid',
                     'width': 2,
                     'source-arrow-shape': 'diamond',
-                    'source-arrow-color': '#4EC9B0',
+                    'source-arrow-color': GENERAL_VIEW_PALETTE.structural.part,
                     'source-arrow-fill': 'filled',
                     'arrow-scale': 1
                 }
@@ -1334,8 +1335,8 @@ let lastPillarStats = {};
             {
                 selector: 'edge[relType = "connect"]',
                 style: {
-                    'line-color': '#D7BA7D',
-                    'target-arrow-color': '#D7BA7D',
+                    'line-color': GENERAL_VIEW_PALETTE.structural.interface,
+                    'target-arrow-color': GENERAL_VIEW_PALETTE.structural.interface,
                     'line-style': 'solid',
                     'width': 2.5,
                     'target-arrow-shape': 'none'
@@ -1344,8 +1345,8 @@ let lastPillarStats = {};
             {
                 selector: 'edge[relType = "interface"]',
                 style: {
-                    'line-color': '#D7BA7D',
-                    'target-arrow-color': '#D7BA7D',
+                    'line-color': GENERAL_VIEW_PALETTE.structural.interface,
+                    'target-arrow-color': GENERAL_VIEW_PALETTE.structural.interface,
                     'line-style': 'solid',
                     'width': 2.5,
                     'target-arrow-shape': 'circle',
@@ -1355,8 +1356,8 @@ let lastPillarStats = {};
             {
                 selector: 'edge[relType = "flow"]',
                 style: {
-                    'line-color': '#4EC9B0',
-                    'target-arrow-color': '#4EC9B0',
+                    'line-color': GENERAL_VIEW_PALETTE.structural.part,
+                    'target-arrow-color': GENERAL_VIEW_PALETTE.structural.part,
                     'line-style': 'solid',
                     'width': 2.5,
                     'target-arrow-shape': 'triangle',
@@ -1376,8 +1377,8 @@ let lastPillarStats = {};
             {
                 selector: 'edge[relType = "allocation"]',
                 style: {
-                    'line-color': '#B5CEA8',
-                    'target-arrow-color': '#B5CEA8',
+                    'line-color': GENERAL_VIEW_PALETTE.other.allocation,
+                    'target-arrow-color': GENERAL_VIEW_PALETTE.other.allocation,
                     'line-style': 'dashed',
                     'width': 2,
                     'target-arrow-shape': 'triangle',
@@ -1387,8 +1388,8 @@ let lastPillarStats = {};
             {
                 selector: 'edge[relType = "dependency"]',
                 style: {
-                    'line-color': '#D4D4D4',
-                    'target-arrow-color': '#D4D4D4',
+                    'line-color': GENERAL_VIEW_PALETTE.other.allocation,
+                    'target-arrow-color': GENERAL_VIEW_PALETTE.other.allocation,
                     'line-style': 'dashed',
                     'width': 1.5,
                     'target-arrow-shape': 'triangle',
@@ -1398,8 +1399,8 @@ let lastPillarStats = {};
             {
                 selector: 'edge[type = "hierarchy"]',
                 style: {
-                    'line-color': '#6A9955',
-                    'target-arrow-color': '#6A9955',
+                    'line-color': GENERAL_VIEW_PALETTE.structural.item,
+                    'target-arrow-color': GENERAL_VIEW_PALETTE.structural.item,
                     'target-arrow-shape': 'triangle',
                     'line-style': 'dotted',
                     'width': 1.5,

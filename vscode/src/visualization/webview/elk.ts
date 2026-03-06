@@ -7,7 +7,7 @@
 declare const cytoscape: any;
 declare const d3: any;
 
-import { MIN_SYSML_ZOOM, MAX_SYSML_ZOOM } from './constants';
+import { MIN_SYSML_ZOOM, MAX_SYSML_ZOOM, GENERAL_VIEW_PALETTE } from './constants';
 import { getTypeColor } from './shared';
 
 export interface ElkContext {
@@ -338,13 +338,14 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
             return;
         }
 
+        const elementCount = topLevelElements.length;
         const nodeWidth = 150;
         const nodeBaseHeight = 44;
         const lineHeight = 13;
         const sectionGap = 5;
-        const padding = 20;
-        const hSpacing = 30;
-        const vSpacing = 30;
+        const padding = 24;
+        const hSpacing = elementCount > 25 ? 40 : 34;
+        const vSpacing = elementCount > 25 ? 36 : 32;
 
         function truncateText(text: string, maxChars: number) {
             if (!text) return '';
@@ -530,8 +531,8 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
 
         const categoryStartPositions = new Map<string, { y: number; count: number }>();
         let currentY = padding;
-        const groupSpacing = ctx.showCategoryHeaders ? 40 : 0;
-        const categoryLabelHeight = ctx.showCategoryHeaders ? 25 : 0;
+        const groupSpacing = ctx.showCategoryHeaders ? 65 : 45;
+        const categoryLabelHeight = ctx.showCategoryHeaders ? 28 : 0;
 
         categoryOrder.forEach((catId: string) => {
             const group = groupedNodes[catId];
@@ -570,6 +571,9 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
         });
 
         const defs = svg.select('defs').empty() ? svg.append('defs') : svg.select('defs');
+        defs.selectAll('#general-node-shadow').remove();
+        defs.append('filter').attr('id', 'general-node-shadow').attr('x', '-20%').attr('y', '-20%').attr('width', '140%').attr('height', '140%')
+            .append('feDropShadow').attr('dx', 0).attr('dy', 1).attr('stdDeviation', 2).attr('flood-color', '#000').attr('flood-opacity', 0.15);
         defs.selectAll('#general-arrow').remove();
         defs.append('marker')
             .attr('id', 'general-arrow')
@@ -590,10 +594,10 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 if (!category) return;
                 const headerG = headerGroup.append('g').attr('transform', 'translate(' + padding + ',' + info.y + ')');
                 headerG.append('text').attr('x', 0).attr('y', 16)
-                    .style('font-size', '13px').style('font-weight', 'bold').style('fill', category.color)
+                    .style('font-size', '14px').style('font-weight', '600').style('fill', category.color)
                     .text(category.label + ' (' + info.count + ')');
-                headerG.append('line').attr('x1', 0).attr('y1', 22).attr('x2', availableWidth).attr('y2', 22)
-                    .style('stroke', category.color).style('stroke-width', '2px').style('opacity', 0.5);
+                headerG.append('line').attr('x1', 0).attr('y1', 24).attr('x2', availableWidth).attr('y2', 24)
+                    .style('stroke', category.color).style('stroke-width', '2px').style('opacity', 0.35);
             });
         }
 
@@ -703,8 +707,11 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 drawnEdges.add(edgeKey);
 
                 const pairKey = [conn.source, conn.target].sort().join('--');
-                edgeOffsets[pairKey] = (edgeOffsets[pairKey] || 0) + 1;
-                const offset = (edgeOffsets[pairKey] - 1) * 15;
+                const pairCount = (edgeOffsets[pairKey] || 0) + 1;
+                edgeOffsets[pairKey] = pairCount;
+                const offsetStep = 22;
+                const isReverse = conn.source > conn.target;
+                const offset = (pairCount - 1) * offsetStep * (isReverse && pairCount > 1 ? -1 : 1);
 
                 const srcCx = srcPos.x + srcPos.width / 2;
                 const srcCy = srcPos.y + srcPos.height / 2;
@@ -736,25 +743,25 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
 
                 let strokeColor: string, strokeDash: string, markerEnd: string, strokeWidth: string;
                 if (conn.isSpecialization || conn.type === 'specializes') {
-                    strokeColor = '#C586C0'; strokeDash = 'none'; markerEnd = 'url(#general-specializes)'; strokeWidth = '1.5px';
+                    strokeColor = GENERAL_VIEW_PALETTE.structural.port; strokeDash = 'none'; markerEnd = 'url(#general-specializes)'; strokeWidth = '1.5px';
                 } else if (conn.isTypedBy || conn.type === 'typed by' || conn.type === 'typing') {
-                    strokeColor = '#569CD6'; strokeDash = '5,3'; markerEnd = 'url(#general-typed-by)'; strokeWidth = '1.5px';
+                    strokeColor = GENERAL_VIEW_PALETTE.requirements.requirement; strokeDash = '5,3'; markerEnd = 'url(#general-typed-by)'; strokeWidth = '1.5px';
                 } else if (conn.isContains || conn.type === 'contains' || conn.type === 'containment') {
-                    strokeColor = '#4EC9B0'; strokeDash = 'none'; markerEnd = 'url(#general-contains)'; strokeWidth = '1.5px';
+                    strokeColor = GENERAL_VIEW_PALETTE.structural.part; strokeDash = 'none'; markerEnd = 'url(#general-contains)'; strokeWidth = '1.5px';
                 } else if (conn.type === 'connect' || conn.type === 'connection' || conn.type === 'interface') {
-                    strokeColor = '#D7BA7D'; strokeDash = 'none'; markerEnd = 'url(#general-connect)'; strokeWidth = '2px';
+                    strokeColor = GENERAL_VIEW_PALETTE.structural.interface; strokeDash = 'none'; markerEnd = 'url(#general-connect)'; strokeWidth = '2px';
                 } else if (conn.type === 'bind' || conn.type === 'binding') {
                     strokeColor = '#808080'; strokeDash = '2,2'; markerEnd = 'none'; strokeWidth = '1px';
                 } else if (conn.type === 'allocate' || conn.type === 'allocation') {
-                    strokeColor = '#B5CEA8'; strokeDash = '8,4'; markerEnd = 'url(#general-arrow)'; strokeWidth = '1.5px';
+                    strokeColor = GENERAL_VIEW_PALETTE.other.allocation; strokeDash = '8,4'; markerEnd = 'url(#general-arrow)'; strokeWidth = '1.5px';
                 } else if (conn.type === 'flow') {
-                    strokeColor = '#4EC9B0'; strokeDash = 'none'; markerEnd = 'url(#general-arrow)'; strokeWidth = '2px';
+                    strokeColor = GENERAL_VIEW_PALETTE.structural.part; strokeDash = 'none'; markerEnd = 'url(#general-arrow)'; strokeWidth = '2px';
                 } else if (conn.type === 'subsetting' || conn.type === 'redefinition') {
-                    strokeColor = '#CE9178'; strokeDash = '4,2'; markerEnd = 'url(#general-arrow)'; strokeWidth = '1.5px';
+                    strokeColor = GENERAL_VIEW_PALETTE.behavior.state; strokeDash = '4,2'; markerEnd = 'url(#general-arrow)'; strokeWidth = '1.5px';
                 } else if (conn.type === 'satisfy' || conn.type === 'verify') {
-                    strokeColor = '#DCDCAA'; strokeDash = '6,3'; markerEnd = 'url(#general-arrow)'; strokeWidth = '1.5px';
+                    strokeColor = GENERAL_VIEW_PALETTE.behavior.action; strokeDash = '6,3'; markerEnd = 'url(#general-arrow)'; strokeWidth = '1.5px';
                 } else if (conn.type === 'dependency') {
-                    strokeColor = '#D4D4D4'; strokeDash = '6,3'; markerEnd = 'url(#general-arrow)'; strokeWidth = '1.5px';
+                    strokeColor = GENERAL_VIEW_PALETTE.other.allocation; strokeDash = '6,3'; markerEnd = 'url(#general-arrow)'; strokeWidth = '1.5px';
                 } else {
                     strokeColor = 'var(--vscode-charts-blue)'; strokeDash = 'none'; markerEnd = 'url(#general-arrow)'; strokeWidth = '1.5px';
                 }
@@ -803,8 +810,8 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                     else if (conn.type === 'connect') labelText = 'connect';
                     else if (conn.type === 'bind') labelText = '=';
                     else if (conn.type.length > 12) labelText = conn.type.substring(0, 10) + '..';
-                    edgeGroup.append('rect').attr('x', labelX - 20).attr('y', labelY - 8).attr('width', 40).attr('height', 12).attr('rx', 2)
-                        .style('fill', 'var(--vscode-editor-background)').style('opacity', 0.9);
+                    edgeGroup.append('rect').attr('x', labelX - 22).attr('y', labelY - 9).attr('width', 44).attr('height', 14).attr('rx', 7)
+                        .style('fill', 'var(--vscode-editor-background)').style('opacity', 0.92);
                     edgeGroup.append('text').attr('x', labelX).attr('y', labelY).attr('text-anchor', 'middle')
                         .text(labelText).style('font-size', '9px').style('font-weight', 'bold').style('fill', strokeColor);
                 }
@@ -865,7 +872,7 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                     pathD = 'M' + x1 + ',' + y1 + ' L' + x1 + ',' + midY + ' L' + x2 + ',' + midY + ' L' + x2 + ',' + y2;
                 }
                 const isBind = pConn.type === 'bind';
-                const strokeColor = isBind ? '#569CD6' : '#D7BA7D';
+                const strokeColor = isBind ? GENERAL_VIEW_PALETTE.requirements.requirement : GENERAL_VIEW_PALETTE.structural.interface;
                 const strokeDash = isBind ? '4,2' : 'none';
                 const portOrigStroke = strokeColor;
                 const portOrigWidth = '2px';
@@ -912,19 +919,19 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
         defs.append('marker').attr('id', 'general-specializes').attr('viewBox', '0 -6 12 12').attr('refX', 11).attr('refY', 0)
             .attr('markerWidth', 8).attr('markerHeight', 8).attr('orient', 'auto')
             .append('path').attr('d', 'M0,-5L10,0L0,5Z')
-            .style('fill', 'var(--vscode-editor-background)').style('stroke', '#C586C0').style('stroke-width', '1.5px');
+            .style('fill', 'var(--vscode-editor-background)').style('stroke', GENERAL_VIEW_PALETTE.structural.port).style('stroke-width', '1.5px');
         defs.selectAll('#general-typed-by').remove();
         defs.append('marker').attr('id', 'general-typed-by').attr('viewBox', '0 -5 10 10').attr('refX', 9).attr('refY', 0)
             .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
-            .append('path').attr('d', 'M0,-4L10,0L0,4Z').style('fill', '#569CD6');
+            .append('path').attr('d', 'M0,-4L10,0L0,4Z').style('fill', GENERAL_VIEW_PALETTE.requirements.requirement);
         defs.selectAll('#general-contains').remove();
         defs.append('marker').attr('id', 'general-contains').attr('viewBox', '-6 -6 12 12').attr('refX', 0).attr('refY', 0)
             .attr('markerWidth', 8).attr('markerHeight', 8).attr('orient', 'auto')
-            .append('path').attr('d', 'M-5,0L0,-4L5,0L0,4Z').style('fill', '#4EC9B0');
+            .append('path').attr('d', 'M-5,0L0,-4L5,0L0,4Z').style('fill', GENERAL_VIEW_PALETTE.structural.part);
         defs.selectAll('#general-connect').remove();
         defs.append('marker').attr('id', 'general-connect').attr('viewBox', '0 -4 8 8').attr('refX', 4).attr('refY', 0)
             .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
-            .append('circle').attr('cx', 4).attr('cy', 0).attr('r', 3).style('fill', '#D7BA7D');
+            .append('circle').attr('cx', 4).attr('cy', 0).attr('r', 3).style('fill', GENERAL_VIEW_PALETTE.structural.interface);
         defs.selectAll('#general-arrow').remove();
         defs.append('marker').attr('id', 'general-arrow').attr('viewBox', '0 -5 10 10').attr('refX', 8).attr('refY', 0)
             .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
@@ -950,13 +957,14 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 .attr('data-element-name', name)
                 .style('cursor', 'pointer');
 
-            const _nodeStroke = isLibValidated ? '#4EC9B0' : typeColor;
+            const _nodeStroke = isLibValidated ? GENERAL_VIEW_PALETTE.structural.part : typeColor;
             const _nodeStrokeW = isUsage ? '3px' : '2px';
             nodeG.append('rect').attr('class', 'node-background')
-                .attr('width', pos.width).attr('height', pos.height).attr('rx', isDefinition ? 4 : 8)
+                .attr('width', pos.width).attr('height', pos.height).attr('rx', isDefinition ? 5 : 10)
                 .attr('data-original-stroke', _nodeStroke).attr('data-original-width', _nodeStrokeW)
                 .style('fill', 'var(--vscode-editor-background)').style('stroke', _nodeStroke)
-                .style('stroke-width', _nodeStrokeW).style('stroke-dasharray', isDefinition ? '6,3' : 'none');
+                .style('stroke-width', _nodeStrokeW).style('stroke-dasharray', isDefinition ? '6,3' : 'none')
+                .style('filter', 'url(#general-node-shadow)');
 
             nodeG.append('rect').attr('width', pos.width).attr('height', 5).attr('rx', 2).style('fill', typeColor);
             nodeG.append('rect').attr('y', 5).attr('width', pos.width).attr('height', typedByName ? 36 : 28)
@@ -990,7 +998,7 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
             if (typedByName) {
                 nodeG.append('text').attr('x', pos.width / 2).attr('y', 43).attr('text-anchor', 'middle')
                     .text(': ' + truncateText(typedByName, 24))
-                    .style('font-size', '10px').style('font-style', 'italic').style('fill', '#569CD6');
+                    .style('font-size', '10px').style('font-style', 'italic').style('fill', GENERAL_VIEW_PALETTE.requirements.requirement);
             }
 
             const contentStartY = typedByName ? 50 : 38;
@@ -1118,10 +1126,10 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 if (py > pos.height - 20) return;
                 nodeG.append('rect').attr('class', 'port-icon')
                     .attr('x', -portSize / 2).attr('y', py - portSize / 2).attr('width', portSize).attr('height', portSize)
-                    .style('fill', port.direction === 'in' ? '#C586C0' : (port.direction === 'out' ? '#4EC9B0' : '#9CDCFE'))
+                    .style('fill', port.direction === 'in' ? GENERAL_VIEW_PALETTE.structural.port : (port.direction === 'out' ? GENERAL_VIEW_PALETTE.structural.part : GENERAL_VIEW_PALETTE.structural.attribute))
                     .style('stroke', 'var(--vscode-editor-background)').style('stroke-width', '1px');
                 nodeG.append('text').attr('x', -portSize - 3).attr('y', py + 3).attr('text-anchor', 'end')
-                    .text(port.name).style('font-size', '8px').style('fill', '#C586C0');
+                    .text(port.name).style('font-size', '8px').style('fill', GENERAL_VIEW_PALETTE.structural.port);
                 portPositions.set(port.name, { ownerName: name, x: pos.x, y: pos.y + py, side: 'left' });
             });
             rightPorts.forEach((port: any, i: number) => {
@@ -1129,10 +1137,10 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 if (py > pos.height - 20) return;
                 nodeG.append('rect').attr('class', 'port-icon')
                     .attr('x', pos.width - portSize / 2).attr('y', py - portSize / 2).attr('width', portSize).attr('height', portSize)
-                    .style('fill', port.direction === 'in' ? '#C586C0' : (port.direction === 'out' ? '#4EC9B0' : '#9CDCFE'))
+                    .style('fill', port.direction === 'in' ? GENERAL_VIEW_PALETTE.structural.port : (port.direction === 'out' ? GENERAL_VIEW_PALETTE.structural.part : GENERAL_VIEW_PALETTE.structural.attribute))
                     .style('stroke', 'var(--vscode-editor-background)').style('stroke-width', '1px');
                 nodeG.append('text').attr('x', pos.width + portSize + 3).attr('y', py + 3).attr('text-anchor', 'start')
-                    .text(port.name).style('font-size', '8px').style('fill', '#C586C0');
+                    .text(port.name).style('font-size', '8px').style('fill', GENERAL_VIEW_PALETTE.structural.port);
                 portPositions.set(port.name, { ownerName: name, x: pos.x + pos.width, y: pos.y + py, side: 'right' });
             });
         });
