@@ -86,7 +86,7 @@ export function buildElementDisplayLabel(element: any): string {
     return stereotype ? stereotype + ' ' + displayName : displayName;
 }
 
-function isLibraryValidated(element: any): boolean {
+export function isLibraryValidated(element: any): boolean {
     if (!element?.attributes) {
         return false;
     }

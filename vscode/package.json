@@ -1,6 +1,6 @@
 {
   "name": "sysml-language-server",
-  "displayName": "SysML v2 Tools",
+  "displayName": "SysML v2 Editor",
   "publisher": "Elan8",
   "icon": "logo/elan8.png",
   "description": "Language support for SysML v2 including syntax validation, navigation and diagnostics.",

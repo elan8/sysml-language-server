@@ -23,11 +23,66 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.createMessageDispatcher = createMessageDispatcher;
 exports.createMessageHandlers = createMessageHandlers;
 const path = __importStar(require("path"));
 const vscode = __importStar(require("vscode"));
 const logger_1 = require("../logger");
 const lspModelProvider_1 = require("../providers/lspModelProvider");
+function createMessageDispatcher(ctx) {
+    const handlers = createMessageHandlers(ctx);
+    const { panel, document, fileUris, setCurrentView, setLastContentHash, updateVisualization } = ctx;
+    return (message) => {
+        switch (message.command) {
+            case 'webviewLog':
+                handlers.logWebviewMessage(message.level, message.args ?? []);
+                break;
+            case 'jumpToElement':
+                handlers.jumpToElement(message.elementName, message.skipCentering, message.parentContext);
+                break;
+            case 'renameElement':
+                handlers.renameElement(message.oldName, message.newName);
+                break;
+            case 'export':
+                handlers.handleExport(message.format, message.data);
+                break;
+            case 'executeCommand':
+                if (message.args && message.args.length > 0) {
+                    const cmd = message.args[0];
+                    const allowedCommands = [];
+                    if (!allowedCommands.includes(cmd)) {
+                        // eslint-disable-next-line no-console
+                        console.warn(`[SysML Visualizer] Blocked disallowed command: ${cmd}`);
+                        break;
+                    }
+                    if (cmd === 'sysml.showModelDashboard') {
+                        const dashboardUri = fileUris.length > 0 ? fileUris[0] : document.uri;
+                        setTimeout(() => vscode.commands.executeCommand(cmd, dashboardUri), 100);
+                    }
+                    else {
+                        const cmdArgs = message.args.slice(1);
+                        setTimeout(() => vscode.commands.executeCommand(cmd, ...cmdArgs), 100);
+                    }
+                }
+                break;
+            case 'viewChanged':
+                setCurrentView(message.view ?? '');
+                break;
+            case 'openExternal':
+                if (message.url) {
+                    vscode.env.openExternal(vscode.Uri.parse(message.url));
+                }
+                break;
+            case 'currentViewResponse':
+                setCurrentView(message.view ?? '');
+                break;
+            case 'webviewReady':
+                setLastContentHash('');
+                updateVisualization(true);
+                break;
+        }
+    };
+}
 function createMessageHandlers(context) {
     const { panel, document, lspModelProvider, fileUris, updateVisualization, setNavigating } = context;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

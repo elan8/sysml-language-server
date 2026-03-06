@@ -26,7 +26,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.VisualizationPanel = void 0;
 const vscode = __importStar(require("vscode"));
 const messageHandlers_1 = require("./messageHandlers");
-const modelFetcher_1 = require("./modelFetcher");
+const updateFlow_1 = require("./updateFlow");
 const htmlBuilder_1 = require("./htmlBuilder");
 class VisualizationPanel {
     constructor(panel, extensionUri, _document, _lspModelProvider, fileUris) {
@@ -35,7 +35,6 @@ class VisualizationPanel {
         this._disposables = [];
         this._currentView = 'elk'; // Store current view state - default to General View
         this._isNavigating = false; // Flag to prevent view reset during navigation
-        this._lastUpdateTime = 0; // Prevent rapid successive updates
         this._lastContentHash = ''; // Cache content hash to skip unchanged updates
         this._needsUpdateWhenVisible = false; // Deferred update when panel is hidden
         this._fileUris = []; // All source file URIs (for folder-level visualization)
@@ -60,79 +59,34 @@ class VisualizationPanel {
             }
         }, null, this._disposables);
         this._panel.webview.html = (0, htmlBuilder_1.getWebviewHtml)(this._panel.webview, extensionUri, this._extensionVersion);
-        // Request current view state from webview after initialization
+        this._updateFlow = (0, updateFlow_1.createUpdateVisualizationFlow)({
+            panel: this._panel,
+            document: this._document,
+            fileUris: this._fileUris,
+            lspModelProvider: this._lspModelProvider,
+            getCurrentView: () => this._currentView,
+            getPendingPackageName: () => this._pendingPackageName,
+            getIsNavigating: () => this._isNavigating,
+            getNeedsUpdateWhenVisible: () => this._needsUpdateWhenVisible,
+            getLastContentHash: () => this._lastContentHash,
+            setLastContentHash: (h) => { this._lastContentHash = h; },
+            setNeedsUpdateWhenVisible: (v) => { this._needsUpdateWhenVisible = v; },
+            clearPendingPackageName: () => { this._pendingPackageName = undefined; },
+        });
         setTimeout(() => {
             this._panel.webview.postMessage({ command: 'requestCurrentView' });
         }, 100);
-        const handlers = (0, messageHandlers_1.createMessageHandlers)({
+        const dispatch = (0, messageHandlers_1.createMessageDispatcher)({
             panel: this._panel,
             document: this._document,
             lspModelProvider: this._lspModelProvider,
             fileUris: this._fileUris,
             updateVisualization: (force) => this.updateVisualization(force),
             setNavigating: (v) => { this._isNavigating = v; },
+            setCurrentView: (v) => { this._currentView = v; },
+            setLastContentHash: (h) => { this._lastContentHash = h; },
         });
-        this._panel.webview.onDidReceiveMessage(message => {
-            switch (message.command) {
-                case 'webviewLog':
-                    handlers.logWebviewMessage(message.level, message.args);
-                    break;
-                case 'jumpToElement':
-                    handlers.jumpToElement(message.elementName, message.skipCentering, message.parentContext);
-                    break;
-                case 'renameElement':
-                    handlers.renameElement(message.oldName, message.newName);
-                    break;
-                case 'export':
-                    handlers.handleExport(message.format, message.data);
-                    break;
-                case 'executeCommand':
-                    if (message.args && message.args.length > 0) {
-                        const cmd = message.args[0];
-                        const allowedCommands = [];
-                        if (!allowedCommands.includes(cmd)) {
-                            // eslint-disable-next-line no-console
-                            console.warn(`[SysML Visualizer] Blocked disallowed command: ${cmd}`);
-                            break;
-                        }
-                        if (cmd === 'sysml.showModelDashboard') {
-                            // Pass a file URI so the dashboard can load data
-                            // even when no text editor is active (webview is focused).
-                            const dashboardUri = this._fileUris.length > 0
-                                ? this._fileUris[0]
-                                : this._document.uri;
-                            setTimeout(() => {
-                                vscode.commands.executeCommand(cmd, dashboardUri);
-                            }, 100);
-                        }
-                        else {
-                            const cmdArgs = message.args.slice(1);
-                            setTimeout(() => {
-                                vscode.commands.executeCommand(cmd, ...cmdArgs);
-                            }, 100);
-                        }
-                    }
-                    break;
-                case 'viewChanged':
-                    // Store the current view state when it changes
-                    this._currentView = message.view;
-                    break;
-                case 'openExternal':
-                    if (message.url) {
-                        vscode.env.openExternal(vscode.Uri.parse(message.url));
-                    }
-                    break;
-                case 'currentViewResponse':
-                    // Update our stored view state with the current webview state
-                    this._currentView = message.view;
-                    break;
-                case 'webviewReady':
-                    // Webview (re)initialized — push current model data
-                    this._lastContentHash = '';
-                    this.updateVisualization(true);
-                    break;
-            }
-        }, null, this._disposables);
+        this._panel.webview.onDidReceiveMessage(dispatch, null, this._disposables);
         this.updateVisualization();
     }
     static createOrShow(extensionUri, document, customTitle, lspModelProvider, fileUris) {
@@ -189,50 +143,8 @@ class VisualizationPanel {
     exportVisualization(format, scale = 2) {
         this._panel.webview.postMessage({ command: 'export', format: format.toLowerCase(), scale });
     }
-    async updateVisualization(forceUpdate = false) {
-        // Skip update if we're currently navigating to prevent view reset
-        if (this._isNavigating) {
-            return;
-        }
-        // Defer work when the panel is not visible (e.g. user switched tabs)
-        if (!this._panel.visible) {
-            this._needsUpdateWhenVisible = true;
-            return;
-        }
-        // Check content hash first - skip expensive parsing if content unchanged
-        const content = this._document.getText();
-        const contentHash = (0, modelFetcher_1.hashContent)(content);
-        if (!forceUpdate && contentHash === this._lastContentHash) {
-            // Content unchanged, skip update entirely
-            return;
-        }
-        this._lastContentHash = contentHash;
-        // Tell the webview to show loading indicator immediately
-        this._panel.webview.postMessage({ command: 'showLoading', message: 'Parsing SysML model...' });
-        // Yield to the event loop so the webview can render the loading state
-        // before the synchronous ANTLR parse blocks the extension host
-        await new Promise(resolve => setTimeout(resolve, 0));
-        await this._doUpdateVisualization();
-    }
-    async _doUpdateVisualization() {
-        try {
-            const msg = await (0, modelFetcher_1.fetchModelData)({
-                documentUri: this._document.uri.toString(),
-                fileUris: this._fileUris,
-                lspModelProvider: this._lspModelProvider,
-                currentView: this._currentView,
-                pendingPackageName: this._pendingPackageName,
-            });
-            if (this._pendingPackageName) {
-                this._pendingPackageName = undefined;
-            }
-            if (msg) {
-                this._panel.webview.postMessage(msg);
-            }
-        }
-        catch {
-            this._panel.webview.postMessage({ command: 'hideLoading' });
-        }
+    updateVisualization(forceUpdate = false) {
+        return this._updateFlow.update(forceUpdate);
     }
     getDocument() {
         return this._document;

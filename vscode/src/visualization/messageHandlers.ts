@@ -11,6 +11,66 @@ export interface MessageHandlerContext {
     fileUris: vscode.Uri[];
     updateVisualization: (force: boolean) => void;
     setNavigating: (value: boolean) => void;
+    setCurrentView: (view: string) => void;
+    setLastContentHash: (hash: string) => void;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type WebviewMessage = { command: string; [key: string]: any };
+
+export function createMessageDispatcher(ctx: MessageHandlerContext): (msg: WebviewMessage) => void {
+    const handlers = createMessageHandlers(ctx);
+    const { panel, document, fileUris, setCurrentView, setLastContentHash, updateVisualization } = ctx;
+
+    return (message: WebviewMessage) => {
+        switch (message.command) {
+            case 'webviewLog':
+                handlers.logWebviewMessage(message.level, message.args ?? []);
+                break;
+            case 'jumpToElement':
+                handlers.jumpToElement(message.elementName, message.skipCentering, message.parentContext);
+                break;
+            case 'renameElement':
+                handlers.renameElement(message.oldName, message.newName);
+                break;
+            case 'export':
+                handlers.handleExport(message.format, message.data);
+                break;
+            case 'executeCommand':
+                if (message.args && message.args.length > 0) {
+                    const cmd = message.args[0];
+                    const allowedCommands: string[] = [];
+                    if (!allowedCommands.includes(cmd)) {
+                        // eslint-disable-next-line no-console
+                        console.warn(`[SysML Visualizer] Blocked disallowed command: ${cmd}`);
+                        break;
+                    }
+                    if (cmd === 'sysml.showModelDashboard') {
+                        const dashboardUri = fileUris.length > 0 ? fileUris[0] : document.uri;
+                        setTimeout(() => vscode.commands.executeCommand(cmd, dashboardUri), 100);
+                    } else {
+                        const cmdArgs = message.args.slice(1);
+                        setTimeout(() => vscode.commands.executeCommand(cmd, ...cmdArgs), 100);
+                    }
+                }
+                break;
+            case 'viewChanged':
+                setCurrentView(message.view ?? '');
+                break;
+            case 'openExternal':
+                if (message.url) {
+                    vscode.env.openExternal(vscode.Uri.parse(message.url));
+                }
+                break;
+            case 'currentViewResponse':
+                setCurrentView(message.view ?? '');
+                break;
+            case 'webviewReady':
+                setLastContentHash('');
+                updateVisualization(true);
+                break;
+        }
+    };
 }
 
 export function createMessageHandlers(context: MessageHandlerContext) {

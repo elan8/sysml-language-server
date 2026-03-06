@@ -8,20 +8,18 @@ export declare class VisualizationPanel {
     private _disposables;
     private _currentView;
     private _isNavigating;
-    private _lastUpdateTime;
     private _fileChangeDebounceTimer;
     private _lastContentHash;
-    private _pendingUpdate;
     private _needsUpdateWhenVisible;
     private _lastViewColumn;
     private _fileUris;
     private _extensionVersion;
     private _pendingPackageName;
+    private _updateFlow;
     private constructor();
     static createOrShow(extensionUri: vscode.Uri, document: vscode.TextDocument, customTitle?: string, lspModelProvider?: LspModelProvider, fileUris?: vscode.Uri[]): void;
     exportVisualization(format: string, scale?: number): void;
     private updateVisualization;
-    private _doUpdateVisualization;
     getDocument(): vscode.TextDocument;
     /** Update the LspModelProvider. */
     setLspModelProvider(provider: LspModelProvider): void;
