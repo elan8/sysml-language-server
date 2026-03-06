@@ -44,8 +44,8 @@ jobs:
         env:
           RELEASE_ROOT: ${{ runner.temp }}/SysML-v2-Release-2026-01
 
-      - name: cargo test (kerml-parser with validation)
-        run: cargo test -p kerml-parser
+      - name: cargo test (kerml-parser including full validation suite)
+        run: cargo test -p kerml-parser -- --include-ignored
         env:
           SYSML_V2_RELEASE_DIR: ${{ runner.temp }}/SysML-v2-Release-2026-01
 

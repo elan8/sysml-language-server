@@ -61,17 +61,16 @@ npm run compile
 
 ## Validation tests (SysML v2 suite)
 
-The parser can run tests over the official [SysML v2 Release](https://github.com/Systems-Modeling/SysML-v2-Release) validation files. CI clones the release and runs these tests. Locally, either:
+The parser runs a full validation suite over all `.sysml` files in the official [SysML v2 Release](https://github.com/Systems-Modeling/SysML-v2-Release) `sysml/src/validation` directory. The test expects zero parser errors.
 
-- Clone the release and set the environment variable to its root:
+- **Standard `cargo test`**: The full validation suite is `#[ignore]`d (slow). It does not run by default.
+- **CI**: The validation job clones the release and runs `cargo test -p kerml-parser -- --include-ignored` to run all tests including the full validation suite.
+- **Locally**: Clone the release and run the ignored tests when you want to validate:
   ```bash
-  git clone --depth 1 https://github.com/Systems-Modeling/SysML-v2-Release.git -b 2026-01 /path/to/SysML-v2-Release-2026-01
-  export SYSML_V2_RELEASE_DIR=/path/to/SysML-v2-Release-2026-01
-  cargo test -p kerml-parser
+  git clone --depth 1 https://github.com/Systems-Modeling/SysML-v2-Release.git -b 2026-01 temp/SysML-v2-Release-2026-01
+  cargo test -p kerml-parser -- test_full_validation_suite -- --ignored
   ```
-- Or place a clone at `temp/SysML-v2-Release-2026-01` (relative to the repo root); then `cargo test -p kerml-parser` will use it automatically.
-
-If the validation directory is not present, the validation test is skipped.
+  Or set `SYSML_V2_RELEASE_DIR` to the clone root. If the validation directory is not present, the test returns early without failing.
 
 ## Running tests
 

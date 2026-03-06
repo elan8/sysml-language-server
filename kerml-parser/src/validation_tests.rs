@@ -142,11 +142,12 @@ fn find_sysml_files(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Test parsing a single SysML file
-fn test_parse_file(file_path: &Path) -> Result<()> {
+/// Parse a SysML file. Returns (document, line_count) on success.
+fn parse_file(file_path: &Path) -> Result<(crate::ast::SysMLDocument, usize)> {
     let content = fs::read_to_string(file_path)?;
-    parse_sysml(&content)?;
-    Ok(())
+    let n_lines = content.lines().count();
+    let doc = parse_sysml(&content)?;
+    Ok((doc, n_lines))
 }
 
 #[cfg(test)]
@@ -275,35 +276,51 @@ mod tests {
         }
     }
 
-    /// Test all validation files
+    /// Full validation suite: parse all .sysml files in SysML-v2-Release sysml/src/validation.
+    /// Expects zero parser errors. Ignores missing dir (returns early).
+    ///
+    /// This test is `#[ignore]` because it parses many files and is slow. Run with:
+    ///   cargo test -p kerml-parser -- --ignored
+    /// CI runs it via the validation job with SYSML_V2_RELEASE_DIR set.
     #[test]
-    fn test_all_validation_files() {
+    #[ignore = "slow; run with: cargo test -p kerml-parser -- --ignored"]
+    fn test_full_validation_suite() {
         init_test_logger();
-        
+
         let validation_path = validation_dir();
-        
+
         if !validation_path.exists() {
             debug!("Validation directory not found: {:?}", validation_path);
-            debug!("Skipping validation tests. Clone https://github.com/Systems-Modeling/SysML-v2-Release and set {} to its root, or place a clone in temp/SysML-v2-Release-2026-01", super::SYSML_V2_RELEASE_DIR_ENV);
+            debug!(
+                "Skipping. Clone SysML-v2-Release and set {} to its root, or place in temp/SysML-v2-Release-2026-01",
+                super::SYSML_V2_RELEASE_DIR_ENV
+            );
             return;
         }
-        
-        let files = find_sysml_files(&validation_path)
-            .expect("Failed to find validation files");
-        
-        assert!(!files.is_empty(), "No .sysml files found in validation directory");
-        
+
+        let files = find_sysml_files(&validation_path).expect("Failed to find validation files");
+
+        assert!(
+            !files.is_empty(),
+            "No .sysml files found in validation directory"
+        );
+
         let mut failed_files = Vec::new();
-        
+
         for file in &files {
-            let relative_path = file.strip_prefix(&validation_path)
+            let relative_path = file
+                .strip_prefix(&validation_path)
                 .unwrap_or(file)
                 .to_string_lossy()
                 .to_string();
-            
-            match test_parse_file(file) {
-                Ok(_) => {
-                    info!("✓ {}", relative_path);
+
+            match parse_file(file) {
+                Ok((doc, n_lines)) => {
+                    let n_pkgs = doc.packages.len();
+                    let n_members = doc.packages.iter().map(|p| p.members.len()).sum::<usize>();
+                    let summary = format!("✓ {} ({} pkgs, {} members, {} lines)", relative_path, n_pkgs, n_members, n_lines);
+                    info!("{}", summary);
+                    eprintln!("{}", summary);
                 }
                 Err(e) => {
                     debug!("✗ {} - Error: {}", relative_path, e);
@@ -311,14 +328,22 @@ mod tests {
                 }
             }
         }
-        
+
         if !failed_files.is_empty() {
             info!("\nFailed to parse {} file(s):", failed_files.len());
             for (file, error) in &failed_files {
                 info!("  {}: {}", file, error);
             }
-            panic!("Some validation files failed to parse");
+            panic!(
+                "Validation suite: {} of {} files failed to parse",
+                failed_files.len(),
+                files.len()
+            );
         }
+
+        let total_msg = format!("Validation suite passed: {} files parsed successfully", files.len());
+        info!("{}", total_msg);
+        eprintln!("{}", total_msg);
     }
     
     /// Test individual validation files (for easier debugging)
@@ -331,7 +356,7 @@ mod tests {
             .join("1a-Parts Tree.sysml");
         
         if file.exists() {
-            test_parse_file(&file).expect("Failed to parse 1a-Parts Tree.sysml");
+            parse_file(&file).map(|_| ()).expect("Failed to parse 1a-Parts Tree.sysml");
         } else {
             debug!("Test file not found: {:?}", file);
         }
