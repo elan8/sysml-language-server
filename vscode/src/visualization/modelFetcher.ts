@@ -48,7 +48,8 @@ export function convertDTOElementsToJSON(elements: SysMLElementDTO[], parentName
 
         const attrType =
             (attrs['partType'] as string | undefined) ??
-            (attrs['portType'] as string | undefined);
+            (attrs['portType'] as string | undefined) ??
+            (attrs['actorType'] as string | undefined);
         const typingTargets: string[] = attrType
             ? attrType.split(',').map(s => s.trim()).filter(Boolean)
             : rels.filter(r => r.type === 'typing').map(r => r.target);

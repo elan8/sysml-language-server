@@ -108,7 +108,7 @@ const createMockData = (overrides = {}) => ({
     ...overrides
 });
 describe("prepareDataForView", () => {
-    const VIEW_IDS = ["elk", "tree", "package", "graph", "hierarchy", "ibd", "activity", "state", "sequence", "usecase"];
+    const VIEW_IDS = ["general-view", "interconnection-view", "action-flow-view", "state-transition-view", "sequence-view"];
     VIEW_IDS.forEach((viewId) => {
         it(`returns non-null for view "${viewId}"`, () => {
             const data = createMockData();
@@ -123,47 +123,34 @@ describe("prepareDataForView", () => {
         assert.strictEqual(result, data, "Unknown view should return data unchanged");
     });
     it("returns null/undefined for null input", () => {
-        assert.strictEqual((0, prepareData_1.prepareDataForView)(null, "elk"), null);
+        assert.strictEqual((0, prepareData_1.prepareDataForView)(null, "general-view"), null);
     });
-    it("ibd view produces parts and connectors", () => {
+    it("interconnection-view produces parts and connectors", () => {
         const data = createMockData();
-        const result = (0, prepareData_1.prepareDataForView)(data, "ibd");
-        assert.ok(Array.isArray(result.parts), "ibd should have parts array");
-        assert.ok(Array.isArray(result.connectors), "ibd should have connectors array");
-        assert.ok(Array.isArray(result.ports), "ibd should have ports array");
+        const result = (0, prepareData_1.prepareDataForView)(data, "interconnection-view");
+        assert.ok(Array.isArray(result.parts), "interconnection-view should have parts array");
+        assert.ok(Array.isArray(result.connectors), "interconnection-view should have connectors array");
+        assert.ok(Array.isArray(result.ports), "interconnection-view should have ports array");
     });
-    it("package view produces nodes", () => {
+    it("action-flow-view produces diagrams", () => {
         const data = createMockData();
-        const result = (0, prepareData_1.prepareDataForView)(data, "package");
-        assert.ok(Array.isArray(result.nodes), "package should have nodes array");
-        assert.ok(Array.isArray(result.dependencies), "package should have dependencies array");
+        const result = (0, prepareData_1.prepareDataForView)(data, "action-flow-view");
+        assert.ok(Array.isArray(result.diagrams), "action-flow-view should have diagrams array");
     });
-    it("activity view produces diagrams", () => {
+    it("state-transition-view produces states and transitions", () => {
         const data = createMockData();
-        const result = (0, prepareData_1.prepareDataForView)(data, "activity");
-        assert.ok(Array.isArray(result.diagrams), "activity should have diagrams array");
+        const result = (0, prepareData_1.prepareDataForView)(data, "state-transition-view");
+        assert.ok(Array.isArray(result.states), "state-transition-view should have states array");
+        assert.ok(Array.isArray(result.transitions), "state-transition-view should have transitions array");
     });
-    it("state view produces states and transitions", () => {
+    it("sequence-view produces sequenceDiagrams", () => {
         const data = createMockData();
-        const result = (0, prepareData_1.prepareDataForView)(data, "state");
-        assert.ok(Array.isArray(result.states), "state should have states array");
-        assert.ok(Array.isArray(result.transitions), "state should have transitions array");
-    });
-    it("sequence view produces sequenceDiagrams", () => {
-        const data = createMockData();
-        const result = (0, prepareData_1.prepareDataForView)(data, "sequence");
-        assert.ok(Array.isArray(result.sequenceDiagrams), "sequence should have sequenceDiagrams array");
-    });
-    it("usecase view produces actors and useCases", () => {
-        const data = createMockData();
-        const result = (0, prepareData_1.prepareDataForView)(data, "usecase");
-        assert.ok(Array.isArray(result.actors), "usecase should have actors array");
-        assert.ok(Array.isArray(result.useCases), "usecase should have useCases array");
-        assert.ok(Array.isArray(result.relationships), "usecase should have relationships array");
+        const result = (0, prepareData_1.prepareDataForView)(data, "sequence-view");
+        assert.ok(Array.isArray(result.sequenceDiagrams), "sequence-view should have sequenceDiagrams array");
     });
     it("handles empty elements", () => {
         const data = createMockData({ elements: [], relationships: [] });
-        const result = (0, prepareData_1.prepareDataForView)(data, "elk");
+        const result = (0, prepareData_1.prepareDataForView)(data, "general-view");
         assert.ok(result != null);
         assert.ok(Array.isArray(result.elements));
         assert.strictEqual(result.elements.length, 0);

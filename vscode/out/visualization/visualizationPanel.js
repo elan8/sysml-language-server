@@ -33,7 +33,7 @@ class VisualizationPanel {
         this._document = _document;
         this._lspModelProvider = _lspModelProvider;
         this._disposables = [];
-        this._currentView = 'elk'; // Store current view state - default to General View
+        this._currentView = 'general-view'; // Store current view state - SysML v2 general-view
         this._isNavigating = false; // Flag to prevent view reset during navigation
         this._lastContentHash = ''; // Cache content hash to skip unchanged updates
         this._needsUpdateWhenVisible = false; // Deferred update when panel is hidden
@@ -167,7 +167,7 @@ class VisualizationPanel {
     selectPackage(packageName) {
         // Store as pending so the next data message carries it to the webview
         this._pendingPackageName = packageName;
-        this._currentView = 'elk';
+        this._currentView = 'general-view';
         // Also post directly in case the webview already has data
         this._panel.webview.postMessage({
             command: 'selectPackage',

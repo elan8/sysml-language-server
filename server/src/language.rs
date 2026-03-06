@@ -889,12 +889,16 @@ fn model_element_from_member(member: &Member) -> Option<ModelElement> {
         }
         M::ActorDef(a) => {
             let range = member_range(a.range.as_ref(), a.name_position.as_ref());
+            let mut attrs = std::collections::HashMap::new();
+            if let Some(ref t) = a.type_ref {
+                attrs.insert("actorType".to_string(), serde_json::json!(t));
+            }
             Some(ModelElement {
                 element_type: "actor def".to_string(),
                 name: a.name.clone(),
                 range,
                 children: model_elements_from_members(&a.members),
-                attributes: std::collections::HashMap::new(),
+                attributes: attrs,
             })
         }
         _ => None,

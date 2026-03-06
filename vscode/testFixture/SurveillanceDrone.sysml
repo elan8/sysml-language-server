@@ -286,7 +286,7 @@ package SurveillanceDrone {
 	satisfy OperatingTempReq by droneInstance;
 
 	// ========== Use cases (README §3.2) ==========
-	item def Operator;
+	actor Operator;
 
 	use case def PatrolOverwatch {
 		subject drone : SurveillanceQuadrotorDrone;
@@ -335,6 +335,8 @@ package SurveillanceDrone {
 		in route : String;
 		out status : String;
 		doc /* Execute patrol/overwatch mission along route. */
+		perform action ControlGimbal;
+		perform action CaptureVideo;
 	}
 
 	action def ExecuteOrbit {
@@ -388,6 +390,13 @@ package SurveillanceDrone {
 		state follow : Follow;
 		state rtl : RTL;
 		state landing : Landing;
+		transition modeSwitch first manual then attitudeHold;
+		transition gpsAcquired first attitudeHold then gpsHold;
+		transition wpReceived first gpsHold then waypoint;
+		transition orbitCmd first waypoint then orbit;
+		transition followCmd first waypoint then follow;
+		transition rtlCmd first waypoint then rtl;
+		transition landCmd first rtl then landing;
 	}
 
 	// ========== Parametrics ==========

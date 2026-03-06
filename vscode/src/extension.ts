@@ -329,16 +329,11 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
   const visualizationViews = [
-    { id: "elk", label: "◆ General", description: "General view with auto-layout" },
-    { id: "ibd", label: "▦ Interconnection", description: "Interconnection view (parts, ports, connections)" },
-    { id: "activity", label: "▶ Activity", description: "Activity view (actions and flow)" },
-    { id: "state", label: "⌘ State", description: "State view (states and transitions)" },
-    { id: "sequence", label: "⇄ Sequence", description: "Sequence view (interactions)" },
-    { id: "usecase", label: "◎ Case", description: "Use case view (actors and cases)" },
-    { id: "tree", label: "▲ Tree", description: "Tree layout" },
-    { id: "package", label: "▤ Package", description: "Package diagram" },
-    { id: "graph", label: "● Graph", description: "Force-directed graph" },
-    { id: "hierarchy", label: "■ Hierarchy", description: "Hierarchical block diagram" },
+    { id: "general-view", label: "General", description: "General view (SysML v2 general-view)" },
+    { id: "interconnection-view", label: "Interconnection", description: "Parts, ports, connections (SysML v2 interconnection-view)" },
+    { id: "action-flow-view", label: "Action Flow", description: "Actions and flow (SysML v2 action-flow-view)" },
+    { id: "state-transition-view", label: "State Transition", description: "States and transitions (SysML v2 state-transition-view)" },
+    { id: "sequence-view", label: "Sequence", description: "Interactions (SysML v2 sequence-view)" },
   ];
 
   context.subscriptions.push(

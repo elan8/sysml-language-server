@@ -4,16 +4,11 @@ import * as vscode from "vscode";
 import { VisualizationPanel } from "../../visualization/visualizationPanel";
 
 const VIEW_IDS = [
-    "elk",
-    "ibd",
-    "activity",
-    "state",
-    "sequence",
-    "usecase",
-    "tree",
-    "package",
-    "graph",
-    "hierarchy",
+    "general-view",
+    "interconnection-view",
+    "action-flow-view",
+    "state-transition-view",
+    "sequence-view",
 ];
 
 describe("Visualization Diagram Views", () => {

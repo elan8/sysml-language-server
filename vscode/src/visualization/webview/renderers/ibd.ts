@@ -98,18 +98,56 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
         if (part.id) partHeights.set(part.id, calculatePartHeight(part));
     });
 
+    // Order parts by connectivity: place connected parts adjacent to reduce edge crossings.
+    // BFS from roots (parts with no incoming "contains" from other parts) or shortest qualifiedName.
+    const partNames = new Set(parts.map((p: any) => p.name));
+    const partByName = new Map(parts.map((p: any) => [p.name, p]));
+    const containsTargets = new Map<string, Set<string>>(); // source -> targets
+    const containsSources = new Map<string, Set<string>>(); // target -> sources
+    connectors.forEach((c: any) => {
+        if ((c.type === 'composition' || c.name === 'contains') && c.sourceId && c.targetId) {
+            const src = c.sourceId.split('.').pop() || c.sourceId;
+            const tgt = c.targetId.split('.').pop() || c.targetId;
+            if (partNames.has(src) && partNames.has(tgt)) {
+                if (!containsTargets.has(src)) containsTargets.set(src, new Set());
+                containsTargets.get(src)!.add(tgt);
+                if (!containsSources.has(tgt)) containsSources.set(tgt, new Set());
+                containsSources.get(tgt)!.add(src);
+            }
+        }
+    });
+    const roots = parts.filter((p: any) => !containsSources.has(p.name) || containsSources.get(p.name)!.size === 0);
+    const orderedParts: any[] = [];
+    const visited = new Set<string>();
+    const queue = roots.length > 0 ? [...roots] : [parts[0]];
+    while (queue.length > 0) {
+        const part = queue.shift()!;
+        if (visited.has(part.name)) continue;
+        visited.add(part.name);
+        orderedParts.push(part);
+        const children = containsTargets.get(part.name);
+        if (children) {
+            children.forEach((childName: string) => {
+                const child = partByName.get(childName);
+                if (child && !visited.has(childName)) queue.push(child);
+            });
+        }
+    }
+    const leftover = parts.filter((p: any) => !visited.has(p.name));
+    const sortedParts = [...orderedParts, ...leftover];
+
     const cols = isHorizontal
-        ? Math.ceil(Math.sqrt(parts.length * 1.5))
-        : Math.max(2, Math.ceil(Math.sqrt(parts.length)));
-    const rows = Math.ceil(parts.length / Math.max(1, cols));
+        ? Math.ceil(Math.sqrt(sortedParts.length * 1.5))
+        : Math.max(2, Math.ceil(Math.sqrt(sortedParts.length)));
+    const rows = Math.ceil(sortedParts.length / Math.max(1, cols));
 
     const rowHeights: number[] = [];
     for (let row = 0; row < rows; row++) {
         let maxHeight = 80;
         for (let col = 0; col < cols; col++) {
             const index = row * cols + col;
-            if (index < parts.length) {
-                const partHeight = partHeights.get(parts[index].name) || 80;
+            if (index < sortedParts.length) {
+                const partHeight = partHeights.get(sortedParts[index].name) || 80;
                 maxHeight = Math.max(maxHeight, partHeight);
             }
         }
@@ -119,7 +157,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
     const partPositions = new Map<string, { x: number; y: number; part: any; height: number }>();
     const staggerOffset = 60;
 
-    parts.forEach((part: any, index: number) => {
+    sortedParts.forEach((part: any, index: number) => {
         const col = index % cols;
         const row = Math.floor(index / cols);
 

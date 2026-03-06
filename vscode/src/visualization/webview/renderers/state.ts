@@ -54,8 +54,9 @@ export function renderStateView(ctx: RenderContext, data: any): void {
                                (typeLower.includes('state') && s.children && s.children.length > 0 &&
                                 s.children.some((c: any) => (c.type || '').toLowerCase().includes('state')));
 
-            if (isContainer && !typeLower.includes('def')) {
-                const childStates = collectChildStates(s);
+            const childStates = collectChildStates(s);
+            const isStateMachine = isContainer && (childStates.length > 0 || !typeLower.includes('def'));
+            if (isStateMachine) {
                 stateMachineMap.set(s.name, {
                     container: s,
                     states: childStates,

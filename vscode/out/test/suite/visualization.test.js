@@ -28,16 +28,11 @@ const path = __importStar(require("path"));
 const vscode = __importStar(require("vscode"));
 const visualizationPanel_1 = require("../../visualization/visualizationPanel");
 const VIEW_IDS = [
-    "elk",
-    "ibd",
-    "activity",
-    "state",
-    "sequence",
-    "usecase",
-    "tree",
-    "package",
-    "graph",
-    "hierarchy",
+    "general-view",
+    "interconnection-view",
+    "action-flow-view",
+    "state-transition-view",
+    "sequence-view",
 ];
 describe("Visualization Diagram Views", () => {
     it("exports SVG for all views", async function () {

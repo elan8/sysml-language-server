@@ -311,9 +311,9 @@
         },
         "sysml-language-server.visualization.defaultView": {
           "type": "string",
-          "enum": ["elk", "tree", "package", "ibd", "graph", "activity", "state", "sequence", "usecase", "hierarchy"],
-          "default": "elk",
-          "description": "Default view when opening the SysML Model Visualizer."
+          "enum": ["general-view", "interconnection-view", "action-flow-view", "state-transition-view", "sequence-view"],
+          "default": "general-view",
+          "description": "Default view when opening the SysML Model Visualizer (SysML v2 frameless-view types)."
         },
         "sysml-language-server.visualization.exportScale": {
           "type": "number",

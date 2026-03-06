@@ -15,7 +15,6 @@ export interface RenderContext {
     activityLayoutDirection: string;
     activityDebugLabels: boolean;
     stateLayoutOrientation: string;
-    usecaseLayoutOrientation: string;
     selectedDiagramIndex: number;
     postMessage: (msg: unknown) => void;
     onStartInlineEdit: (nodeG: any, elementName: string, x: number, y: number, width: number) => void;

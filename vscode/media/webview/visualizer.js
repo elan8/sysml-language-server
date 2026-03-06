@@ -31,7 +31,9 @@
     }
     const allElements = collectAllElements(elements);
     switch (view) {
-      case "ibd": {
+      case "general-view":
+        return data;
+      case "interconnection-view": {
         const ibdParts = [];
         const seenParts = /* @__PURE__ */ new Set();
         const extractNestedParts = (element, parentPath = "") => {
@@ -221,7 +223,7 @@
           connectors: ibdConnectors
         };
       }
-      case "activity": {
+      case "action-flow-view": {
         if (data.activityDiagrams && data.activityDiagrams.length > 0) {
           return {
             ...data,
@@ -341,7 +343,7 @@
           })
         };
       }
-      case "state": {
+      case "state-transition-view": {
         const stateElements = allElements.filter((el) => el.type && (el.type.includes("state") || el.type.includes("State")));
         return {
           ...data,
@@ -351,7 +353,7 @@
           )
         };
       }
-      case "sequence": {
+      case "sequence-view": {
         let collectParticipants2 = function(el) {
           const parts = [];
           function walk(children) {
@@ -447,277 +449,6 @@
         }
         return { ...data, sequenceDiagrams: [] };
       }
-      case "usecase": {
-        let getObjectiveText2 = function(useCase) {
-          if (!useCase.children) return "";
-          for (const child of useCase.children) {
-            if (child.type === "objective") {
-              if (child.children) {
-                for (const docChild of child.children) {
-                  if (docChild.type === "doc" && docChild.name && docChild.name !== "unnamed") {
-                    return docChild.name;
-                  }
-                }
-              }
-              if (child.name && child.name !== "unnamed") return child.name;
-            }
-          }
-          return "";
-        }, collectChildActions2 = function(actions) {
-          const childActions = [];
-          const collectRecursive = (elements2, parentAction) => {
-            for (const el of elements2) {
-              if (el.type) {
-                const typeLower = el.type.toLowerCase();
-                if (typeLower === "action" || typeLower.includes("action")) {
-                  el.parentAction = parentAction;
-                  childActions.push(el);
-                  if (el.children && el.children.length > 0) {
-                    collectRecursive(el.children, el.name);
-                  }
-                }
-              }
-            }
-          };
-          for (const action of actions) {
-            if (action.children && action.children.length > 0) {
-              collectRecursive(action.children, action.name);
-            }
-          }
-          return childActions;
-        };
-        var getObjectiveText = getObjectiveText2, collectChildActions = collectChildActions2;
-        const allActors = allElements.filter((el) => {
-          if (!el.type) return false;
-          const typeLower = el.type.toLowerCase();
-          return typeLower === "actor def" || typeLower === "actor definition";
-        });
-        const actorsByName = /* @__PURE__ */ new Map();
-        allActors.forEach((actor) => {
-          const lowerName = actor.name.toLowerCase();
-          if (!actorsByName.has(lowerName)) actorsByName.set(lowerName, actor);
-        });
-        const actors = Array.from(actorsByName.values());
-        const allUseCases = allElements.filter((el) => {
-          if (!el.type) return false;
-          const typeLower = el.type.toLowerCase();
-          if (typeLower === "include use case") return false;
-          return typeLower.includes("use case") || typeLower.includes("usecase") || typeLower.includes("UseCase");
-        });
-        const useCasesByName = /* @__PURE__ */ new Map();
-        allUseCases.forEach((uc) => {
-          const lowerName = uc.name.toLowerCase();
-          const existing = useCasesByName.get(lowerName);
-          const isDefinition = uc.type.toLowerCase().includes("def");
-          if (!existing) {
-            useCasesByName.set(lowerName, uc);
-          } else {
-            const existingIsDefinition = existing.type.toLowerCase().includes("def");
-            if (isDefinition && !existingIsDefinition) {
-              useCasesByName.set(lowerName, uc);
-            }
-          }
-        });
-        const useCases = Array.from(useCasesByName.values());
-        const actorTypeToName = /* @__PURE__ */ new Map();
-        actors.forEach((actor) => actorTypeToName.set(actor.name, actor.name));
-        const useCaseRelationships = [];
-        useCases.forEach((useCase) => {
-          const objectiveText = getObjectiveText2(useCase);
-          if (useCase.children) {
-            useCase.children.forEach((child) => {
-              const childType = child.type ? child.type.toLowerCase() : "";
-              const isActorUsage = childType === "actor usage" || childType === "actor";
-              if (isActorUsage) {
-                const actorType = child.typing || child.name;
-                useCaseRelationships.push({
-                  source: actorType,
-                  target: useCase.name,
-                  type: "association",
-                  label: objectiveText
-                });
-              }
-              const isIncludeUseCase = childType === "include use case";
-              if (isIncludeUseCase) {
-                const includedUC = child.typing || child.name;
-                useCaseRelationships.push({
-                  source: useCase.name,
-                  target: includedUC,
-                  type: "include",
-                  label: ""
-                });
-              }
-            });
-          }
-        });
-        if (useCaseRelationships.length === 0 && actors.length > 0 && useCases.length > 0) {
-          const primaryActor = actors[0];
-          useCases.forEach((useCase) => {
-            const objectiveText = getObjectiveText2(useCase);
-            useCaseRelationships.push({
-              source: primaryActor.name,
-              target: useCase.name,
-              type: "association",
-              label: objectiveText
-            });
-          });
-        }
-        const useCaseNames = new Set(useCases.map((uc) => uc.name));
-        const allActions = allElements.filter((el) => {
-          if (!el.type) return false;
-          const typeLower = el.type.toLowerCase();
-          return typeLower === "action" || typeLower.includes("action");
-        });
-        const relatedActions = allElements.filter((el) => {
-          if (!el.type) return false;
-          const typeLower = el.type.toLowerCase();
-          if (typeLower !== "action" && !typeLower.includes("action")) return false;
-          const specialization = el.attributes?.get?.("specialization") || (el.attributes instanceof Map ? el.attributes.get("specialization") : el.attributes?.specialization);
-          if (specialization) {
-            let specName = String(specialization).replace(/^:>\s*/, "").trim();
-            if (specName.startsWith("'") && specName.endsWith("'") || specName.startsWith('"') && specName.endsWith('"')) {
-              specName = specName.slice(1, -1);
-            }
-            return useCaseNames.has(specName);
-          }
-          return false;
-        });
-        const nestedActions = collectChildActions2(relatedActions);
-        relatedActions.forEach((action) => {
-          const specialization = action.attributes?.get?.("specialization") || (action.attributes instanceof Map ? action.attributes.get("specialization") : action.attributes?.specialization);
-          if (specialization) {
-            let specName = String(specialization).replace(/^:>\s*/, "").trim();
-            if (specName.startsWith("'") && specName.endsWith("'") || specName.startsWith('"') && specName.endsWith('"')) {
-              specName = specName.slice(1, -1);
-            }
-            useCaseRelationships.push({
-              source: specName,
-              target: action.name,
-              type: "realize",
-              label: ""
-            });
-            const directChildren = nestedActions.filter((na) => na.parentAction === action.name);
-            directChildren.forEach((child) => {
-              useCaseRelationships.push({
-                source: action.name,
-                target: child.name,
-                type: "include",
-                label: ""
-              });
-            });
-          }
-        });
-        nestedActions.forEach((action) => {
-          const children = nestedActions.filter((na) => na.parentAction === action.name);
-          children.forEach((child) => {
-            useCaseRelationships.push({
-              source: action.name,
-              target: child.name,
-              type: "include",
-              label: ""
-            });
-          });
-        });
-        relatedActions.push(...nestedActions);
-        const actorUsages = allElements.filter((el) => {
-          if (!el.type) return false;
-          const typeLower = el.type.toLowerCase();
-          return typeLower === "actor usage" || typeLower === "actor";
-        });
-        const seenActorNames = new Set(actors.map((a) => a.name.toLowerCase()));
-        actorUsages.forEach((usage) => {
-          const actorType = usage.typing || usage.name;
-          const actorTypeLower = actorType.toLowerCase();
-          if (!seenActorNames.has(actorTypeLower)) {
-            actors.push({
-              name: actorType,
-              type: "actor def",
-              children: [],
-              attributes: /* @__PURE__ */ new Map(),
-              relationships: []
-            });
-            seenActorNames.add(actorTypeLower);
-            actorTypeToName.set(actorType, actorType);
-          }
-        });
-        useCaseRelationships.forEach((rel) => {
-          const relSourceLower = rel.source.toLowerCase();
-          if (rel.type === "association" && !seenActorNames.has(relSourceLower)) {
-            actors.push({
-              name: rel.source,
-              type: "actor def",
-              children: [],
-              attributes: /* @__PURE__ */ new Map(),
-              relationships: []
-            });
-            seenActorNames.add(relSourceLower);
-            actorTypeToName.set(rel.source, rel.source);
-          }
-        });
-        const requirements = allElements.filter((el) => {
-          if (!el.type) return false;
-          const typeLower = el.type.toLowerCase();
-          return typeLower.includes("requirement");
-        });
-        const requirementRelationships = [];
-        requirements.forEach((req) => {
-          if (!req.children) return;
-          req.children.forEach((child) => {
-            const childType = (child.type || "").toLowerCase().trim();
-            if (childType === "stakeholder") {
-              const stakeholderType = child.typing || child.name;
-              const stakeholderTypeLower = stakeholderType.toLowerCase();
-              requirementRelationships.push({
-                source: req.name,
-                target: stakeholderType,
-                type: "stakeholder",
-                label: ""
-              });
-              if (!seenActorNames.has(stakeholderTypeLower)) {
-                actors.push({
-                  name: stakeholderType,
-                  type: "actor def",
-                  children: [],
-                  attributes: /* @__PURE__ */ new Map(),
-                  relationships: [],
-                  isStakeholder: true
-                });
-                seenActorNames.add(stakeholderTypeLower);
-                actorTypeToName.set(stakeholderType, stakeholderType);
-              }
-            }
-          });
-        });
-        useCaseRelationships.push(...requirementRelationships);
-        return {
-          ...data,
-          actors,
-          useCases,
-          actions: relatedActions,
-          requirements,
-          relationships: useCaseRelationships
-        };
-      }
-      case "package": {
-        const packageNodes = allElements.filter((el) => el.type && (el.type.toLowerCase() === "package" || el.type.toLowerCase().includes("package")));
-        const enrichedPackages = packageNodes.map((pkg) => {
-          const childCount = pkg.children ? pkg.children.length : 0;
-          const childPackages = (pkg.children || []).filter(
-            (c) => c.type && c.type.toLowerCase().includes("package")
-          );
-          return {
-            ...pkg,
-            id: pkg.id || pkg.name,
-            elementCount: childCount,
-            childPackageIds: childPackages.map((c) => c.id || c.name)
-          };
-        });
-        return {
-          ...data,
-          nodes: enrichedPackages,
-          dependencies: []
-        };
-      }
       default:
         return data;
     }
@@ -802,18 +533,6 @@
     }
     return attrs.isStandardType === true || attrs.isStandardElement === true;
   }
-  function getNodeColor(element) {
-    if (isLibraryValidated(element)) {
-      return "var(--vscode-charts-green)";
-    }
-    return "var(--vscode-charts-blue)";
-  }
-  function getNodeBorderStyle(element) {
-    if (isLibraryValidated(element)) {
-      return "2px";
-    }
-    return "1px";
-  }
   var typeColors = {
     "part def": "#4EC9B0",
     "part": "#4EC9B0",
@@ -888,22 +607,17 @@
   var MAX_CANVAS_ZOOM = 5;
   var MIN_SYSML_ZOOM = 0.04;
   var MAX_SYSML_ZOOM = 5;
-  var STRUCTURAL_VIEWS = /* @__PURE__ */ new Set(["elk", "hierarchy"]);
+  var STRUCTURAL_VIEWS = /* @__PURE__ */ new Set(["general-view"]);
   var ORIENTATION_LABELS = {
     horizontal: "Horizontal",
     linear: "Linear (Top-Down)"
   };
   var VIEW_OPTIONS = {
-    tree: { label: "\u25B2 Tree View" },
-    elk: { label: "\u25C6 General View" },
-    graph: { label: "\u25CF Graph View" },
-    hierarchy: { label: "\u25A0 Hierarchy View" },
-    sequence: { label: "\u21C4 Sequence View" },
-    ibd: { label: "\u25A6 Interconnection View" },
-    activity: { label: "\u25B6 Action Flow View" },
-    state: { label: "\u2318 State Transition View" },
-    usecase: { label: "\u25CE Case View" },
-    package: { label: "\u25A4 Package View" }
+    "general-view": { label: "General View" },
+    "interconnection-view": { label: "Interconnection View" },
+    "action-flow-view": { label: "Action Flow View" },
+    "state-transition-view": { label: "State Transition View" },
+    "sequence-view": { label: "Sequence View" }
   };
 
   // src/visualization/webview/helpers.ts
@@ -922,39 +636,6 @@
       return element.name || "Documentation";
     }
     return null;
-  }
-  function convertToHierarchy(elements) {
-    function convertElement(el) {
-      if (!el || !el.name || !el.type) {
-        if (typeof console !== "undefined" && console.warn) {
-          console.warn("Skipping invalid element:", el);
-        }
-        return null;
-      }
-      const properties = normalizeAttributes(el.attributes);
-      const documentation = extractDocumentation(el);
-      if (documentation) {
-        properties["documentation"] = documentation;
-      }
-      const validChildren = el.children ? el.children.map(convertElement).filter((child) => child !== null) : [];
-      return {
-        name: el.name,
-        type: el.type,
-        properties,
-        children: validChildren,
-        element: el
-      };
-    }
-    const validElements = (elements || []).map(convertElement).filter((el) => el !== null);
-    if (validElements.length === 1) {
-      return validElements[0];
-    }
-    return {
-      name: "Model Root",
-      type: "root",
-      properties: {},
-      children: validElements
-    };
   }
   function flattenElements(elements, result = []) {
     (elements || []).forEach((el) => {
@@ -976,36 +657,6 @@
       }
     });
     return result;
-  }
-  function wrapTextToLines(text, maxCharsPerLine, maxLines = 3) {
-    if (!text) return [];
-    const words = String(text).split(/\s+/);
-    const lines = [];
-    let currentLine = "";
-    words.forEach((word) => {
-      const tentative = currentLine.length === 0 ? word : currentLine + " " + word;
-      if (tentative.length > maxCharsPerLine && currentLine.length > 0) {
-        lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = tentative;
-      }
-    });
-    if (currentLine.length > 0) {
-      lines.push(currentLine);
-    }
-    if (lines.length > maxLines) {
-      const trimmed = lines.slice(0, maxLines);
-      const lastIndex = trimmed.length - 1;
-      trimmed[lastIndex] = trimmed[lastIndex] + "\u2026";
-      return trimmed;
-    }
-    return lines;
-  }
-  function truncateLabel(text, maxChars) {
-    if (!text) return "";
-    if (text.length <= maxChars) return text;
-    return text.substring(0, Math.max(1, maxChars - 1)) + "\u2026";
   }
   function countAllElements(elements) {
     if (!elements) return 0;
@@ -1111,537 +762,6 @@
   function slugify(value) {
     if (!value) return "unknown";
     return value.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  }
-
-  // src/visualization/webview/renderers/package.ts
-  function renderPackageView(ctx, data) {
-    const { width, height, svg: svg2, g: g2, layoutDirection: layoutDirection2, postMessage, onStartInlineEdit, renderPlaceholder } = ctx;
-    if (!data || !data.nodes || data.nodes.length === 0) {
-      renderPlaceholder(
-        width,
-        height,
-        "Package View",
-        "No packages found to display.\n\nThis view shows package containment and dependencies.",
-        data
-      );
-      return;
-    }
-    const nodes = data.nodes || [];
-    const dependencies = data.dependencies || [];
-    const isHorizontal = layoutDirection2 === "horizontal";
-    const packageWidth = 180;
-    const packageHeight = 120;
-    const horizontalSpacing = 60;
-    const verticalSpacing = 80;
-    const startX = 100;
-    const startY = 100;
-    const cols = isHorizontal ? Math.ceil(Math.sqrt(nodes.length * 2)) : Math.ceil(Math.sqrt(nodes.length / 2));
-    const packagePositions = /* @__PURE__ */ new Map();
-    nodes.forEach((pkg, index) => {
-      const col = index % Math.max(1, cols);
-      const row = Math.floor(index / Math.max(1, cols));
-      packagePositions.set(pkg.id, {
-        x: startX + col * (packageWidth + horizontalSpacing),
-        y: startY + row * (packageHeight + verticalSpacing),
-        package: pkg
-      });
-    });
-    const dependencyGroup = g2.append("g").attr("class", "package-dependencies");
-    dependencies.forEach((dep) => {
-      const sourcePos = packagePositions.get(dep.sourceId);
-      const targetPos = packagePositions.get(dep.targetId);
-      if (!sourcePos || !targetPos) return;
-      const depStartX = sourcePos.x + packageWidth / 2;
-      const depStartY = sourcePos.y + packageHeight;
-      const endX = targetPos.x + packageWidth / 2;
-      const endY = targetPos.y;
-      const lineStyle = dep.kind === "import" ? "5,5" : "0";
-      dependencyGroup.append("line").attr("x1", depStartX).attr("y1", depStartY).attr("x2", endX).attr("y2", endY).style("stroke", "var(--vscode-charts-blue)").style("stroke-width", "2px").style("stroke-dasharray", lineStyle).style("marker-end", "url(#package-arrowhead)");
-      const midX = (depStartX + endX) / 2;
-      const midY = (depStartY + endY) / 2;
-      dependencyGroup.append("text").attr("x", midX).attr("y", midY - 5).attr("text-anchor", "middle").text("<<" + dep.kind + ">>").style("font-size", "9px").style("fill", "var(--vscode-charts-blue)").style("font-style", "italic");
-    });
-    const defs = svg2.select("defs").empty() ? svg2.append("defs") : svg2.select("defs");
-    defs.append("marker").attr("id", "package-arrowhead").attr("viewBox", "0 -5 10 10").attr("refX", 8).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").style("fill", "var(--vscode-charts-blue)");
-    const packageGroup = g2.append("g").attr("class", "package-nodes");
-    packagePositions.forEach((pos, pkgId) => {
-      const pkg = pos.package;
-      const packageElement = packageGroup.append("g").attr("class", "package-node").attr("transform", "translate(" + pos.x + "," + pos.y + ")").style("cursor", "pointer");
-      packageElement.on("click", function(event) {
-        event.stopPropagation();
-        postMessage({ command: "jumpToElement", elementName: pkg.name });
-      }).on("dblclick", function(event) {
-        event.stopPropagation();
-        onStartInlineEdit(d3.select(this), pkg.name, pos.x, pos.y, packageWidth);
-      });
-      const tabHeight = 25;
-      const tabWidth = 60;
-      packageElement.append("rect").attr("width", packageWidth).attr("height", packageHeight).attr("rx", 4).style("fill", "var(--vscode-editor-background)").style("stroke", "var(--vscode-charts-blue)").style("stroke-width", "2px");
-      packageElement.append("rect").attr("x", 0).attr("y", -tabHeight).attr("width", tabWidth).attr("height", tabHeight).attr("rx", 4).style("fill", "var(--vscode-editor-background)").style("stroke", "var(--vscode-charts-blue)").style("stroke-width", "2px");
-      packageElement.append("text").attr("x", tabWidth / 2).attr("y", -tabHeight / 2 + 5).attr("text-anchor", "middle").text("\u25A4").style("font-size", "14px").style("fill", "var(--vscode-charts-blue)").style("user-select", "none");
-      const pkgName = pkg.name || "Unnamed Package";
-      const truncatedName = pkgName.length > 20 ? pkgName.substring(0, 17) + "..." : pkgName;
-      packageElement.append("text").attr("class", "node-name-text").attr("data-element-name", pkgName).attr("x", packageWidth / 2).attr("y", 25).attr("text-anchor", "middle").text(truncatedName).style("font-size", "13px").style("font-weight", "bold").style("fill", "var(--vscode-editor-foreground)").style("user-select", "none");
-      if (pkg.kind && pkg.kind !== "standard") {
-        packageElement.append("text").attr("x", packageWidth / 2).attr("y", 42).attr("text-anchor", "middle").text("<<" + pkg.kind + ">>").style("font-size", "10px").style("fill", "var(--vscode-descriptionForeground)").style("font-style", "italic").style("user-select", "none");
-      }
-      if (pkg.childPackageIds && pkg.childPackageIds.length > 0) {
-        packageElement.append("text").attr("x", 10).attr("y", packageHeight - 30).text("\u2514 " + pkg.childPackageIds.length + " child package" + (pkg.childPackageIds.length > 1 ? "s" : "")).style("font-size", "10px").style("fill", "var(--vscode-descriptionForeground)").style("user-select", "none");
-      }
-      const elCount = pkg.elementCount || (pkg.children ? pkg.children.length : 0) || 0;
-      packageElement.append("text").attr("x", 10).attr("y", packageHeight - 12).text("\u25C9 " + elCount + " element" + (elCount !== 1 ? "s" : "")).style("font-size", "10px").style("fill", "var(--vscode-descriptionForeground)").style("user-select", "none");
-    });
-  }
-
-  // src/visualization/webview/renderers/tree.ts
-  function renderTreeView(ctx, data) {
-    const { width, height, g: g2, layoutDirection: layoutDirection2, postMessage, onStartInlineEdit, renderPlaceholder, clearVisualHighlights: clearVisualHighlights2 } = ctx;
-    if (!data || !data.elements || data.elements.length === 0) {
-      renderPlaceholder(
-        width,
-        height,
-        "Tree View",
-        "No elements found to display.\n\nThe parser did not return any elements for visualization.",
-        data
-      );
-      return;
-    }
-    const isHorizontal = layoutDirection2 === "horizontal" || layoutDirection2 === "auto";
-    const hierarchyData = convertToHierarchy(data.elements);
-    const root = d3.hierarchy(hierarchyData);
-    const nodeHeight = 70;
-    const nodeWidth = 280;
-    const treeLayout = d3.tree().nodeSize(isHorizontal ? [nodeHeight, nodeWidth] : [nodeWidth, nodeHeight]).separation((a, b) => {
-      if (a.parent === b.parent) {
-        const aChildCount = (a.children || []).length;
-        const bChildCount = (b.children || []).length;
-        const maxChildCount = Math.max(aChildCount, bChildCount);
-        return 1.5 + (maxChildCount > 0 ? Math.min(maxChildCount * 0.3, 2) : 0);
-      }
-      return 2.5;
-    });
-    treeLayout(root);
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    root.each((d) => {
-      if (d.x < minX) minX = d.x;
-      if (d.x > maxX) maxX = d.x;
-      if (d.y < minY) minY = d.y;
-      if (d.y > maxY) maxY = d.y;
-    });
-    const offsetX = isHorizontal ? 150 : -minX + 150;
-    const offsetY = isHorizontal ? -minX + 50 : 150;
-    g2.selectAll(".link").data(root.links()).enter().append("path").attr("class", "link").attr("d", isHorizontal ? d3.linkHorizontal().x((d) => d.y + offsetX).y((d) => d.x + offsetY) : d3.linkVertical().x((d) => d.x + offsetX).y((d) => d.y + offsetY));
-    const nodes = g2.selectAll(".node").data(root.descendants()).enter().append("g").attr("class", "node-group").attr("transform", (d) => isHorizontal ? "translate(" + (d.y + offsetX) + "," + (d.x + offsetY) + ")" : "translate(" + (d.x + offsetX) + "," + (d.y + offsetY) + ")");
-    nodes.each(function(d) {
-      const node = d3.select(this);
-      const MIN_NODE_WIDTH = 100;
-      const MAX_NODE_WIDTH = 220;
-      const CHAR_WIDTH = 7.5;
-      const PADDING = 28;
-      const nameWidth = d.data.name.length * CHAR_WIDTH + PADDING;
-      const typeWidth = (d.data.type.length + 2) * CHAR_WIDTH + PADDING;
-      const childCountWidth = d.children || d._children ? ((d.children || d._children).length.toString().length + 12) * CHAR_WIDTH + PADDING : 0;
-      const requiredWidth = Math.max(nameWidth, typeWidth, childCountWidth);
-      const nodeWidth2 = Math.min(MAX_NODE_WIDTH, Math.max(MIN_NODE_WIDTH, requiredWidth));
-      const availableChars = Math.floor((nodeWidth2 - PADDING) / CHAR_WIDTH);
-      const truncatedName = d.data.name.length > availableChars ? d.data.name.substring(0, availableChars - 3) + "..." : d.data.name;
-      const maxTypeChars = availableChars - 2;
-      const truncatedType = d.data.type.length > maxTypeChars ? d.data.type.substring(0, maxTypeChars - 3) + "..." : d.data.type;
-      const displayType = "[" + truncatedType + "]";
-      const elem = d.data.element || d.data;
-      const isLibValidated = isLibraryValidated(elem);
-      const borderColor = isLibValidated ? "var(--vscode-charts-green)" : "var(--vscode-panel-border)";
-      const borderWidth = isLibValidated ? "2px" : "1px";
-      const handleNodeClick = function(event) {
-        event.stopPropagation();
-        clearVisualHighlights2();
-        node.classed("highlighted-element", true);
-        node.select(".node-background").style("stroke", "#FFD700").style("stroke-width", "3px");
-        postMessage({
-          command: "jumpToElement",
-          elementName: d.data.name,
-          skipCentering: true
-        });
-      };
-      node.append("rect").attr("class", "node-background").attr("x", -8).attr("y", -15).attr("width", nodeWidth2).attr("height", 46).attr("rx", 5).attr("data-original-stroke", borderColor).attr("data-original-width", borderWidth).style("fill", "var(--vscode-editor-background)").style("stroke", borderColor).style("stroke-width", borderWidth).style("opacity", 0.9).style("cursor", "pointer").on("click", handleNodeClick);
-      node.style("cursor", "pointer").on("click", handleNodeClick).on("dblclick", function(event) {
-        event.stopPropagation();
-        event.preventDefault();
-        const transform = node.attr("transform");
-        const matches = transform.match(/translate[(]([^,]+),([^)]+)[)]/);
-        const nodeX = parseFloat(matches[1]);
-        const nodeY = parseFloat(matches[2]);
-        onStartInlineEdit(node, d.data.name, nodeX - 8, nodeY - 15, nodeWidth2);
-      });
-      const nodeColor = getNodeColor(elem);
-      node.append("circle").attr("class", "node").attr("r", 6).style("fill", nodeColor);
-      node.append("text").attr("class", "node-label node-name-text").attr("data-element-name", d.data.name).attr("dx", 10).attr("dy", -2).text(truncatedName).style("font-weight", "bold");
-      node.append("text").attr("class", "node-type").attr("dx", 10).attr("dy", 12).text(displayType);
-      if (d.children || d._children) {
-        const childCount = (d.children || d._children).length;
-        node.append("text").attr("class", "node-children").attr("dx", 10).attr("dy", 24).text("(" + childCount + " children)").style("font-size", "9px").style("font-style", "italic");
-      }
-    });
-  }
-
-  // src/visualization/webview/renderers/graph.ts
-  function renderGraphView(ctx, data) {
-    const { width, height, svg: svg2, g: g2, postMessage, renderPlaceholder } = ctx;
-    if (!data || !data.elements || data.elements.length === 0) {
-      renderPlaceholder(
-        width,
-        height,
-        "Graph View",
-        "No elements found to display.\n\nThe parser did not return any elements for visualization.",
-        data
-      );
-      return;
-    }
-    const nodes = flattenElements(data.elements);
-    const links = createLinksFromHierarchy(data.elements);
-    const relationships = data.relationships || [];
-    relationships.forEach((rel) => {
-      const source = nodes.find((n) => n.name === rel.source);
-      const target = nodes.find((n) => n.name === rel.target);
-      if (source && target) {
-        links.push({ source, target, type: rel.type });
-      }
-    });
-    const simulation = d3.forceSimulation(nodes).force("link", d3.forceLink(links).id((d) => d.name).distance(250)).force("charge", d3.forceManyBody().strength(-1e3)).force("center", d3.forceCenter(width / 2, height / 2)).force("collision", d3.forceCollide().radius(120)).force("x", d3.forceX(width / 2).strength(0.05)).force("y", d3.forceY(height / 2).strength(0.05));
-    g2.append("defs").append("marker").attr("id", "arrowhead").attr("viewBox", "-0 -5 10 10").attr("refX", 13).attr("refY", 0).attr("orient", "auto").attr("markerWidth", 8).attr("markerHeight", 8).attr("xoverflow", "visible").append("svg:path").attr("d", "M 0,-5 L 10 ,0 L 0,5").attr("fill", "var(--vscode-charts-purple)").style("stroke", "none");
-    const link = g2.append("g").selectAll("line").data(links).enter().append("line").attr("class", (d) => d.type ? "relationship-link" : "link").style("stroke", (d) => d.type ? "var(--vscode-charts-purple)" : "var(--vscode-panel-border)").style("stroke-width", (d) => d.type ? 3 : 2).style("opacity", 0.7).style("marker-end", (d) => d.type ? "url(#arrowhead)" : "none");
-    const node = g2.append("g").selectAll("g").data(nodes).enter().append("g").attr("class", "graph-node-group").call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
-    function expandNodeDetails(nodeData, nodeGroup) {
-      g2.selectAll(".expanded-details").remove();
-      g2.selectAll(".graph-node-background").style("stroke", "var(--vscode-panel-border)").style("stroke-width", "2px");
-      g2.selectAll(".graph-node-group").classed("selected", false);
-      nodeGroup.select(".graph-node-background").style("stroke", "var(--vscode-charts-blue)").style("stroke-width", "3px");
-      nodeGroup.classed("selected", true);
-      const detailsGroup = g2.append("g").attr("class", "expanded-details").attr("transform", "translate(" + (nodeData.x + 80) + "," + (nodeData.y - 50) + ")");
-      let panelHeight = 160;
-      const el = nodeData.element;
-      if (el && el.attributes && el.attributes.size > 0) {
-        const attributeEntries = Array.from(el.attributes.entries()).filter(([key, value]) => !key.startsWith("is") && key !== "visibility" && value);
-        if (attributeEntries.length > 0) {
-          panelHeight += Math.min(attributeEntries.length, 3) * 15 + 30;
-          if (attributeEntries.length > 3) panelHeight += 15;
-        }
-      }
-      if (nodeData.element?.children) {
-        const ports = nodeData.element.children.filter((child) => child.type && (child.type.toLowerCase().includes("port") || child.type.toLowerCase().includes("interface")));
-        if (ports.length > 0) {
-          panelHeight += Math.min(ports.length, 3) * 15 + 30;
-          if (ports.length > 3) panelHeight += 15;
-        }
-      }
-      detailsGroup.append("rect").attr("x", 0).attr("y", 0).attr("width", 280).attr("height", panelHeight).attr("rx", 8).style("fill", "var(--vscode-editor-background)").style("stroke", "var(--vscode-charts-blue)").style("stroke-width", "2px").style("filter", "drop-shadow(3px 3px 6px rgba(0,0,0,0.4))");
-      detailsGroup.append("circle").attr("cx", 265).attr("cy", 15).attr("r", 10).style("fill", "var(--vscode-charts-red)").style("cursor", "pointer").on("click", () => {
-        g2.selectAll(".expanded-details").remove();
-        g2.selectAll(".graph-node-background").style("stroke", "var(--vscode-panel-border)").style("stroke-width", "2px");
-      });
-      detailsGroup.append("text").attr("x", 265).attr("y", 19).attr("text-anchor", "middle").text("\xD7").style("fill", "white").style("font-size", "12px").style("font-weight", "bold").style("cursor", "pointer").on("click", () => {
-        g2.selectAll(".expanded-details").remove();
-        g2.selectAll(".graph-node-background").style("stroke", "var(--vscode-panel-border)").style("stroke-width", "2px");
-      });
-      detailsGroup.append("text").attr("x", 15).attr("y", 25).text(nodeData.name).style("font-weight", "bold").style("font-size", "16px").style("fill", "var(--vscode-editor-foreground)");
-      detailsGroup.append("text").attr("x", 15).attr("y", 45).text("Type: " + nodeData.type).style("font-size", "12px").style("fill", "var(--vscode-descriptionForeground)");
-      let yOffset = 65;
-      if (el && el.attributes && el.attributes.size > 0) {
-        const attributeEntries = Array.from(el.attributes.entries()).filter(([key, value]) => !key.startsWith("is") && key !== "visibility" && value);
-        if (attributeEntries.length > 0) {
-          detailsGroup.append("text").attr("x", 15).attr("y", yOffset).text("Attributes:").style("font-weight", "bold").style("font-size", "13px").style("fill", "var(--vscode-charts-purple)");
-          yOffset += 20;
-          attributeEntries.slice(0, 3).forEach(([key, value]) => {
-            const displayValue = String(value).length > 25 ? String(value).substring(0, 22) + "..." : String(value);
-            detailsGroup.append("text").attr("x", 25).attr("y", yOffset).text(key + ": " + displayValue).style("font-size", "11px").style("fill", "var(--vscode-charts-purple)").style("opacity", "0.9");
-            yOffset += 15;
-          });
-          if (attributeEntries.length > 3) {
-            detailsGroup.append("text").attr("x", 25).attr("y", yOffset).text("... and " + (attributeEntries.length - 3) + " more attributes").style("font-size", "10px").style("font-style", "italic").style("fill", "var(--vscode-charts-purple)").style("opacity", "0.7");
-            yOffset += 15;
-          }
-          yOffset += 10;
-        }
-      }
-      if (nodeData.properties && nodeData.properties.documentation) {
-        detailsGroup.append("text").attr("x", 15).attr("y", yOffset).text("Documentation:").style("font-weight", "bold").style("font-size", "13px").style("fill", "var(--vscode-editor-foreground)");
-        yOffset += 20;
-        const docText = String(nodeData.properties.documentation);
-        const maxLineLength = 40;
-        const lines = [];
-        if (docText.length > maxLineLength) {
-          let currentLine = "";
-          const words = docText.split(" ");
-          for (const word of words) {
-            if ((currentLine + word).length > maxLineLength && currentLine.length > 0) {
-              lines.push(currentLine.trim());
-              currentLine = word + " ";
-            } else {
-              currentLine += word + " ";
-            }
-          }
-          if (currentLine.trim().length > 0) {
-            lines.push(currentLine.trim());
-          }
-        } else {
-          lines.push(docText);
-        }
-        lines.slice(0, 3).forEach((line) => {
-          detailsGroup.append("text").attr("x", 25).attr("y", yOffset).text(line).style("font-size", "10px").style("fill", "var(--vscode-descriptionForeground)").style("font-style", "italic");
-          yOffset += 14;
-        });
-        if (lines.length > 3) {
-          detailsGroup.append("text").attr("x", 25).attr("y", yOffset).text("... (" + (lines.length - 3) + " more lines)").style("font-size", "9px").style("fill", "var(--vscode-descriptionForeground)");
-          yOffset += 12;
-        }
-        yOffset += 10;
-      }
-      const properties = nodeData.properties || {};
-      const regularProperties = Object.entries(properties).filter(([key]) => key !== "documentation");
-      if (regularProperties.length > 0) {
-        detailsGroup.append("text").attr("x", 15).attr("y", yOffset).text("Properties:").style("font-weight", "bold").style("font-size", "13px").style("fill", "var(--vscode-editor-foreground)");
-        yOffset += 20;
-        regularProperties.slice(0, 4).forEach(([key, value]) => {
-          detailsGroup.append("text").attr("x", 25).attr("y", yOffset).text(key + ": " + (String(value).length > 30 ? String(value).substring(0, 27) + "..." : String(value))).style("font-size", "11px").style("fill", "var(--vscode-descriptionForeground)");
-          yOffset += 15;
-        });
-        if (regularProperties.length > 4) {
-          detailsGroup.append("text").attr("x", 25).attr("y", yOffset).text("... and " + (regularProperties.length - 4) + " more").style("font-size", "10px").style("font-style", "italic").style("fill", "var(--vscode-descriptionForeground)");
-          yOffset += 15;
-        }
-      }
-      const children = nodeData.element?.children || [];
-      if (children.length > 0) {
-        detailsGroup.append("text").attr("x", 15).attr("y", yOffset).text("Children (" + children.length + "):").style("font-weight", "bold").style("font-size", "13px").style("fill", "var(--vscode-editor-foreground)");
-        yOffset += 20;
-        children.slice(0, 3).forEach((child) => {
-          detailsGroup.append("text").attr("x", 25).attr("y", yOffset).text("\u2022 " + child.name + " [" + child.type + "]").style("font-size", "11px").style("fill", "var(--vscode-descriptionForeground)");
-          yOffset += 15;
-        });
-        if (children.length > 3) {
-          detailsGroup.append("text").attr("x", 25).attr("y", yOffset).text("... and " + (children.length - 3) + " more").style("font-size", "10px").style("font-style", "italic").style("fill", "var(--vscode-descriptionForeground)");
-        }
-      }
-      const buttonY = panelHeight - 25;
-      detailsGroup.append("rect").attr("x", 15).attr("y", buttonY).attr("width", 80).attr("height", 20).attr("rx", 4).style("fill", "var(--vscode-button-background)").style("stroke", "var(--vscode-button-border)").style("cursor", "pointer").on("click", () => {
-        postMessage({ command: "jumpToElement", elementName: nodeData.name });
-      });
-      detailsGroup.append("text").attr("x", 55).attr("y", buttonY + 14).attr("text-anchor", "middle").text("Navigate").style("fill", "var(--vscode-button-foreground)").style("font-size", "11px").style("cursor", "pointer").on("click", () => {
-        postMessage({ command: "jumpToElement", elementName: nodeData.name });
-      });
-    }
-    node.each(function(d) {
-      const nodeGroup = d3.select(this);
-      const displayName = d.name.length > 16 ? d.name.substring(0, 13) + "..." : d.name;
-      const nameWidth = displayName.length * 8;
-      const maxWidth = Math.max(nameWidth + 20, 100);
-      const nodeHeight = 50;
-      const el = d.element;
-      const borderColor = isLibraryValidated(el) ? "var(--vscode-charts-green)" : "var(--vscode-panel-border)";
-      const borderWidth = isLibraryValidated(el) ? "3px" : "2px";
-      nodeGroup.append("rect").attr("class", "graph-node-background").attr("x", -maxWidth / 2).attr("y", -nodeHeight / 2).attr("width", maxWidth).attr("height", nodeHeight).attr("rx", 8).attr("ry", 8).attr("data-original-stroke", borderColor).attr("data-original-width", borderWidth).style("fill", "var(--vscode-editor-background)").style("stroke", borderColor).style("stroke-width", borderWidth).style("filter", "drop-shadow(2px 2px 4px rgba(0,0,0,0.2))").on("click", (event, datum) => {
-        event.stopPropagation();
-        expandNodeDetails(datum, nodeGroup);
-      }).on("dblclick", (event, datum) => {
-        event.stopPropagation();
-        postMessage({ command: "jumpToElement", elementName: datum.name });
-      });
-      nodeGroup.append("text").attr("class", "node-label").attr("text-anchor", "middle").attr("dy", -3).text(displayName).style("font-weight", "600").style("font-size", "13px").style("fill", "var(--vscode-editor-foreground)");
-      nodeGroup.append("text").attr("class", "node-type").attr("text-anchor", "middle").attr("dy", 12).text(d.type).style("font-size", "10px").style("fill", "var(--vscode-descriptionForeground)").style("font-style", "italic");
-    });
-    simulation.on("tick", () => {
-      link.attr("x1", (d) => d.source.x).attr("y1", (d) => d.source.y).attr("x2", (d) => d.target.x).attr("y2", (d) => d.target.y);
-      node.attr("transform", (d) => "translate(" + d.x + "," + d.y + ")");
-    });
-    function dragstarted(event) {
-      if (!event.active) simulation.alphaTarget(0.3).restart();
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
-    }
-    function dragged(event) {
-      event.subject.fx = event.x;
-      event.subject.fy = event.y;
-    }
-    function dragended(event) {
-      if (!event.active) simulation.alphaTarget(0);
-      event.subject.fx = null;
-      event.subject.fy = null;
-    }
-  }
-
-  // src/visualization/webview/renderers/hierarchy.ts
-  function renderHierarchyView(ctx, data) {
-    const { width, height, svg: svg2, g: g2, layoutDirection: layoutDirection2, postMessage, onStartInlineEdit, renderPlaceholder } = ctx;
-    if (!data || !data.elements || data.elements.length === 0) {
-      renderPlaceholder(
-        width,
-        height,
-        "Hierarchy View",
-        "No elements found to display.\n\nThe parser did not return any elements for visualization.",
-        data
-      );
-      return;
-    }
-    const isHorizontal = layoutDirection2 === "horizontal" || layoutDirection2 === "auto";
-    const partition = d3.partition().size(isHorizontal ? [height - 100, width - 100] : [width - 100, height - 100]).padding(1);
-    const hierarchyData = convertToHierarchy(data.elements);
-    if (!hierarchyData || !hierarchyData.name || !hierarchyData.type) {
-      return;
-    }
-    const root = d3.hierarchy(hierarchyData).sum((d) => {
-      if (!d || !d.name || !d.type) return 0;
-      return d.children && d.children.length > 0 ? 0 : 1;
-    }).sort((a, b) => b.value - a.value);
-    partition(root);
-    const allDescendants = root.descendants();
-    const validDescendants = allDescendants.filter((d) => {
-      const hasValidData = d.data && d.data.name && d.data.type;
-      const hasValidDimensions = d.x1 > d.x0 && d.y1 > d.y0 && d.x1 - d.x0 > 0.1 && d.y1 - d.y0 > 0.1;
-      const hasValidValue = d.value !== void 0 && d.value >= 0;
-      return hasValidData && hasValidDimensions && hasValidValue;
-    });
-    const cells = g2.selectAll(".hierarchy-cell").data(validDescendants).enter().append("g").attr("class", "hierarchy-cell").attr("transform", (d) => isHorizontal ? "translate(" + (d.y0 + 50) + "," + (d.x0 + 50) + ")" : "translate(" + (d.x0 + 50) + "," + (d.y0 + 50) + ")");
-    const defs = svg2.selectAll("defs").data([0]).enter().append("defs");
-    const gradient = defs.selectAll("#hierarchy-gradient").data([0]).enter().append("linearGradient").attr("id", "hierarchy-gradient").attr("gradientUnits", "objectBoundingBox").attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", 1);
-    gradient.append("stop").attr("offset", "0%").attr("stop-color", "var(--vscode-button-background)").attr("stop-opacity", 0.8);
-    gradient.append("stop").attr("offset", "100%").attr("stop-color", "var(--vscode-button-background)").attr("stop-opacity", 0.6);
-    cells.append("rect").attr("class", "node hierarchy-rect").attr("width", (d) => {
-      const w = isHorizontal ? d.y1 - d.y0 : d.x1 - d.x0;
-      return Math.max(8, w);
-    }).attr("height", (d) => {
-      const h = isHorizontal ? d.x1 - d.x0 : d.y1 - d.y0;
-      return Math.max(8, h);
-    }).attr("rx", 3).attr("ry", 3).style("fill", "url(#hierarchy-gradient)").style("stroke", (d) => getNodeColor(d.data.element || d.data)).style("stroke-width", (d) => getNodeBorderStyle(d.data.element || d.data)).style("cursor", "pointer");
-    cells.on("click", function(event, d) {
-      event.stopPropagation();
-      g2.selectAll(".hierarchy-cell rect").style("stroke", "var(--vscode-charts-blue)").style("stroke-width", "1px").style("stroke-opacity", 0.6).style("filter", "none");
-      g2.selectAll(".hierarchy-cell").classed("selected", false);
-      const cellGroup = d3.select(this);
-      cellGroup.classed("selected", true);
-      cellGroup.select("rect").style("stroke", "var(--vscode-charts-orange)").style("stroke-width", "3px").style("stroke-opacity", 1).style("filter", "drop-shadow(0 0 6px var(--vscode-charts-orange))");
-      postMessage({
-        command: "jumpToElement",
-        elementName: d.data.name,
-        skipCentering: true
-      });
-    }).on("dblclick", function(event, d) {
-      event.stopPropagation();
-      const cellWidth = isHorizontal ? d.y1 - d.y0 : d.x1 - d.x0;
-      const cellX = isHorizontal ? d.y0 + 50 : d.x0 + 50;
-      const cellY = isHorizontal ? d.x0 + 50 : d.y0 + 50;
-      onStartInlineEdit(d3.select(this), d.data.name, cellX, cellY, Math.max(8, cellWidth));
-    });
-    cells.each(function(d) {
-      const cell = d3.select(this);
-      const cellWidth = d.y1 - d.y0;
-      const cellHeight = d.x1 - d.x0;
-      renderHierarchyCellContent(cell, d, cellWidth, cellHeight);
-    });
-  }
-  function renderHierarchyCellContent(cell, node, width, height) {
-    const hasSpaceForDetails = width > 140 && height > 90;
-    if (hasSpaceForDetails) {
-      renderHierarchyDetailCard(cell, node, width, height);
-    } else {
-      renderCompactHierarchyCell(cell, node, width, height);
-    }
-  }
-  function renderHierarchyDetailCard(cell, node, width, height) {
-    const padding = 8;
-    const availableWidth = Math.max(16, width - padding * 2);
-    const availableHeight = Math.max(16, height - padding * 2);
-    const content = cell.append("g").attr("class", "hierarchy-card-content").attr("transform", "translate(" + padding + "," + padding + ")");
-    const maxTitleChars = Math.max(25, Math.floor(availableWidth / 4.5));
-    const truncatedName = truncateLabel(node.data.name, maxTitleChars);
-    let cursorY = 0;
-    const titleText = content.append("text").attr("class", "hierarchy-card-title node-name-text").attr("data-element-name", node.data.name).attr("x", 0).attr("y", cursorY + 12).text(truncatedName);
-    titleText.append("title").text(node.data.name);
-    cursorY += 24;
-    const truncatedType = truncateLabel(node.data.type || "", maxTitleChars);
-    const typeText = content.append("text").attr("class", "hierarchy-card-type").attr("x", 0).attr("y", cursorY).text("[" + truncatedType + "]");
-    typeText.append("title").text(node.data.type || "");
-    cursorY += 10;
-    const childNodes = node.children || [];
-    const descendantLeafCount = node.value || 0;
-    const stats = [
-      { label: "Children", value: childNodes.length },
-      { label: "Leaves", value: descendantLeafCount },
-      { label: "Depth", value: node.depth || 0 }
-    ];
-    const statsRow = content.append("g").attr("class", "hierarchy-stat-row").attr("transform", "translate(0," + (cursorY + 8) + ")");
-    stats.forEach((stat, index) => {
-      const group = statsRow.append("g").attr("class", "hierarchy-stat-pill").attr("transform", "translate(" + index * 70 + ",0)");
-      group.append("rect").attr("class", "hierarchy-stat-pill-bg").attr("x", 0).attr("y", -10).attr("width", 62).attr("height", 22).attr("rx", 11).attr("ry", 11);
-      group.append("text").attr("class", "hierarchy-stat-pill-label").attr("x", 31).attr("y", 4).attr("text-anchor", "middle").text(stat.label + ": " + stat.value);
-    });
-    cursorY += 40;
-    const documentation = node.data.properties ? node.data.properties.documentation : null;
-    if (documentation && cursorY + 30 < availableHeight) {
-      content.append("text").attr("class", "hierarchy-section-title").attr("x", 0).attr("y", cursorY).text("Documentation");
-      cursorY += 12;
-      const docLines = wrapTextToLines(documentation, Math.floor(availableWidth / 7), 3);
-      docLines.forEach((line, index) => {
-        content.append("text").attr("class", "hierarchy-detail-text").attr("x", 0).attr("y", cursorY + index * 12).text(line);
-      });
-      cursorY += docLines.length * 12 + 10;
-    }
-    const properties = Object.entries(node.data.properties || {}).filter((entry) => entry[0] !== "documentation");
-    if (properties.length > 0 && cursorY + 24 < availableHeight) {
-      content.append("text").attr("class", "hierarchy-section-title").attr("x", 0).attr("y", cursorY).text("Properties");
-      cursorY += 12;
-      const propLineHeight = 12;
-      const linesAvailable = Math.max(1, Math.floor((availableHeight - cursorY - 20) / propLineHeight));
-      properties.slice(0, linesAvailable).forEach((entry, index) => {
-        const key = truncateLabel(entry[0], 12);
-        const value = truncateLabel(String(entry[1]), Math.floor(availableWidth / 8));
-        content.append("text").attr("class", "hierarchy-detail-text").attr("x", 0).attr("y", cursorY + index * propLineHeight).text(key + ": " + value);
-      });
-      cursorY += linesAvailable * propLineHeight + 8;
-      if (properties.length > linesAvailable) {
-        content.append("text").attr("class", "hierarchy-detail-text").attr("x", 0).attr("y", cursorY).style("font-style", "italic").text("+" + (properties.length - linesAvailable) + " more properties");
-        cursorY += 12;
-      }
-    }
-    if (childNodes.length > 0 && cursorY + 24 < availableHeight) {
-      content.append("text").attr("class", "hierarchy-section-title").attr("x", 0).attr("y", cursorY).text("Nested");
-      cursorY += 14;
-      const childRowHeight = 18;
-      const rowsAvailable = Math.max(1, Math.floor((availableHeight - cursorY - 6) / childRowHeight));
-      const visibleChildren = childNodes.slice(0, rowsAvailable);
-      visibleChildren.forEach((child, index) => {
-        const childGroup = content.append("g").attr("class", "hierarchy-child-card").attr("transform", "translate(0," + (cursorY + index * childRowHeight) + ")");
-        childGroup.append("rect").attr("x", 0).attr("y", -12).attr("width", availableWidth - 4).attr("height", 16);
-        const childName = truncateLabel(child.data.name, Math.floor((availableWidth - 20) / 7));
-        const childType = truncateLabel(child.data.type || "", 12);
-        childGroup.append("text").attr("x", 6).attr("y", 0).text("\u2022 " + childName + " [" + childType + "]");
-      });
-      cursorY += visibleChildren.length * childRowHeight;
-      if (childNodes.length > visibleChildren.length) {
-        content.append("text").attr("class", "hierarchy-detail-text").attr("x", 0).attr("y", cursorY + 10).style("font-style", "italic").text("+" + (childNodes.length - visibleChildren.length) + " more nested items");
-      }
-    }
-  }
-  function renderCompactHierarchyCell(cell, node, width, height) {
-    if (width <= 8 || height <= 8) {
-      return;
-    }
-    if (width > 20 && height > 8 && node.data.name && node.data.type) {
-      const maxChars = Math.max(8, Math.floor(width / 5));
-      const truncatedName = truncateLabel(node.data.name, maxChars);
-      if (truncatedName) {
-        const labelText = cell.append("text").attr("class", "node-label node-name-text").attr("data-element-name", node.data.name).attr("x", 2).attr("y", Math.min(12, height / 2 + 2)).text(truncatedName).style("font-size", Math.max(10, Math.min(14, height / 1.8)) + "px").style("font-weight", "600").style("pointer-events", "none");
-        labelText.append("title").text(node.data.name);
-      }
-      if (height > 20 && node.data.type) {
-        const truncatedType = truncateLabel(node.data.type, maxChars);
-        const typeText = cell.append("text").attr("class", "node-type").attr("x", 2).attr("y", Math.min(height - 3, height / 2 + 12)).text("[" + truncatedType + "]").style("font-size", Math.max(9, Math.min(12, height / 2.8)) + "px").style("font-weight", "500").style("opacity", 0.8).style("pointer-events", "none");
-        typeText.append("title").text(node.data.type);
-      }
-    } else {
-      const initial = node.data.name ? node.data.name.charAt(0).toUpperCase() : "?";
-      const initialText = cell.append("text").attr("class", "node-label node-name-text").attr("data-element-name", node.data.name).attr("x", width / 2).attr("y", height / 2 + 2).attr("text-anchor", "middle").text(initial).style("font-size", Math.min(12, height / 1.2) + "px").style("font-weight", "bold").style("pointer-events", "none");
-      initialText.append("title").text(node.data.name + " [" + node.data.type + "]");
-    }
   }
 
   // src/visualization/webview/renderers/sequence.ts
@@ -1806,15 +926,50 @@
       partHeights.set(part.name, calculatePartHeight(part));
       if (part.id) partHeights.set(part.id, calculatePartHeight(part));
     });
-    const cols = isHorizontal ? Math.ceil(Math.sqrt(parts.length * 1.5)) : Math.max(2, Math.ceil(Math.sqrt(parts.length)));
-    const rows = Math.ceil(parts.length / Math.max(1, cols));
+    const partNames = new Set(parts.map((p) => p.name));
+    const partByName = new Map(parts.map((p) => [p.name, p]));
+    const containsTargets = /* @__PURE__ */ new Map();
+    const containsSources = /* @__PURE__ */ new Map();
+    connectors.forEach((c) => {
+      if ((c.type === "composition" || c.name === "contains") && c.sourceId && c.targetId) {
+        const src = c.sourceId.split(".").pop() || c.sourceId;
+        const tgt = c.targetId.split(".").pop() || c.targetId;
+        if (partNames.has(src) && partNames.has(tgt)) {
+          if (!containsTargets.has(src)) containsTargets.set(src, /* @__PURE__ */ new Set());
+          containsTargets.get(src).add(tgt);
+          if (!containsSources.has(tgt)) containsSources.set(tgt, /* @__PURE__ */ new Set());
+          containsSources.get(tgt).add(src);
+        }
+      }
+    });
+    const roots = parts.filter((p) => !containsSources.has(p.name) || containsSources.get(p.name).size === 0);
+    const orderedParts = [];
+    const visited = /* @__PURE__ */ new Set();
+    const queue = roots.length > 0 ? [...roots] : [parts[0]];
+    while (queue.length > 0) {
+      const part = queue.shift();
+      if (visited.has(part.name)) continue;
+      visited.add(part.name);
+      orderedParts.push(part);
+      const children = containsTargets.get(part.name);
+      if (children) {
+        children.forEach((childName) => {
+          const child = partByName.get(childName);
+          if (child && !visited.has(childName)) queue.push(child);
+        });
+      }
+    }
+    const leftover = parts.filter((p) => !visited.has(p.name));
+    const sortedParts = [...orderedParts, ...leftover];
+    const cols = isHorizontal ? Math.ceil(Math.sqrt(sortedParts.length * 1.5)) : Math.max(2, Math.ceil(Math.sqrt(sortedParts.length)));
+    const rows = Math.ceil(sortedParts.length / Math.max(1, cols));
     const rowHeights = [];
     for (let row = 0; row < rows; row++) {
       let maxHeight = 80;
       for (let col = 0; col < cols; col++) {
         const index = row * cols + col;
-        if (index < parts.length) {
-          const partHeight = partHeights.get(parts[index].name) || 80;
+        if (index < sortedParts.length) {
+          const partHeight = partHeights.get(sortedParts[index].name) || 80;
           maxHeight = Math.max(maxHeight, partHeight);
         }
       }
@@ -1822,7 +977,7 @@
     }
     const partPositions = /* @__PURE__ */ new Map();
     const staggerOffset = 60;
-    parts.forEach((part, index) => {
+    sortedParts.forEach((part, index) => {
       const col = index % cols;
       const row = Math.floor(index / cols);
       let yPos = padding;
@@ -2736,8 +1891,9 @@
         const typeLower = (s.type || "").toLowerCase();
         const nameLower = (s.name || "").toLowerCase();
         const isContainer = typeLower.includes("exhibit") || nameLower.endsWith("states") || typeLower.includes("state") && s.children && s.children.length > 0 && s.children.some((c) => (c.type || "").toLowerCase().includes("state"));
-        if (isContainer && !typeLower.includes("def")) {
-          const childStates = collectChildStates(s);
+        const childStates = collectChildStates(s);
+        const isStateMachine = isContainer && (childStates.length > 0 || !typeLower.includes("def"));
+        if (isStateMachine) {
           stateMachineMap.set(s.name, {
             container: s,
             states: childStates,
@@ -3114,454 +2270,6 @@
         });
       }
     });
-  }
-
-  // src/visualization/webview/renderers/usecase.ts
-  function renderUseCaseView(ctx, data) {
-    const { width, height, g: g2, usecaseLayoutOrientation: usecaseLayoutOrientation2, postMessage, onStartInlineEdit, renderPlaceholder } = ctx;
-    if (!data || !data.actors && !data.useCases || data.actors && data.actors.length === 0 && data.useCases && data.useCases.length === 0) {
-      renderPlaceholder(
-        width,
-        height,
-        "Use Case View",
-        "No actors or use cases found to display.\\n\\nThis view shows actors, use cases, and their relationships.",
-        data
-      );
-      return;
-    }
-    const actors = data.actors || [];
-    const useCases = data.useCases || [];
-    const actions = data.actions || [];
-    const requirements = data.requirements || [];
-    const relationships = data.relationships || [];
-    const useCaseWidth = 140;
-    const useCaseHeight = 70;
-    const actionWidth = 120;
-    const actionHeight = 40;
-    const requirementWidth = 130;
-    const requirementHeight = 50;
-    const actorSize = 60;
-    const marginLeft = 80;
-    const marginTop = 80;
-    const horizontalSpacing = 180;
-    const verticalSpacing = 120;
-    const actorPositions = /* @__PURE__ */ new Map();
-    const useCasePositions = /* @__PURE__ */ new Map();
-    const actionPositions = /* @__PURE__ */ new Map();
-    const requirementPositions = /* @__PURE__ */ new Map();
-    if (usecaseLayoutOrientation2 === "force") {
-      const allNodes = [
-        ...actors.map((a) => ({ id: a.name, type: "actor", data: a, x: Math.random() * width, y: Math.random() * height })),
-        ...useCases.map((uc) => ({ id: uc.name, type: "usecase", data: uc, x: Math.random() * width, y: Math.random() * height })),
-        ...actions.map((a) => ({ id: a.name, type: "action", data: a, x: Math.random() * width, y: Math.random() * height })),
-        ...requirements.map((r) => ({ id: r.name, type: "requirement", data: r, x: Math.random() * width, y: Math.random() * height }))
-      ];
-      const nodeMap = /* @__PURE__ */ new Map();
-      allNodes.forEach((n) => nodeMap.set(n.id, n));
-      const links = relationships.map((r) => ({
-        source: nodeMap.get(r.source),
-        target: nodeMap.get(r.target)
-      })).filter((l) => l.source && l.target);
-      const simulation = d3.forceSimulation(allNodes).force("center", d3.forceCenter(width / 2, height / 2)).force("charge", d3.forceManyBody().strength(-400)).force("link", d3.forceLink(links).distance(200).strength(0.5)).force("collide", d3.forceCollide().radius(100)).force("x", d3.forceX(width / 2).strength(0.05)).force("y", d3.forceY(height / 2).strength(0.05));
-      simulation.stop();
-      for (let i = 0; i < 300; ++i) simulation.tick();
-      allNodes.forEach((n) => {
-        const x = Math.max(marginLeft, Math.min(width - marginLeft - useCaseWidth, n.x));
-        const y = Math.max(marginTop, Math.min(height - marginTop - useCaseHeight, n.y));
-        if (n.type === "actor") {
-          actorPositions.set(n.id, { x: x + actorSize / 2, y: y + actorSize / 2, actor: n.data });
-        } else if (n.type === "action") {
-          actionPositions.set(n.id, { x, y, action: n.data });
-        } else if (n.type === "requirement") {
-          requirementPositions.set(n.id, { x, y, requirement: n.data });
-        } else {
-          useCasePositions.set(n.id, { x, y, useCase: n.data });
-        }
-      });
-    } else if (usecaseLayoutOrientation2 === "vertical") {
-      const actorSpacing = Math.min(120, (width - marginLeft * 2) / Math.max(actors.length, 1));
-      const actorStartX = marginLeft + (width - marginLeft * 2 - (actors.length - 1) * actorSpacing) / 2;
-      actors.forEach((actor, index) => {
-        actorPositions.set(actor.name, {
-          x: actorStartX + index * actorSpacing,
-          y: marginTop + 40,
-          actor
-        });
-      });
-      const cols = Math.ceil(Math.sqrt(useCases.length * 1.5));
-      const useCaseSpacingX = useCaseWidth + 40;
-      const useCaseSpacingY = useCaseHeight + 40;
-      const useCaseStartX = marginLeft + (width - marginLeft * 2 - (cols - 1) * useCaseSpacingX - useCaseWidth) / 2;
-      const useCaseStartY = marginTop + 160;
-      const useCaseRows = Math.ceil(useCases.length / cols);
-      useCases.forEach((useCase, index) => {
-        const col = index % cols;
-        const row = Math.floor(index / cols);
-        useCasePositions.set(useCase.name, {
-          x: useCaseStartX + col * useCaseSpacingX,
-          y: useCaseStartY + row * useCaseSpacingY,
-          useCase
-        });
-      });
-      const useCaseBottomY = useCaseStartY + useCaseRows * useCaseSpacingY + 40;
-      let actionsBottomY = useCaseBottomY;
-      if (actions.length > 0) {
-        const actionSpacingX = actionWidth + 30;
-        const actionStartY = useCaseBottomY;
-        const actionCols = Math.ceil(Math.sqrt(actions.length * 2));
-        const actionStartX = marginLeft + (width - marginLeft * 2 - (actionCols - 1) * actionSpacingX - actionWidth) / 2;
-        const actionRows = Math.ceil(actions.length / actionCols);
-        actions.forEach((action, index) => {
-          const col = index % actionCols;
-          const row = Math.floor(index / actionCols);
-          actionPositions.set(action.name, {
-            x: actionStartX + col * actionSpacingX,
-            y: actionStartY + row * (actionHeight + 30),
-            action
-          });
-        });
-        actionsBottomY = actionStartY + actionRows * (actionHeight + 30) + 40;
-      }
-      if (requirements.length > 0) {
-        const reqSpacingX = requirementWidth + 30;
-        const reqCols = Math.min(requirements.length, Math.floor((width - marginLeft * 2) / reqSpacingX));
-        const reqStartX = marginLeft + (width - marginLeft * 2 - (Math.min(requirements.length, reqCols) - 1) * reqSpacingX - requirementWidth) / 2;
-        requirements.forEach((req, index) => {
-          const col = index % reqCols;
-          const row = Math.floor(index / reqCols);
-          requirementPositions.set(req.name, {
-            x: reqStartX + col * reqSpacingX,
-            y: actionsBottomY + row * (requirementHeight + 20),
-            requirement: req
-          });
-        });
-      }
-    } else {
-      const centerX = width / 2;
-      const actorSpacing = Math.min(120, (width - marginLeft * 2) / Math.max(actors.length, 1));
-      const actorStartX = marginLeft + (width - marginLeft * 2 - (actors.length - 1) * actorSpacing) / 2;
-      const actorRowY = marginTop + 40;
-      actors.forEach((actor, index) => {
-        actorPositions.set(actor.name, {
-          x: actorStartX + index * actorSpacing,
-          y: actorRowY,
-          actor
-        });
-      });
-      const useCaseStartY = actorRowY + actorSize + 80;
-      const cols = Math.ceil(Math.sqrt(useCases.length * 1.5));
-      const useCaseSpacingX = useCaseWidth + 50;
-      const useCaseSpacingY = useCaseHeight + 50;
-      const useCaseStartX = centerX - cols * useCaseSpacingX / 2;
-      const useCaseRows = Math.ceil(useCases.length / cols);
-      useCases.forEach((useCase, index) => {
-        const col = index % cols;
-        const row = Math.floor(index / cols);
-        useCasePositions.set(useCase.name, {
-          x: useCaseStartX + col * useCaseSpacingX,
-          y: useCaseStartY + row * useCaseSpacingY,
-          useCase
-        });
-      });
-      const useCaseBottomY = useCaseStartY + useCaseRows * useCaseSpacingY + 40;
-      if (actions.length > 0) {
-        const actionCols = Math.ceil(Math.sqrt(actions.length * 2));
-        const actionSpacingX = actionWidth + 30;
-        const actionSpacingY = actionHeight + 25;
-        const actionStartX = centerX - actionCols * actionSpacingX / 2;
-        actions.forEach((action, index) => {
-          const col = index % actionCols;
-          const row = Math.floor(index / actionCols);
-          actionPositions.set(action.name, {
-            x: actionStartX + col * actionSpacingX,
-            y: useCaseBottomY + row * actionSpacingY,
-            action
-          });
-        });
-      }
-      if (requirements.length > 0) {
-        const actionRows = actions.length > 0 ? Math.ceil(actions.length / Math.ceil(Math.sqrt(actions.length * 2))) : 0;
-        const reqStartY = useCaseBottomY + actionRows * (actionHeight + 25) + 60;
-        const reqSpacingX = requirementWidth + 30;
-        const reqCols = Math.min(requirements.length, Math.floor((width - marginLeft * 2) / reqSpacingX));
-        const reqStartX = centerX - Math.min(requirements.length, reqCols) * reqSpacingX / 2;
-        const reqRows = Math.ceil(requirements.length / reqCols);
-        requirements.forEach((req, index) => {
-          const col = index % reqCols;
-          const row = Math.floor(index / reqCols);
-          requirementPositions.set(req.name, {
-            x: reqStartX + col * reqSpacingX,
-            y: reqStartY + row * (requirementHeight + 20),
-            requirement: req
-          });
-        });
-      }
-    }
-    function findActorPosition(name) {
-      if (actorPositions.has(name)) {
-        return actorPositions.get(name);
-      }
-      const nameLower = name.toLowerCase();
-      for (const [key, value] of actorPositions.entries()) {
-        if (key.toLowerCase() === nameLower) {
-          return value;
-        }
-      }
-      return void 0;
-    }
-    const relationshipGroup = g2.append("g").attr("class", "usecase-relationships");
-    function drawUseCaseRelationships() {
-      relationshipGroup.selectAll("*").remove();
-      relationships.forEach((rel) => {
-        let startX, startY, endX, endY;
-        if (rel.type === "include") {
-          const sourcePos2 = actionPositions.get(rel.source);
-          const targetPos2 = actionPositions.get(rel.target);
-          if (!sourcePos2 || !targetPos2) return;
-          startX = sourcePos2.x + actionWidth / 2;
-          startY = sourcePos2.y + actionHeight;
-          endX = targetPos2.x + actionWidth / 2;
-          endY = targetPos2.y;
-          const relGroup = relationshipGroup.append("g");
-          relGroup.append("line").attr("x1", startX).attr("y1", startY).attr("x2", endX).attr("y2", endY).style("stroke", "var(--vscode-charts-orange)").style("stroke-width", "1.5px").style("stroke-dasharray", "4,2");
-          const angle = Math.atan2(endY - startY, endX - startX);
-          const arrowSize = 6;
-          relGroup.append("polygon").attr("points", [
-            [endX, endY],
-            [endX - arrowSize * Math.cos(angle - Math.PI / 6), endY - arrowSize * Math.sin(angle - Math.PI / 6)],
-            [endX - arrowSize * Math.cos(angle + Math.PI / 6), endY - arrowSize * Math.sin(angle + Math.PI / 6)]
-          ].map((p) => p.join(",")).join(" ")).style("fill", "var(--vscode-charts-orange)");
-          const midX = (startX + endX) / 2;
-          const midY = (startY + endY) / 2;
-          relGroup.append("text").attr("x", midX + 5).attr("y", midY - 5).attr("text-anchor", "start").style("font-size", "9px").style("fill", "var(--vscode-charts-orange)").style("font-style", "italic").text("\xABinclude\xBB");
-          return;
-        }
-        if (rel.type === "realize") {
-          const sourcePos2 = useCasePositions.get(rel.source);
-          const targetPos2 = actionPositions.get(rel.target);
-          if (!sourcePos2 || !targetPos2) return;
-          startX = sourcePos2.x + useCaseWidth / 2;
-          startY = sourcePos2.y + useCaseHeight;
-          endX = targetPos2.x + actionWidth / 2;
-          endY = targetPos2.y;
-          relationshipGroup.append("line").attr("x1", startX).attr("y1", startY).attr("x2", endX).attr("y2", endY).style("stroke", "var(--vscode-charts-yellow)").style("stroke-width", "2px").style("stroke-dasharray", "5,3");
-          const angle = Math.atan2(endY - startY, endX - startX);
-          const arrowSize = 8;
-          relationshipGroup.append("polygon").attr("points", [
-            [endX, endY],
-            [endX - arrowSize * Math.cos(angle - Math.PI / 6), endY - arrowSize * Math.sin(angle - Math.PI / 6)],
-            [endX - arrowSize * Math.cos(angle + Math.PI / 6), endY - arrowSize * Math.sin(angle + Math.PI / 6)]
-          ].map((p) => p.join(",")).join(" ")).style("fill", "var(--vscode-charts-yellow)");
-          return;
-        }
-        if (rel.type === "stakeholder") {
-          const sourcePos2 = requirementPositions.get(rel.source);
-          const targetPos2 = findActorPosition(rel.target);
-          if (!sourcePos2 || !targetPos2) return;
-          startX = sourcePos2.x + requirementWidth / 2;
-          startY = sourcePos2.y;
-          endX = targetPos2.x;
-          endY = targetPos2.y + actorSize / 2;
-          const relGroup = relationshipGroup.append("g");
-          relGroup.append("line").attr("x1", startX).attr("y1", startY).attr("x2", endX).attr("y2", endY).style("stroke", "var(--vscode-charts-green)").style("stroke-width", "1.5px").style("stroke-dasharray", "4,2");
-          const angle = Math.atan2(endY - startY, endX - startX);
-          const arrowSize = 6;
-          relGroup.append("polygon").attr("points", [
-            [endX, endY],
-            [endX - arrowSize * Math.cos(angle - Math.PI / 6), endY - arrowSize * Math.sin(angle - Math.PI / 6)],
-            [endX - arrowSize * Math.cos(angle + Math.PI / 6), endY - arrowSize * Math.sin(angle + Math.PI / 6)]
-          ].map((p) => p.join(",")).join(" ")).style("fill", "var(--vscode-charts-green)");
-          const midX = (startX + endX) / 2;
-          const midY = (startY + endY) / 2;
-          relGroup.append("text").attr("x", midX).attr("y", midY - 5).attr("text-anchor", "middle").style("font-size", "9px").style("fill", "var(--vscode-charts-green)").style("font-style", "italic").text("\xABstakeholder\xBB");
-          return;
-        }
-        const sourcePos = findActorPosition(rel.source);
-        const targetPos = useCasePositions.get(rel.target);
-        if (!sourcePos || !targetPos) return;
-        startX = sourcePos.x;
-        startY = sourcePos.y + actorSize / 2;
-        endX = targetPos.x + useCaseWidth / 2;
-        endY = targetPos.y;
-        const lineColor = rel.type === "subject" ? "var(--vscode-charts-green)" : "var(--vscode-charts-blue)";
-        const lineStyle = rel.type === "subject" ? "5,3" : "none";
-        relationshipGroup.append("line").attr("x1", startX).attr("y1", startY).attr("x2", endX).attr("y2", endY).style("stroke", lineColor).style("stroke-width", "2px").style("stroke-dasharray", lineStyle);
-        if (rel.label) {
-          const midX = (startX + endX) / 2;
-          const midY = (startY + endY) / 2;
-          const maxLabelLength = 40;
-          let labelText = rel.label;
-          if (labelText.length > maxLabelLength) {
-            labelText = labelText.substring(0, maxLabelLength - 3) + "...";
-          }
-          const labelPadding = 4;
-          const labelGroup = relationshipGroup.append("g").attr("transform", "translate(" + midX + "," + midY + ")");
-          const textElement = labelGroup.append("text").attr("text-anchor", "middle").attr("dominant-baseline", "middle").style("font-size", "10px").style("fill", "var(--vscode-descriptionForeground)").style("font-style", "italic").text(labelText);
-          const bbox = textElement.node().getBBox();
-          labelGroup.insert("rect", "text").attr("x", bbox.x - labelPadding).attr("y", bbox.y - labelPadding / 2).attr("width", bbox.width + labelPadding * 2).attr("height", bbox.height + labelPadding).style("fill", "var(--vscode-editor-background)").style("opacity", 0.9);
-        }
-      });
-    }
-    drawUseCaseRelationships();
-    const useCaseGroup = g2.append("g").attr("class", "usecase-nodes");
-    useCasePositions.forEach((pos, useCaseName) => {
-      const useCase = pos.useCase;
-      const useCaseElement = useCaseGroup.append("g").attr("class", "usecase-node").attr("transform", "translate(" + pos.x + "," + pos.y + ")").style("cursor", "grab");
-      const useCaseDrag = d3.drag().on("start", function() {
-        d3.select(this).raise().style("cursor", "grabbing");
-      }).on("drag", function(event) {
-        pos.x += event.dx;
-        pos.y += event.dy;
-        d3.select(this).attr("transform", "translate(" + pos.x + "," + pos.y + ")");
-        drawUseCaseRelationships();
-      }).on("end", function() {
-        d3.select(this).style("cursor", "grab");
-      });
-      useCaseElement.call(useCaseDrag);
-      useCaseElement.append("ellipse").attr("cx", useCaseWidth / 2).attr("cy", useCaseHeight / 2).attr("rx", useCaseWidth / 2).attr("ry", useCaseHeight / 2).style("fill", "var(--vscode-editor-background)").style("stroke", "var(--vscode-charts-purple)").style("stroke-width", "2px");
-      useCaseElement.on("click", function(event) {
-        event.stopPropagation();
-        postMessage({
-          command: "jumpToElement",
-          elementName: useCase.name
-        });
-      }).on("dblclick", function(event) {
-        event.stopPropagation();
-        onStartInlineEdit(d3.select(this), useCase.name, pos.x, pos.y, useCaseWidth);
-      });
-      const maxChars = 16;
-      const words = useCase.name.split(" ");
-      let line1 = "";
-      let line2 = "";
-      if (useCase.name.length <= maxChars) {
-        line1 = useCase.name;
-      } else {
-        let charCount = 0;
-        for (let i = 0; i < words.length; i++) {
-          if (charCount + words[i].length > maxChars && line1) {
-            line2 = words.slice(i).join(" ");
-            break;
-          }
-          line1 += (i > 0 ? " " : "") + words[i];
-          charCount += words[i].length + 1;
-        }
-        if (line1.length > maxChars) {
-          line1 = line1.substring(0, maxChars - 3) + "...";
-        }
-        if (line2.length > maxChars) {
-          line2 = line2.substring(0, maxChars - 3) + "...";
-        }
-      }
-      if (line2) {
-        useCaseElement.append("text").attr("class", "node-name-text").attr("data-element-name", useCase.name).attr("x", useCaseWidth / 2).attr("y", useCaseHeight / 2 - 6).attr("text-anchor", "middle").text(line1).style("font-size", "12px").style("fill", "var(--vscode-editor-foreground)").style("user-select", "none");
-        useCaseElement.append("text").attr("x", useCaseWidth / 2).attr("y", useCaseHeight / 2 + 8).attr("text-anchor", "middle").text(line2).style("font-size", "12px").style("fill", "var(--vscode-editor-foreground)").style("user-select", "none");
-      } else {
-        useCaseElement.append("text").attr("class", "node-name-text").attr("data-element-name", useCase.name).attr("x", useCaseWidth / 2).attr("y", useCaseHeight / 2 + 4).attr("text-anchor", "middle").text(line1).style("font-size", "12px").style("fill", "var(--vscode-editor-foreground)").style("user-select", "none");
-      }
-    });
-    const requirementGroup = g2.append("g").attr("class", "requirement-nodes");
-    requirementPositions.forEach((pos, reqName) => {
-      const requirement = pos.requirement;
-      const reqElement = requirementGroup.append("g").attr("class", "requirement-node").attr("transform", "translate(" + pos.x + "," + pos.y + ")").style("cursor", "grab");
-      const reqDrag = d3.drag().on("start", function() {
-        d3.select(this).raise().style("cursor", "grabbing");
-      }).on("drag", function(event) {
-        pos.x += event.dx;
-        pos.y += event.dy;
-        d3.select(this).attr("transform", "translate(" + pos.x + "," + pos.y + ")");
-        drawUseCaseRelationships();
-      }).on("end", function() {
-        d3.select(this).style("cursor", "grab");
-      });
-      reqElement.call(reqDrag);
-      reqElement.append("path").attr("d", "M0,0 L" + (requirementWidth - 12) + ",0 L" + requirementWidth + ",12 L" + requirementWidth + "," + requirementHeight + " L0," + requirementHeight + " Z").style("fill", "var(--vscode-editor-background)").style("stroke", "#B5CEA8").style("stroke-width", "2px");
-      reqElement.on("click", function(event) {
-        event.stopPropagation();
-        postMessage({
-          command: "jumpToElement",
-          elementName: requirement.name
-        });
-      }).on("dblclick", function(event) {
-        event.stopPropagation();
-        onStartInlineEdit(d3.select(this), requirement.name, pos.x, pos.y, requirementWidth);
-      });
-      reqElement.append("path").attr("d", "M" + (requirementWidth - 12) + ",0 L" + (requirementWidth - 12) + ",12 L" + requirementWidth + ",12").style("fill", "none").style("stroke", "#B5CEA8").style("stroke-width", "1px");
-      reqElement.append("text").attr("x", requirementWidth / 2).attr("y", 12).attr("text-anchor", "middle").text("\xABreq\xBB").style("font-size", "9px").style("fill", "#B5CEA8").style("font-style", "italic").style("user-select", "none");
-      const maxChars = 18;
-      let displayName = requirement.name;
-      if (displayName.length > maxChars) {
-        displayName = displayName.substring(0, maxChars - 3) + "...";
-      }
-      reqElement.append("text").attr("class", "node-name-text").attr("data-element-name", requirement.name).attr("x", requirementWidth / 2).attr("y", requirementHeight / 2 + 6).attr("text-anchor", "middle").text(displayName).style("font-size", "11px").style("fill", "var(--vscode-editor-foreground)").style("font-weight", "500").style("user-select", "none");
-    });
-    const actorGroup = g2.append("g").attr("class", "actor-nodes");
-    actorPositions.forEach((pos, actorName) => {
-      const actor = pos.actor;
-      const actorElement = actorGroup.append("g").attr("class", "actor-node").attr("transform", "translate(" + (pos.x - actorSize / 2) + "," + (pos.y - actorSize / 2) + ")").style("cursor", "grab");
-      actorElement.on("click", function(event) {
-        event.stopPropagation();
-        postMessage({
-          command: "jumpToElement",
-          elementName: actor.name
-        });
-      }).on("dblclick", function(event) {
-        event.stopPropagation();
-        onStartInlineEdit(d3.select(this), actor.name, pos.x - actorSize / 2, pos.y - actorSize / 2, actorSize);
-      });
-      const actorDrag = d3.drag().on("start", function() {
-        d3.select(this).raise().style("cursor", "grabbing");
-      }).on("drag", function(event) {
-        pos.x += event.dx;
-        pos.y += event.dy;
-        d3.select(this).attr("transform", "translate(" + (pos.x - actorSize / 2) + "," + (pos.y - actorSize / 2) + ")");
-        drawUseCaseRelationships();
-      }).on("end", function() {
-        d3.select(this).style("cursor", "grab");
-      });
-      actorElement.call(actorDrag);
-      const headRadius = 8;
-      const bodyHeight = 20;
-      const armWidth = 12;
-      const legHeight = 15;
-      actorElement.append("circle").attr("cx", actorSize / 2).attr("cy", 10).attr("r", headRadius).style("fill", "none").style("stroke", "var(--vscode-charts-orange)").style("stroke-width", "2px");
-      actorElement.append("line").attr("x1", actorSize / 2).attr("y1", 10 + headRadius).attr("x2", actorSize / 2).attr("y2", 10 + headRadius + bodyHeight).style("stroke", "var(--vscode-charts-orange)").style("stroke-width", "2px");
-      actorElement.append("line").attr("x1", actorSize / 2 - armWidth).attr("y1", 10 + headRadius + 8).attr("x2", actorSize / 2 + armWidth).attr("y2", 10 + headRadius + 8).style("stroke", "var(--vscode-charts-orange)").style("stroke-width", "2px");
-      actorElement.append("line").attr("x1", actorSize / 2).attr("y1", 10 + headRadius + bodyHeight).attr("x2", actorSize / 2 - armWidth).attr("y2", 10 + headRadius + bodyHeight + legHeight).style("stroke", "var(--vscode-charts-orange)").style("stroke-width", "2px");
-      actorElement.append("line").attr("x1", actorSize / 2).attr("y1", 10 + headRadius + bodyHeight).attr("x2", actorSize / 2 + armWidth).attr("y2", 10 + headRadius + bodyHeight + legHeight).style("stroke", "var(--vscode-charts-orange)").style("stroke-width", "2px");
-      const truncatedName = actor.name.length > 12 ? actor.name.substring(0, 9) + "..." : actor.name;
-      actorElement.append("text").attr("class", "node-name-text").attr("data-element-name", actor.name).attr("x", actorSize / 2).attr("y", 10 + headRadius + bodyHeight + legHeight + 18).attr("text-anchor", "middle").text(truncatedName).style("font-size", "11px").style("fill", "var(--vscode-editor-foreground)").style("user-select", "none");
-    });
-    if (actionPositions.size > 0) {
-      const actionGroup = g2.append("g").attr("class", "action-nodes");
-      actionPositions.forEach((pos, actionName) => {
-        const action = pos.action;
-        const actionElement = actionGroup.append("g").attr("class", "action-node").attr("transform", "translate(" + pos.x + "," + pos.y + ")").style("cursor", "grab");
-        actionElement.on("click", function(event) {
-          event.stopPropagation();
-          postMessage({
-            command: "jumpToElement",
-            elementName: action.name
-          });
-        }).on("dblclick", function(event) {
-          event.stopPropagation();
-          onStartInlineEdit(d3.select(this), action.name, pos.x, pos.y, actionWidth);
-        });
-        const actionDrag = d3.drag().on("start", function() {
-          d3.select(this).raise().style("cursor", "grabbing");
-        }).on("drag", function(event) {
-          pos.x += event.dx;
-          pos.y += event.dy;
-          d3.select(this).attr("transform", "translate(" + pos.x + "," + pos.y + ")");
-          drawUseCaseRelationships();
-        }).on("end", function() {
-          d3.select(this).style("cursor", "grab");
-        });
-        actionElement.call(actionDrag);
-        actionElement.append("rect").attr("x", 0).attr("y", 0).attr("width", actionWidth).attr("height", actionHeight).attr("rx", 15).attr("ry", 15).style("fill", "var(--vscode-editor-background)").style("stroke", "var(--vscode-charts-yellow)").style("stroke-width", "2px");
-        const truncatedActionName = action.name.length > 18 ? action.name.substring(0, 15) + "..." : action.name;
-        actionElement.append("text").attr("class", "node-name-text").attr("data-element-name", action.name).attr("x", actionWidth / 2).attr("y", actionHeight / 2 + 4).attr("text-anchor", "middle").text(truncatedActionName).style("font-size", "11px").style("fill", "var(--vscode-editor-foreground)").style("user-select", "none");
-      });
-    }
   }
 
   // src/visualization/webview/elk.ts
@@ -5052,7 +3760,7 @@
   }
   var elkWorkerUrl = (typeof window !== "undefined" && window.__VIZ_INIT?.elkWorkerUrl) ?? "";
   var currentData = null;
-  var currentView = "elk";
+  var currentView = "general-view";
   var selectedDiagramIndex = 0;
   var selectedDiagramName = null;
   var activityDebugLabels = false;
@@ -5065,7 +3773,6 @@
   var layoutDirection = "horizontal";
   var activityLayoutDirection = "vertical";
   var stateLayoutOrientation = "horizontal";
-  var usecaseLayoutOrientation = "horizontal";
   var filteredData = null;
   var isRendering = false;
   var showMetadata = false;
@@ -5121,20 +3828,20 @@
         debugBtn.style.background = "";
         debugBtn.style.color = "";
       }
-      if (currentView === "activity") {
-        renderVisualization("activity");
+      if (currentView === "action-flow-view") {
+        renderVisualization("action-flow-view");
       }
     });
   }
   function updateActivityDebugButtonVisibility(view) {
     const debugBtn = document.getElementById("activity-debug-btn");
     if (debugBtn) {
-      debugBtn.style.display = view === "activity" ? "inline-block" : "none";
+      debugBtn.style.display = view === "action-flow-view" ? "inline-block" : "none";
     }
     const legendBtn = document.getElementById("legend-btn");
     const legendPopup = document.getElementById("legend-popup");
     if (legendBtn) {
-      const cytoscapeViews = ["general", "elk"];
+      const cytoscapeViews = ["general", "general-view"];
       legendBtn.style.display = cytoscapeViews.includes(view) ? "inline-block" : "none";
       if (!cytoscapeViews.includes(view) && legendPopup) {
         legendPopup.style.display = "none";
@@ -5176,7 +3883,7 @@
         if (message.pendingPackageName) {
           selectedDiagramName = message.pendingPackageName;
           selectedDiagramIndex = 0;
-          currentView = "elk";
+          currentView = "general-view";
         } else if (message.currentView) {
           currentView = message.currentView;
         }
@@ -5196,7 +3903,7 @@
         if (message.packageName) {
           selectedDiagramName = message.packageName;
           selectedDiagramIndex = 0;
-          changeView("elk");
+          changeView("general-view");
         }
         break;
       case "export":
@@ -5619,7 +4326,7 @@
           expandedGeneralCategories.add(cat.id);
         }
         renderGeneralChips(typeStats);
-        renderVisualization("elk");
+        renderVisualization("general-view");
       });
       container.appendChild(chip);
     });
@@ -6456,28 +5163,14 @@
     let targetElement = null;
     let elementData = null;
     let sysmlTarget = null;
-    if (currentView === "tree") {
+    if (false) {
       d3.selectAll(".node-group").each(function(d) {
         if (d && d.data && d.data.name === elementName) {
           targetElement = d3.select(this);
           elementData = d.data;
         }
       });
-    } else if (currentView === "graph") {
-      d3.selectAll(".graph-node-group").each(function(d) {
-        if (d && d.name === elementName) {
-          targetElement = d3.select(this);
-          elementData = d;
-        }
-      });
-    } else if (currentView === "hierarchy") {
-      d3.selectAll(".hierarchy-cell").each(function(d) {
-        if (d && d.data && d.data.name === elementName) {
-          targetElement = d3.select(this);
-          elementData = d.data;
-        }
-      });
-    } else if (currentView === "sequence") {
+    } else if (currentView === "sequence-view") {
       d3.selectAll(".sequence-diagram text").each(function(d) {
         const textElement = d3.select(this);
         if (textElement.text() === elementName) {
@@ -6492,7 +5185,7 @@
           elementData = { name: elementName, type: "sequence element" };
         }
       });
-    } else if (currentView === "elk") {
+    } else if (currentView === "general-view") {
       d3.selectAll(".general-node").each(function() {
         const node = d3.select(this);
         const nodeName = node.attr("data-element-name");
@@ -6501,7 +5194,7 @@
           elementData = { name: elementName, type: "element" };
         }
       });
-    } else if (currentView === "ibd") {
+    } else if (currentView === "interconnection-view") {
       d3.selectAll(".ibd-part").each(function() {
         const partG = d3.select(this);
         const partName = partG.attr("data-element-name");
@@ -6621,16 +5314,16 @@
       pillarChips.style.display = activeView === "sysml" ? "flex" : "none";
     }
     if (generalChips) {
-      generalChips.style.display = activeView === "elk" ? "flex" : "none";
+      generalChips.style.display = activeView === "general-view" ? "flex" : "none";
     }
     const layoutDirBtn = document.getElementById("layout-direction-btn");
     if (layoutDirBtn) {
-      const showLayoutBtn = ["state", "usecase"].includes(activeView);
+      const showLayoutBtn = ["state-transition-view"].includes(activeView);
       layoutDirBtn.style.display = showLayoutBtn ? "inline-flex" : "none";
     }
     const categoryHeadersBtn = document.getElementById("category-headers-btn");
     if (categoryHeadersBtn) {
-      categoryHeadersBtn.style.display = activeView === "elk" ? "inline-flex" : "none";
+      categoryHeadersBtn.style.display = activeView === "general-view" ? "inline-flex" : "none";
       categoryHeadersBtn.textContent = showCategoryHeaders ? "\u2630 Grouped" : "\u2637 Flat";
       if (showCategoryHeaders) {
         categoryHeadersBtn.classList.add("active");
@@ -6672,7 +5365,7 @@
     }
     let diagrams = [];
     let labelText = "Package";
-    if (activeView === "elk") {
+    if (activeView === "general-view") {
       let findPackages2 = function(elementList, depth = 0) {
         elementList.forEach((el) => {
           const typeLower = (el.type || "").toLowerCase();
@@ -6695,11 +5388,11 @@
         diagrams.push(pkg);
       });
       labelText = "Package";
-    } else if (activeView === "activity") {
-      const preparedData = prepareDataForView(currentData, "activity");
+    } else if (activeView === "action-flow-view") {
+      const preparedData = prepareDataForView(currentData, "action-flow-view");
       diagrams = preparedData?.diagrams || [];
       labelText = "Action Flow";
-    } else if (activeView === "state") {
+    } else if (activeView === "state-transition-view") {
       let findStateMachinesForSelector2 = function(stateList) {
         stateList.forEach((s) => {
           const typeLower = (s.type || "").toLowerCase();
@@ -6714,7 +5407,7 @@
         });
       };
       var findStateMachinesForSelector = findStateMachinesForSelector2;
-      const preparedData = prepareDataForView(currentData, "state");
+      const preparedData = prepareDataForView(currentData, "state-transition-view");
       const stateElements = preparedData?.states || [];
       const stateMachineMap = /* @__PURE__ */ new Map();
       findStateMachinesForSelector2(stateElements);
@@ -6726,10 +5419,10 @@
         diagrams = [{ name: "All States", element: null }];
       }
       labelText = "State Machine";
-    } else if (activeView === "sequence") {
+    } else if (activeView === "sequence-view") {
       diagrams = currentData?.sequenceDiagrams || [];
       labelText = "Sequence";
-    } else if (activeView === "ibd" || activeView === "usecase" || activeView === "tree" || activeView === "graph" || activeView === "hierarchy") {
+    } else if (activeView === "interconnection-view") {
       let findPackagesForView2 = function(elementList, depth = 0) {
         elementList.forEach((el) => {
           const typeLower = (el.type || "").toLowerCase();
@@ -6808,7 +5501,7 @@
   function updateLayoutDirectionButton(activeView) {
     const layoutBtn = document.getElementById("layout-direction-btn");
     if (layoutBtn) {
-      const effectiveDirection = activeView === "activity" ? activityLayoutDirection : layoutDirection;
+      const effectiveDirection = activeView === "action-flow-view" ? activityLayoutDirection : layoutDirection;
       const icon = LAYOUT_DIRECTION_ICONS[effectiveDirection] || "\u2192";
       const label = LAYOUT_DIRECTION_LABELS[effectiveDirection] || "Left \u2192 Right";
       layoutBtn.textContent = icon + " " + label;
@@ -6816,7 +5509,6 @@
       const nextLabel = LAYOUT_DIRECTION_LABELS[nextMode];
       layoutBtn.title = "Switch to " + nextLabel;
       stateLayoutOrientation = layoutDirection === "auto" ? "force" : layoutDirection;
-      usecaseLayoutOrientation = layoutDirection === "auto" ? "force" : layoutDirection;
     }
   }
   function getNextLayoutDirection(current) {
@@ -6825,7 +5517,7 @@
     return modes[(currentIndex + 1) % modes.length];
   }
   function toggleLayoutDirection() {
-    if (currentView === "activity") {
+    if (currentView === "action-flow-view") {
       activityLayoutDirection = getNextLayoutDirection(activityLayoutDirection);
     } else {
       layoutDirection = getNextLayoutDirection(layoutDirection);
@@ -6850,8 +5542,8 @@
         btn.style.borderColor = "";
       }
     }
-    if (currentView === "elk") {
-      renderVisualization("elk");
+    if (currentView === "general-view") {
+      renderVisualization("general-view");
     }
   }
   window.changeView = changeView;
@@ -6867,7 +5559,7 @@
       window.userHasManuallyZoomed = false;
     }
     let baseData = filteredData || currentData;
-    if (selectedDiagramIndex > 0 && (view === "ibd" || view === "usecase" || view === "tree" || view === "graph" || view === "hierarchy")) {
+    if (selectedDiagramIndex > 0 && view === "interconnection-view") {
       let findPackagesForRender2 = function(elementList, depth = 0) {
         elementList.forEach((el) => {
           const typeLower = (el.type || "").toLowerCase();
@@ -6936,7 +5628,7 @@
           expandedGeneralCategories,
           GENERAL_VIEW_CATEGORIES,
           renderGeneralChips,
-          reRenderElk: () => renderVisualization("elk"),
+          reRenderElk: () => renderVisualization("general-view"),
           showCategoryHeaders,
           selectedDiagramIndex,
           currentData,
@@ -6959,7 +5651,6 @@
           activityLayoutDirection,
           activityDebugLabels,
           stateLayoutOrientation,
-          usecaseLayoutOrientation,
           selectedDiagramIndex,
           postMessage: (msg) => vscode.postMessage(msg),
           onStartInlineEdit: (nodeG, elementName, x, y, wd) => startInlineEdit(nodeG, elementName, x, y, wd),
@@ -7054,7 +5745,7 @@
           });
         }
       });
-      if (view === "elk") {
+      if (view === "general-view") {
         renderElkTreeView(buildElkContext2(), width, height, dataToRender).then(() => {
           if (shouldPreserveZoom) {
             restoreZoom();
@@ -7073,24 +5764,14 @@
           hideLoading();
         });
       } else {
-        if (view === "tree") {
-          renderTreeView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "graph") {
-          renderGraphView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "hierarchy") {
-          renderHierarchyView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "sequence") {
+        if (view === "sequence-view") {
           renderSequenceView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "ibd") {
+        } else if (view === "interconnection-view") {
           renderIbdView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "package") {
-          renderPackageView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "activity") {
+        } else if (view === "action-flow-view") {
           renderActivityView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "state") {
+        } else if (view === "state-transition-view") {
           renderStateView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "usecase") {
-          renderUseCaseView(buildRenderContext2(width, height), dataToRender);
         } else {
           renderPlaceholderView(width, height, "Unknown View", "The selected view is not yet implemented.", dataToRender);
         }
@@ -7284,16 +5965,49 @@
   window.zoomToFit = zoomToFit;
   window.clearSelection = clearSelection;
   window.filterElements = filterElements;
+  function wrapTextToFit(line, maxCharsPerLine) {
+    if (!line || line.length <= maxCharsPerLine) return [line];
+    const words = line.split(/\s+/);
+    const result = [];
+    let current = "";
+    for (const w of words) {
+      const next = current ? current + " " + w : w;
+      if (next.length <= maxCharsPerLine) {
+        current = next;
+      } else {
+        if (current) result.push(current);
+        if (w.length > maxCharsPerLine) {
+          for (let i = 0; i < w.length; i += maxCharsPerLine) {
+            result.push(w.substring(i, i + maxCharsPerLine));
+          }
+          current = "";
+        } else {
+          current = w;
+        }
+      }
+    }
+    if (current) result.push(current);
+    return result;
+  }
   function renderPlaceholderView(width, height, viewName, message, data) {
-    const messageGroup = g.append("g").attr("class", "placeholder-message").attr("transform", "translate(" + width / 2 + "," + (height / 2 - 100) + ")");
-    messageGroup.append("text").attr("x", 0).attr("y", -40).attr("text-anchor", "middle").text("\u{1F6A7}").style("font-size", "64px");
-    messageGroup.append("text").attr("x", 0).attr("y", 20).attr("text-anchor", "middle").text(viewName).style("font-size", "24px").style("fill", "var(--vscode-editor-foreground)").style("font-weight", "bold");
-    const lines = message.split("\\n");
-    lines.forEach((line, i) => {
-      messageGroup.append("text").attr("x", 0).attr("y", 60 + i * 25).attr("text-anchor", "middle").text(line).style("font-size", "14px").style("fill", "var(--vscode-descriptionForeground)");
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const messageGroup = g.append("g").attr("class", "placeholder-message").attr("transform", "translate(" + centerX + "," + centerY + ")");
+    const rawLines = message.split(/\n|\\n/).filter((l) => l.length > 0);
+    const maxCharsPerLine = 38;
+    const wrappedLines = [];
+    rawLines.forEach((l) => wrappedLines.push.apply(wrappedLines, wrapTextToFit(l, maxCharsPerLine)));
+    const hasFooter = data && data.elements && data.elements.length > 0;
+    const cardWidth = 320;
+    const lineHeight = 22;
+    const cardHeight = Math.max(120, 70 + wrappedLines.length * lineHeight + (hasFooter ? 30 : 0));
+    messageGroup.append("rect").attr("x", -cardWidth / 2).attr("y", -cardHeight / 2).attr("width", cardWidth).attr("height", cardHeight).attr("rx", 8).attr("ry", 8).style("fill", "var(--vscode-editor-inactiveSelectionBackground)").style("stroke", "var(--vscode-panel-border)").style("stroke-width", "1px");
+    messageGroup.append("text").attr("x", 0).attr("y", -cardHeight / 2 + 28).attr("text-anchor", "middle").text(viewName).style("font-size", "18px").style("fill", "var(--vscode-editor-foreground)").style("font-weight", "600");
+    wrappedLines.forEach((line, i) => {
+      messageGroup.append("text").attr("x", 0).attr("y", -cardHeight / 2 + 52 + i * lineHeight).attr("text-anchor", "middle").text(line).style("font-size", "13px").style("fill", "var(--vscode-descriptionForeground)");
     });
     if (data && data.elements && data.elements.length > 0) {
-      messageGroup.append("text").attr("x", 0).attr("y", 120 + lines.length * 25).attr("text-anchor", "middle").text("Found " + data.elements.length + " element(s) in model").style("font-size", "12px").style("fill", "var(--vscode-charts-blue)").style("font-style", "italic");
+      messageGroup.append("text").attr("x", 0).attr("y", cardHeight / 2 - 20).attr("text-anchor", "middle").text(data.elements.length + " element(s) in model").style("font-size", "11px").style("fill", "var(--vscode-descriptionForeground)").style("opacity", "0.8");
     }
   }
   var viewDropdownBtn = document.getElementById("view-dropdown-btn");

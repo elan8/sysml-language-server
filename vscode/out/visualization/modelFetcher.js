@@ -28,7 +28,8 @@ function convertDTOElementsToJSON(elements, parentName) {
         const attrs = el.attributes ?? {};
         const rels = el.relationships ?? [];
         const attrType = attrs['partType'] ??
-            attrs['portType'];
+            attrs['portType'] ??
+            attrs['actorType'];
         const typingTargets = attrType
             ? attrType.split(',').map(s => s.trim()).filter(Boolean)
             : rels.filter(r => r.type === 'typing').map(r => r.target);

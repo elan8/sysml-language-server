@@ -8,7 +8,7 @@ export class VisualizationPanel {
     public static currentPanel: VisualizationPanel | undefined;
     private readonly _panel: vscode.WebviewPanel;
     private _disposables: vscode.Disposable[] = [];
-    private _currentView: string = 'elk'; // Store current view state - default to General View
+    private _currentView: string = 'general-view'; // Store current view state - SysML v2 general-view
     private _isNavigating: boolean = false; // Flag to prevent view reset during navigation
     private _fileChangeDebounceTimer: ReturnType<typeof setTimeout> | undefined; // Debounce file change notifications
     private _lastContentHash: string = ''; // Cache content hash to skip unchanged updates
@@ -182,7 +182,7 @@ export class VisualizationPanel {
     public selectPackage(packageName: string): void {
         // Store as pending so the next data message carries it to the webview
         this._pendingPackageName = packageName;
-        this._currentView = 'elk';
+        this._currentView = 'general-view';
         // Also post directly in case the webview already has data
         this._panel.webview.postMessage({
             command: 'selectPackage',

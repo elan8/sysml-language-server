@@ -41,7 +41,9 @@ export function prepareDataForView(data: any, view: string): any {
     const allElements = collectAllElements(elements);
 
     switch (view) {
-        case 'ibd': {
+        case 'general-view':
+            return data;
+        case 'interconnection-view': {
             const ibdParts: any[] = [];
             const seenParts = new Set<string>();
 
@@ -269,7 +271,7 @@ export function prepareDataForView(data: any, view: string): any {
             };
         }
 
-        case 'activity': {
+        case 'action-flow-view': {
             if (data.activityDiagrams && data.activityDiagrams.length > 0) {
                 return {
                     ...data,
@@ -407,7 +409,7 @@ export function prepareDataForView(data: any, view: string): any {
             };
         }
 
-        case 'state': {
+        case 'state-transition-view': {
             const stateElements = allElements.filter((el: any) => el.type && (
                 el.type.includes('state') || el.type.includes('State')
             ));
@@ -420,7 +422,7 @@ export function prepareDataForView(data: any, view: string): any {
             };
         }
 
-        case 'sequence': {
+        case 'sequence-view': {
             if (data.sequenceDiagrams && data.sequenceDiagrams.length > 0) {
                 return { ...data, sequenceDiagrams: data.sequenceDiagrams };
             }
@@ -524,308 +526,6 @@ export function prepareDataForView(data: any, view: string): any {
             }
 
             return { ...data, sequenceDiagrams: [] };
-        }
-
-        case 'usecase': {
-            const allActors = allElements.filter((el: any) => {
-                if (!el.type) return false;
-                const typeLower = el.type.toLowerCase();
-                return typeLower === 'actor def' || typeLower === 'actor definition';
-            });
-
-            const actorsByName = new Map<string, any>();
-            allActors.forEach((actor: any) => {
-                const lowerName = actor.name.toLowerCase();
-                if (!actorsByName.has(lowerName)) actorsByName.set(lowerName, actor);
-            });
-            const actors = Array.from(actorsByName.values());
-
-            const allUseCases = allElements.filter((el: any) => {
-                if (!el.type) return false;
-                const typeLower = el.type.toLowerCase();
-                if (typeLower === 'include use case') return false;
-                return typeLower.includes('use case') || typeLower.includes('usecase') || typeLower.includes('UseCase');
-            });
-
-            const useCasesByName = new Map<string, any>();
-            allUseCases.forEach((uc: any) => {
-                const lowerName = uc.name.toLowerCase();
-                const existing = useCasesByName.get(lowerName);
-                const isDefinition = uc.type.toLowerCase().includes('def');
-                if (!existing) {
-                    useCasesByName.set(lowerName, uc);
-                } else {
-                    const existingIsDefinition = existing.type.toLowerCase().includes('def');
-                    if (isDefinition && !existingIsDefinition) {
-                        useCasesByName.set(lowerName, uc);
-                    }
-                }
-            });
-            const useCases = Array.from(useCasesByName.values());
-
-            const actorTypeToName = new Map<string, string>();
-            actors.forEach((actor: any) => actorTypeToName.set(actor.name, actor.name));
-
-            function getObjectiveText(useCase: any): string {
-                if (!useCase.children) return '';
-                for (const child of useCase.children) {
-                    if (child.type === 'objective') {
-                        if (child.children) {
-                            for (const docChild of child.children) {
-                                if (docChild.type === 'doc' && docChild.name && docChild.name !== 'unnamed') {
-                                    return docChild.name;
-                                }
-                            }
-                        }
-                        if (child.name && child.name !== 'unnamed') return child.name;
-                    }
-                }
-                return '';
-            }
-
-            const useCaseRelationships: any[] = [];
-            useCases.forEach((useCase: any) => {
-                const objectiveText = getObjectiveText(useCase);
-                if (useCase.children) {
-                    useCase.children.forEach((child: any) => {
-                        const childType = child.type ? child.type.toLowerCase() : '';
-                        const isActorUsage = childType === 'actor usage' || childType === 'actor';
-                        if (isActorUsage) {
-                            const actorType = child.typing || child.name;
-                            useCaseRelationships.push({
-                                source: actorType,
-                                target: useCase.name,
-                                type: 'association',
-                                label: objectiveText
-                            });
-                        }
-                        const isIncludeUseCase = childType === 'include use case';
-                        if (isIncludeUseCase) {
-                            const includedUC = child.typing || child.name;
-                            useCaseRelationships.push({
-                                source: useCase.name,
-                                target: includedUC,
-                                type: 'include',
-                                label: ''
-                            });
-                        }
-                    });
-                }
-            });
-
-            if (useCaseRelationships.length === 0 && actors.length > 0 && useCases.length > 0) {
-                const primaryActor = actors[0];
-                useCases.forEach((useCase: any) => {
-                    const objectiveText = getObjectiveText(useCase);
-                    useCaseRelationships.push({
-                        source: primaryActor.name,
-                        target: useCase.name,
-                        type: 'association',
-                        label: objectiveText
-                    });
-                });
-            }
-
-            const useCaseNames = new Set(useCases.map((uc: any) => uc.name));
-            const allActions = allElements.filter((el: any) => {
-                if (!el.type) return false;
-                const typeLower = el.type.toLowerCase();
-                return typeLower === 'action' || typeLower.includes('action');
-            });
-
-            const relatedActions = allElements.filter((el: any) => {
-                if (!el.type) return false;
-                const typeLower = el.type.toLowerCase();
-                if (typeLower !== 'action' && !typeLower.includes('action')) return false;
-                const specialization = el.attributes?.get?.('specialization') ||
-                    (el.attributes instanceof Map ? el.attributes.get('specialization') : el.attributes?.specialization);
-                if (specialization) {
-                    let specName = String(specialization).replace(/^:>\s*/, '').trim();
-                    if ((specName.startsWith("'") && specName.endsWith("'")) ||
-                        (specName.startsWith('"') && specName.endsWith('"'))) {
-                        specName = specName.slice(1, -1);
-                    }
-                    return useCaseNames.has(specName);
-                }
-                return false;
-            });
-
-            function collectChildActions(actions: any[]): any[] {
-                const childActions: any[] = [];
-                const collectRecursive = (elements: any[], parentAction: string) => {
-                    for (const el of elements) {
-                        if (el.type) {
-                            const typeLower = el.type.toLowerCase();
-                            if (typeLower === 'action' || typeLower.includes('action')) {
-                                (el as any).parentAction = parentAction;
-                                childActions.push(el);
-                                if (el.children && el.children.length > 0) {
-                                    collectRecursive(el.children, el.name);
-                                }
-                            }
-                        }
-                    }
-                };
-                for (const action of actions) {
-                    if (action.children && action.children.length > 0) {
-                        collectRecursive(action.children, action.name);
-                    }
-                }
-                return childActions;
-            }
-
-            const nestedActions = collectChildActions(relatedActions);
-
-            relatedActions.forEach((action: any) => {
-                const specialization = action.attributes?.get?.('specialization') ||
-                    (action.attributes instanceof Map ? action.attributes.get('specialization') : action.attributes?.specialization);
-                if (specialization) {
-                    let specName = String(specialization).replace(/^:>\s*/, '').trim();
-                    if ((specName.startsWith("'") && specName.endsWith("'")) ||
-                        (specName.startsWith('"') && specName.endsWith('"'))) {
-                        specName = specName.slice(1, -1);
-                    }
-                    useCaseRelationships.push({
-                        source: specName,
-                        target: action.name,
-                        type: 'realize',
-                        label: ''
-                    });
-                    const directChildren = nestedActions.filter((na: any) => na.parentAction === action.name);
-                    directChildren.forEach((child: any) => {
-                        useCaseRelationships.push({
-                            source: action.name,
-                            target: child.name,
-                            type: 'include',
-                            label: ''
-                        });
-                    });
-                }
-            });
-
-            nestedActions.forEach((action: any) => {
-                const children = nestedActions.filter((na: any) => na.parentAction === action.name);
-                children.forEach((child: any) => {
-                    useCaseRelationships.push({
-                        source: action.name,
-                        target: child.name,
-                        type: 'include',
-                        label: ''
-                    });
-                });
-            });
-
-            relatedActions.push(...nestedActions);
-
-            const actorUsages = allElements.filter((el: any) => {
-                if (!el.type) return false;
-                const typeLower = el.type.toLowerCase();
-                return typeLower === 'actor usage' || typeLower === 'actor';
-            });
-
-            const seenActorNames = new Set(actors.map((a: any) => a.name.toLowerCase()));
-            actorUsages.forEach((usage: any) => {
-                const actorType = usage.typing || usage.name;
-                const actorTypeLower = actorType.toLowerCase();
-                if (!seenActorNames.has(actorTypeLower)) {
-                    actors.push({
-                        name: actorType,
-                        type: 'actor def',
-                        children: [],
-                        attributes: new Map(),
-                        relationships: []
-                    });
-                    seenActorNames.add(actorTypeLower);
-                    actorTypeToName.set(actorType, actorType);
-                }
-            });
-
-            useCaseRelationships.forEach((rel: any) => {
-                const relSourceLower = rel.source.toLowerCase();
-                if (rel.type === 'association' && !seenActorNames.has(relSourceLower)) {
-                    actors.push({
-                        name: rel.source,
-                        type: 'actor def',
-                        children: [],
-                        attributes: new Map(),
-                        relationships: []
-                    });
-                    seenActorNames.add(relSourceLower);
-                    actorTypeToName.set(rel.source, rel.source);
-                }
-            });
-
-            const requirements = allElements.filter((el: any) => {
-                if (!el.type) return false;
-                const typeLower = el.type.toLowerCase();
-                return typeLower.includes('requirement');
-            });
-
-            const requirementRelationships: any[] = [];
-            requirements.forEach((req: any) => {
-                if (!req.children) return;
-                req.children.forEach((child: any) => {
-                    const childType = (child.type || '').toLowerCase().trim();
-                    if (childType === 'stakeholder') {
-                        const stakeholderType = child.typing || child.name;
-                        const stakeholderTypeLower = stakeholderType.toLowerCase();
-                        requirementRelationships.push({
-                            source: req.name,
-                            target: stakeholderType,
-                            type: 'stakeholder',
-                            label: ''
-                        });
-                        if (!seenActorNames.has(stakeholderTypeLower)) {
-                            actors.push({
-                                name: stakeholderType,
-                                type: 'actor def',
-                                children: [],
-                                attributes: new Map(),
-                                relationships: [],
-                                isStakeholder: true
-                            });
-                            seenActorNames.add(stakeholderTypeLower);
-                            actorTypeToName.set(stakeholderType, stakeholderType);
-                        }
-                    }
-                });
-            });
-
-            useCaseRelationships.push(...requirementRelationships);
-
-            return {
-                ...data,
-                actors,
-                useCases,
-                actions: relatedActions,
-                requirements,
-                relationships: useCaseRelationships
-            };
-        }
-
-        case 'package': {
-            const packageNodes = allElements.filter((el: any) => el.type && (
-                el.type.toLowerCase() === 'package' || el.type.toLowerCase().includes('package')
-            ));
-
-            const enrichedPackages = packageNodes.map((pkg: any) => {
-                const childCount = pkg.children ? pkg.children.length : 0;
-                const childPackages = (pkg.children || []).filter((c: any) =>
-                    c.type && c.type.toLowerCase().includes('package')
-                );
-                return {
-                    ...pkg,
-                    id: pkg.id || pkg.name,
-                    elementCount: childCount,
-                    childPackageIds: childPackages.map((c: any) => c.id || c.name)
-                };
-            });
-
-            return {
-                ...data,
-                nodes: enrichedPackages,
-                dependencies: []
-            };
         }
 
         default:

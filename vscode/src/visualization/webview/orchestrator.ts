@@ -28,8 +28,6 @@ import {
     ORIENTATION_LABELS,
     STATE_LAYOUT_LABELS,
     STATE_LAYOUT_ICONS,
-    USECASE_LAYOUT_LABELS,
-    USECASE_LAYOUT_ICONS,
     VIEW_OPTIONS
 } from './constants';
 import {
@@ -47,15 +45,10 @@ import {
     getLibraryKind,
     slugify
 } from './helpers';
-import { renderPackageView as renderPackageViewModule } from './renderers/package';
-import { renderTreeView as renderTreeViewModule } from './renderers/tree';
-import { renderGraphView as renderGraphViewModule } from './renderers/graph';
-import { renderHierarchyView as renderHierarchyViewModule } from './renderers/hierarchy';
 import { renderSequenceView as renderSequenceViewModule } from './renderers/sequence';
 import { renderIbdView as renderIbdViewModule } from './renderers/ibd';
 import { renderActivityView as renderActivityViewModule } from './renderers/activity';
 import { renderStateView as renderStateViewModule } from './renderers/state';
-import { renderUseCaseView as renderUseCaseViewModule } from './renderers/usecase';
 import { renderElkTreeView as renderElkTreeViewModule, renderSysMLView as renderSysMLViewModule } from './elk';
 import { createMinimapController } from './minimap';
 import { createExportHandler } from './export';
@@ -71,7 +64,7 @@ import { createExportHandler } from './export';
     const elkWorkerUrl = (typeof window !== 'undefined' && (window).__VIZ_INIT?.elkWorkerUrl) ?? '';
 
     let currentData = null;
-    let currentView = 'elk';  // General View as default
+    let currentView = 'general-view';  // SysML v2 general-view as default
     let selectedDiagramIndex = 0; // Track currently selected diagram for multi-diagram views
     let selectedDiagramName = null; // Track selected diagram by name to preserve across updates
     let activityDebugLabels = false; // Toggle for showing debug labels on forks/joins in Activity view
@@ -82,9 +75,8 @@ import { createExportHandler } from './export';
     let cy = null;
     let sysmlMode = 'hierarchy';
     let layoutDirection = 'horizontal'; // Universal layout direction: 'horizontal', 'vertical', or 'auto'
-    let activityLayoutDirection = 'vertical'; // Activity diagrams default to top-down
-    let stateLayoutOrientation = 'horizontal'; // Layout direction: 'horizontal', 'vertical', or 'force'
-    let usecaseLayoutOrientation = 'horizontal'; // Use case layout: 'horizontal', 'vertical', or 'force'
+    let activityLayoutDirection = 'vertical'; // Action-flow diagrams default to top-down
+    let stateLayoutOrientation = 'horizontal'; // State-transition layout: 'horizontal', 'vertical', or 'force'
     let filteredData = null; // Active filter state shared across views
     let isRendering = false;
     let showMetadata = false;
@@ -158,8 +150,8 @@ let lastPillarStats = {};
             }
 
             // Re-render current view to apply label changes
-            if (currentView === 'activity') {
-                renderVisualization('activity');
+            if (currentView === 'action-flow-view') {
+                renderVisualization('action-flow-view');
             }
         });
     }
@@ -168,14 +160,14 @@ let lastPillarStats = {};
     function updateActivityDebugButtonVisibility(view) {
         const debugBtn = document.getElementById('activity-debug-btn');
         if (debugBtn) {
-            debugBtn.style.display = (view === 'activity') ? 'inline-block' : 'none';
+            debugBtn.style.display = (view === 'action-flow-view') ? 'inline-block' : 'none';
         }
 
         // Show legend button only for Cytoscape-based views
         const legendBtn = document.getElementById('legend-btn');
         const legendPopup = document.getElementById('legend-popup');
         if (legendBtn) {
-            const cytoscapeViews = ['general', 'elk'];
+            const cytoscapeViews = ['general', 'general-view'];
             legendBtn.style.display = cytoscapeViews.includes(view) ? 'inline-block' : 'none';
             // Hide popup when switching away from cytoscape views
             if (!cytoscapeViews.includes(view) && legendPopup) {
@@ -244,7 +236,7 @@ let lastPillarStats = {};
                 if (message.pendingPackageName) {
                     selectedDiagramName = message.pendingPackageName;
                     selectedDiagramIndex = 0; // Will be corrected by updateDiagramSelector
-                    currentView = 'elk';
+                    currentView = 'general-view';
                 } else if (message.currentView) {
                     // Use the view state from the message if provided, otherwise keep current
                     currentView = message.currentView;
@@ -268,7 +260,7 @@ let lastPillarStats = {};
                 if (message.packageName) {
                     selectedDiagramName = message.packageName;
                     selectedDiagramIndex = 0; // Will be corrected by updateDiagramSelector
-                    changeView('elk');
+                    changeView('general-view');
                 }
                 break;
             case 'export':
@@ -840,7 +832,7 @@ let lastPillarStats = {};
                 }
                 renderGeneralChips(typeStats);
                 // Re-render with filter applied
-                renderVisualization('elk');
+                renderVisualization('general-view');
             });
 
             container.appendChild(chip);
@@ -1817,7 +1809,7 @@ let lastPillarStats = {};
         let elementData = null;
         let sysmlTarget = null;
 
-        if (currentView === 'tree') {
+        if (false) {  // tree view removed
             // In tree view, find by node data
             d3.selectAll('.node-group').each(function(d) {
                 if (d && d.data && d.data.name === elementName) {
@@ -1825,23 +1817,7 @@ let lastPillarStats = {};
                     elementData = d.data;
                 }
             });
-        } else if (currentView === 'graph') {
-            // In graph view, find by node data
-            d3.selectAll('.graph-node-group').each(function(d) {
-                if (d && d.name === elementName) {
-                    targetElement = d3.select(this);
-                    elementData = d;
-                }
-            });
-        } else if (currentView === 'hierarchy') {
-            // In hierarchy view, find by cell data
-            d3.selectAll('.hierarchy-cell').each(function(d) {
-                if (d && d.data && d.data.name === elementName) {
-                    targetElement = d3.select(this);
-                    elementData = d.data;
-                }
-            });
-        } else if (currentView === 'sequence') {
+        } else if (currentView === 'sequence-view') {
             // In sequence view, find by diagram, participant, or message name
             d3.selectAll('.sequence-diagram text').each(function(d) {
                 const textElement = d3.select(this);
@@ -1859,8 +1835,8 @@ let lastPillarStats = {};
                     elementData = { name: elementName, type: 'sequence element' };
                 }
             });
-        } else if (currentView === 'elk') {
-            // In General View (elk), find nodes by data-element-name attribute
+        } else if (currentView === 'general-view') {
+            // In General View (Cytoscape), find nodes by data-element-name attribute
             d3.selectAll('.general-node').each(function() {
                 const node = d3.select(this);
                 const nodeName = node.attr('data-element-name');
@@ -1869,7 +1845,7 @@ let lastPillarStats = {};
                     elementData = { name: elementName, type: 'element' };
                 }
             });
-        } else if (currentView === 'ibd') {
+        } else if (currentView === 'interconnection-view') {
             // In Interconnection View (ibd), find parts by data-element-name attribute
             d3.selectAll('.ibd-part').each(function() {
                 const partG = d3.select(this);
@@ -2048,20 +2024,20 @@ let lastPillarStats = {};
             pillarChips.style.display = activeView === 'sysml' ? 'flex' : 'none';
         }
         if (generalChips) {
-            generalChips.style.display = activeView === 'elk' ? 'flex' : 'none';
+            generalChips.style.display = activeView === 'general-view' ? 'flex' : 'none';
         }
 
         // Show/hide layout direction button for specific views
         const layoutDirBtn = document.getElementById('layout-direction-btn');
         if (layoutDirBtn) {
-            const showLayoutBtn = ['state', 'usecase'].includes(activeView);
+            const showLayoutBtn = ['state-transition-view'].includes(activeView);
             layoutDirBtn.style.display = showLayoutBtn ? 'inline-flex' : 'none';
         }
 
         // Show/hide category headers button for General View only
         const categoryHeadersBtn = document.getElementById('category-headers-btn');
         if (categoryHeadersBtn) {
-            categoryHeadersBtn.style.display = activeView === 'elk' ? 'inline-flex' : 'none';
+            categoryHeadersBtn.style.display = activeView === 'general-view' ? 'inline-flex' : 'none';
             categoryHeadersBtn.textContent = showCategoryHeaders ? '☰ Grouped' : '☷ Flat';
             if (showCategoryHeaders) {
                 categoryHeadersBtn.classList.add('active');
@@ -2115,7 +2091,7 @@ let lastPillarStats = {};
         let diagrams = [];
         let labelText = 'Package';
 
-        if (activeView === 'elk') {
+        if (activeView === 'general-view') {
             // For General View, extract top-level packages
             const elements = currentData?.elements || [];
 
@@ -2148,14 +2124,14 @@ let lastPillarStats = {};
             });
 
             labelText = 'Package';
-        } else if (activeView === 'activity') {
+        } else if (activeView === 'action-flow-view') {
             // Get activity diagrams
-            const preparedData = prepareDataForView(currentData, 'activity');
+            const preparedData = prepareDataForView(currentData, 'action-flow-view');
             diagrams = preparedData?.diagrams || [];
             labelText = 'Action Flow';
-        } else if (activeView === 'state') {
+        } else if (activeView === 'state-transition-view') {
             // For state view, extract state machines from state elements
-            const preparedData = prepareDataForView(currentData, 'state');
+            const preparedData = prepareDataForView(currentData, 'state-transition-view');
             const stateElements = preparedData?.states || [];
 
             // Find state machine containers using recursive search (same logic as renderStateView)
@@ -2197,11 +2173,11 @@ let lastPillarStats = {};
             }
 
             labelText = 'State Machine';
-        } else if (activeView === 'sequence') {
+        } else if (activeView === 'sequence-view') {
             // Get sequence diagrams
             diagrams = currentData?.sequenceDiagrams || [];
             labelText = 'Sequence';
-        } else if (activeView === 'ibd' || activeView === 'usecase' || activeView === 'tree' || activeView === 'graph' || activeView === 'hierarchy') {
+        } else if (activeView === 'interconnection-view') {
             // For these views, extract top-level packages (same as elk/General View)
             const elements = currentData?.elements || [];
 
@@ -2309,7 +2285,7 @@ let lastPillarStats = {};
         const layoutBtn = document.getElementById('layout-direction-btn');
         if (layoutBtn) {
             // Use activity-specific direction for activity view
-            const effectiveDirection = activeView === 'activity' ? activityLayoutDirection : layoutDirection;
+            const effectiveDirection = activeView === 'action-flow-view' ? activityLayoutDirection : layoutDirection;
             const icon = LAYOUT_DIRECTION_ICONS[effectiveDirection] || '→';
             const label = LAYOUT_DIRECTION_LABELS[effectiveDirection] || 'Left → Right';
             layoutBtn.textContent = icon + ' ' + label;
@@ -2321,7 +2297,6 @@ let lastPillarStats = {};
 
             // Sync with view-specific orientations for backwards compatibility
             stateLayoutOrientation = layoutDirection === 'auto' ? 'force' : layoutDirection;
-            usecaseLayoutOrientation = layoutDirection === 'auto' ? 'force' : layoutDirection;
         }
     }
 
@@ -2333,7 +2308,7 @@ let lastPillarStats = {};
 
     function toggleLayoutDirection() {
         // Use activity-specific direction for activity view
-        if (currentView === 'activity') {
+        if (currentView === 'action-flow-view') {
             activityLayoutDirection = getNextLayoutDirection(activityLayoutDirection);
         } else {
             layoutDirection = getNextLayoutDirection(layoutDirection);
@@ -2362,8 +2337,8 @@ let lastPillarStats = {};
             }
         }
         // Re-render the General view
-        if (currentView === 'elk') {
-            renderVisualization('elk');
+        if (currentView === 'general-view') {
+            renderVisualization('general-view');
         }
     }
 
@@ -2386,18 +2361,16 @@ let lastPillarStats = {};
         stateLayoutOrientation = layoutDirection === 'auto' ? 'force' : layoutDirection;
         updateLayoutDirectionButton(currentView);
         // Re-render the state view
-        if (currentView === 'state') {
-            renderVisualization('state');
+        if (currentView === 'state-transition-view') {
+            renderVisualization('state-transition-view');
         }
     }
 
     function toggleUsecaseLayout() {
         layoutDirection = getNextLayoutDirection(layoutDirection);
-        usecaseLayoutOrientation = layoutDirection === 'auto' ? 'force' : layoutDirection;
         updateLayoutDirectionButton(currentView);
         // Re-render the usecase view
-        if (currentView === 'usecase') {
-            renderVisualization('usecase');
+        if (false) {  // usecase view removed
         }
     }
 
@@ -2427,7 +2400,7 @@ let lastPillarStats = {};
         // Apply package filter for views that support it (excluding elk which handles it internally)
         // Index 0 = "All Packages", Index 1+ = specific packages
         if (selectedDiagramIndex > 0 &&
-            (view === 'ibd' || view === 'usecase' || view === 'tree' || view === 'graph' || view === 'hierarchy')) {
+            (view === 'interconnection-view')) {
 
             const elements = baseData?.elements || [];
             const packagesArray = [];
@@ -2532,7 +2505,7 @@ let lastPillarStats = {};
                 expandedGeneralCategories,
                 GENERAL_VIEW_CATEGORIES,
                 renderGeneralChips,
-                reRenderElk: () => renderVisualization('elk'),
+                reRenderElk: () => renderVisualization('general-view'),
                 showCategoryHeaders,
                 selectedDiagramIndex,
                 currentData,
@@ -2630,7 +2603,6 @@ let lastPillarStats = {};
                 activityLayoutDirection,
                 activityDebugLabels,
                 stateLayoutOrientation,
-                usecaseLayoutOrientation,
                 selectedDiagramIndex,
                 postMessage: (msg) => vscode.postMessage(msg),
                 onStartInlineEdit: (nodeG, elementName, x, y, wd) => startInlineEdit(nodeG, elementName, x, y, wd),
@@ -2688,7 +2660,7 @@ let lastPillarStats = {};
         });
 
         // Handle async and sync rendering
-        if (view === 'elk') {
+        if (view === 'general-view') {
             renderElkTreeViewModule(buildElkContext(), width, height, dataToRender).then(() => {
                 // If zoom was previously modified, restore it; otherwise zoom to fit
                 if (shouldPreserveZoom) {
@@ -2709,25 +2681,15 @@ let lastPillarStats = {};
                 hideLoading(); // Hide loading indicator on error
             });
         } else {
-            // Synchronous rendering
-            if (view === 'tree') {
-                renderTreeViewModule(buildRenderContext(width, height), dataToRender);
-            } else if (view === 'graph') {
-                renderGraphViewModule(buildRenderContext(width, height), dataToRender);
-            } else if (view === 'hierarchy') {
-                renderHierarchyViewModule(buildRenderContext(width, height), dataToRender);
-            } else if (view === 'sequence') {
+            // Synchronous rendering (SysML v2 frameless-view types)
+            if (view === 'sequence-view') {
                 renderSequenceViewModule(buildRenderContext(width, height), dataToRender);
-            } else if (view === 'ibd') {
+            } else if (view === 'interconnection-view') {
                 renderIbdViewModule(buildRenderContext(width, height), dataToRender);
-            } else if (view === 'package') {
-                renderPackageViewModule(buildRenderContext(width, height), dataToRender);
-            } else if (view === 'activity') {
+            } else if (view === 'action-flow-view') {
                 renderActivityViewModule(buildRenderContext(width, height), dataToRender);
-            } else if (view === 'state') {
+            } else if (view === 'state-transition-view') {
                 renderStateViewModule(buildRenderContext(width, height), dataToRender);
-            } else if (view === 'usecase') {
-                renderUseCaseViewModule(buildRenderContext(width, height), dataToRender);
             } else {
                 renderPlaceholderView(width, height, 'Unknown View', 'The selected view is not yet implemented.', dataToRender);
             }
@@ -3230,7 +3192,7 @@ let lastPillarStats = {};
 
     function renderRelationships() {
         // Only render relationships in tree view and only if we have valid data
-        if (currentView !== 'tree' || !currentData.relationships || currentData.relationships.length === 0) {
+        if (!currentData.relationships || currentData.relationships.length === 0) {
             return;
         }
 
@@ -3507,52 +3469,92 @@ let lastPillarStats = {};
 
     // Package View Renderer - implemented in renderers/package.ts
 
-    // Placeholder renderer for views under development
+    // Placeholder renderer for views that cannot display a diagram (no data or not supported)
+    function wrapTextToFit(line, maxCharsPerLine) {
+        if (!line || line.length <= maxCharsPerLine) return [line];
+        const words = line.split(/\s+/);
+        const result = [];
+        let current = '';
+        for (const w of words) {
+            const next = current ? current + ' ' + w : w;
+            if (next.length <= maxCharsPerLine) {
+                current = next;
+            } else {
+                if (current) result.push(current);
+                if (w.length > maxCharsPerLine) {
+                    for (let i = 0; i < w.length; i += maxCharsPerLine) {
+                        result.push(w.substring(i, i + maxCharsPerLine));
+                    }
+                    current = '';
+                } else {
+                    current = w;
+                }
+            }
+        }
+        if (current) result.push(current);
+        return result;
+    }
+
     function renderPlaceholderView(width, height, viewName, message, data) {
+        const centerX = width / 2;
+        const centerY = height / 2;
         const messageGroup = g.append('g')
             .attr('class', 'placeholder-message')
-            .attr('transform', 'translate(' + (width / 2) + ',' + (height / 2 - 100) + ')');
+            .attr('transform', 'translate(' + centerX + ',' + centerY + ')');
 
-        // Icon
-        messageGroup.append('text')
-            .attr('x', 0)
-            .attr('y', -40)
-            .attr('text-anchor', 'middle')
-            .text('🚧')
-            .style('font-size', '64px');
+        // Message lines (handle both \n and escaped \\n)
+        const rawLines = message.split(/\n|\\n/).filter(l => l.length > 0);
+        const maxCharsPerLine = 38;
+        const wrappedLines = [];
+        rawLines.forEach(l => wrappedLines.push.apply(wrappedLines, wrapTextToFit(l, maxCharsPerLine)));
+        const hasFooter = data && data.elements && data.elements.length > 0;
+
+        // Subtle card background - height adapts to content
+        const cardWidth = 320;
+        const lineHeight = 22;
+        const cardHeight = Math.max(120, 70 + wrappedLines.length * lineHeight + (hasFooter ? 30 : 0));
+        messageGroup.append('rect')
+            .attr('x', -cardWidth / 2)
+            .attr('y', -cardHeight / 2)
+            .attr('width', cardWidth)
+            .attr('height', cardHeight)
+            .attr('rx', 8)
+            .attr('ry', 8)
+            .style('fill', 'var(--vscode-editor-inactiveSelectionBackground)')
+            .style('stroke', 'var(--vscode-panel-border)')
+            .style('stroke-width', '1px');
 
         // View name
         messageGroup.append('text')
             .attr('x', 0)
-            .attr('y', 20)
+            .attr('y', -cardHeight / 2 + 28)
             .attr('text-anchor', 'middle')
             .text(viewName)
-            .style('font-size', '24px')
+            .style('font-size', '18px')
             .style('fill', 'var(--vscode-editor-foreground)')
-            .style('font-weight', 'bold');
+            .style('font-weight', '600');
 
-        // Message lines
-        const lines = message.split('\\n');
-        lines.forEach((line, i) => {
+        // Render message lines (wrapped to fit card width)
+        wrappedLines.forEach((line, i) => {
             messageGroup.append('text')
                 .attr('x', 0)
-                .attr('y', 60 + (i * 25))
+                .attr('y', -cardHeight / 2 + 52 + (i * lineHeight))
                 .attr('text-anchor', 'middle')
                 .text(line)
-                .style('font-size', '14px')
+                .style('font-size', '13px')
                 .style('fill', 'var(--vscode-descriptionForeground)');
         });
 
-        // Element count if available
+        // Optional footer when model has elements
         if (data && data.elements && data.elements.length > 0) {
             messageGroup.append('text')
                 .attr('x', 0)
-                .attr('y', 120 + (lines.length * 25))
+                .attr('y', cardHeight / 2 - 20)
                 .attr('text-anchor', 'middle')
-                .text('Found ' + data.elements.length + ' element(s) in model')
-                .style('font-size', '12px')
-                .style('fill', 'var(--vscode-charts-blue)')
-                .style('font-style', 'italic');
+                .text(data.elements.length + ' element(s) in model')
+                .style('font-size', '11px')
+                .style('fill', 'var(--vscode-descriptionForeground)')
+                .style('opacity', '0.8');
         }
     }
 
