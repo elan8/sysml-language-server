@@ -1,9 +1,9 @@
 {
   "name": "sysml-language-server",
-  "displayName": "SysML Language Server",
+  "displayName": "SysML v2 Language Support",
   "publisher": "Elan8",
   "description": "LSP client for SysML v2 (KerML) via sysml-language-server",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "repository": {
     "type": "git",
