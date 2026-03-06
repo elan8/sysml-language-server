@@ -47,3 +47,10 @@ export function logError(msg: string, err?: unknown): void {
 export function showChannel(): void {
   getChannel().show();
 }
+
+/**
+ * Get the SysML output channel for appending lines (used by visualization panel).
+ */
+export function getOutputChannel(): vscode.OutputChannel {
+  return getChannel();
+}

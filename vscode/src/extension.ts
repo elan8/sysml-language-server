@@ -316,60 +316,157 @@ export function activate(context: vscode.ExtensionContext): void {
       modelExplorerProvider?.refresh();
     })
   );
+  const visualizationViews = [
+    { id: "elk", label: "◆ General", description: "General view with auto-layout" },
+    { id: "ibd", label: "▦ Interconnection", description: "Interconnection view (parts, ports, connections)" },
+    { id: "activity", label: "▶ Activity", description: "Activity view (actions and flow)" },
+    { id: "state", label: "⌘ State", description: "State view (states and transitions)" },
+    { id: "sequence", label: "⇄ Sequence", description: "Sequence view (interactions)" },
+    { id: "usecase", label: "◎ Case", description: "Use case view (actors and cases)" },
+    { id: "tree", label: "▲ Tree", description: "Tree layout" },
+    { id: "package", label: "▤ Package", description: "Package diagram" },
+    { id: "graph", label: "● Graph", description: "Force-directed graph" },
+    { id: "hierarchy", label: "■ Hierarchy", description: "Hierarchical block diagram" },
+  ];
+
   context.subscriptions.push(
     vscode.commands.registerCommand("sysml.showVisualizer", async () => {
       if (!client) {
         vscode.window.showErrorMessage("SysML language server is not running.");
         return;
       }
-      VisualizationPanel.createOrShow(context.extensionUri, lspModelProvider);
+      let editor = vscode.window.activeTextEditor;
+      if (!editor || (editor.document.languageId !== "sysml" && editor.document.languageId !== "kerml")) {
+        editor = vscode.window.visibleTextEditors.find(
+          (e) => (e.document.languageId === "sysml" || e.document.languageId === "kerml") && !e.document.isClosed
+        );
+      }
+      if (!editor) {
+        vscode.window.showWarningMessage("No SysML/KerML document is open. Open a .sysml or .kerml file first.");
+        return;
+      }
+      VisualizationPanel.createOrShow(context.extensionUri, editor.document, undefined, lspModelProvider);
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "sysml.visualizeFolder",
-      async (folderUri: vscode.Uri) => {
+      async (uri: vscode.Uri, selectedUris?: vscode.Uri[]) => {
         if (!client) {
           vscode.window.showErrorMessage("SysML language server is not running.");
           return;
         }
-        if (!folderUri || folderUri.scheme !== "file") {
-          vscode.window.showWarningMessage(
-            "Please select a folder to visualize."
+        try {
+          let targetUris: vscode.Uri[] = [];
+          if (selectedUris && selectedUris.length > 0) {
+            targetUris = selectedUris;
+          } else if (uri) {
+            targetUris = [uri];
+          } else {
+            const editor = vscode.window.activeTextEditor;
+            if (editor) targetUris = [editor.document.uri];
+          }
+          if (targetUris.length === 0) {
+            vscode.window.showErrorMessage("No folder or file selected for SysML visualization");
+            return;
+          }
+
+          const allSysmlFiles: vscode.Uri[] = [];
+          const folderNames: string[] = [];
+          for (const targetUri of targetUris) {
+            const stat = await vscode.workspace.fs.stat(targetUri);
+            if (stat.type === vscode.FileType.Directory) {
+              const folderName = targetUri.fsPath.split(/[/\\]/).pop() ?? "";
+              folderNames.push(folderName);
+              const sysml = await vscode.workspace.findFiles(
+                new vscode.RelativePattern(targetUri, "**/*.sysml"),
+                "**/node_modules/**"
+              );
+              const kerml = await vscode.workspace.findFiles(
+                new vscode.RelativePattern(targetUri, "**/*.kerml"),
+                "**/node_modules/**"
+              );
+              allSysmlFiles.push(...sysml, ...kerml);
+            } else if (targetUri.fsPath.endsWith(".sysml") || targetUri.fsPath.endsWith(".kerml")) {
+              allSysmlFiles.push(targetUri);
+            }
+          }
+
+          const uniqueFiles = [...new Map(allSysmlFiles.map((f) => [f.fsPath, f])).values()];
+          if (uniqueFiles.length === 0) {
+            vscode.window.showInformationMessage("No SysML/KerML files found in the selected folders/files");
+            return;
+          }
+
+          const openDocs: vscode.TextDocument[] = [];
+          let combinedContent = "";
+          const fileNames: string[] = [];
+          for (const fileUri of uniqueFiles) {
+            try {
+              const doc = await vscode.workspace.openTextDocument(fileUri);
+              openDocs.push(doc);
+              const fileName = fileUri.fsPath.split(/[/\\]/).pop() ?? "";
+              fileNames.push(fileName);
+              combinedContent += `// === ${fileName} ===\n`;
+              combinedContent += doc.getText();
+              combinedContent += "\n\n";
+            } catch {
+              log("Failed to open SysML file", fileUri.fsPath);
+            }
+          }
+
+          if (openDocs.length === 0) {
+            vscode.window.showErrorMessage("Failed to read any SysML files");
+            return;
+          }
+
+          const firstDoc = openDocs[0];
+          const combinedDocumentProxy = {
+            getText: () => combinedContent,
+            uri: firstDoc.uri,
+            languageId: "sysml" as const,
+            version: firstDoc.version,
+            lineCount: combinedContent.split("\n").length,
+            lineAt: (line: number) =>
+              firstDoc.lineAt(Math.min(line, firstDoc.lineCount - 1)),
+            offsetAt: (position: vscode.Position) => firstDoc.offsetAt(position),
+            positionAt: (offset: number) => firstDoc.positionAt(offset),
+            getWordRangeAtPosition: (position: vscode.Position) =>
+              firstDoc.getWordRangeAtPosition(position),
+            validateRange: (range: vscode.Range) => firstDoc.validateRange(range),
+            validatePosition: (position: vscode.Position) =>
+              firstDoc.validatePosition(position),
+            fileName: firstDoc.fileName,
+            isUntitled: false,
+            isDirty: false,
+            isClosed: false,
+            eol: firstDoc.eol,
+            save: () => Promise.resolve(false),
+          } as unknown as vscode.TextDocument;
+
+          let title: string;
+          if (folderNames.length > 0) {
+            title = `SysML Visualization - ${fileNames.length} files from ${folderNames.length} folder(s)`;
+          } else {
+            title = `SysML Visualization - ${fileNames.length} file(s)`;
+          }
+
+          VisualizationPanel.createOrShow(
+            context.extensionUri,
+            combinedDocumentProxy,
+            title,
+            lspModelProvider,
+            uniqueFiles
           );
-          return;
+
+          if (modelExplorerProvider) {
+            await modelExplorerProvider.loadWorkspaceModel(uniqueFiles);
+          }
+        } catch (error) {
+          logError("sysml.visualizeFolder failed", error);
+          vscode.window.showErrorMessage(`Failed to visualize SysML: ${error}`);
         }
-        const folderStat = await vscode.workspace.fs.stat(folderUri);
-        if (folderStat.type !== vscode.FileType.Directory) {
-          vscode.window.showWarningMessage(
-            "Please select a folder (not a file) to visualize."
-          );
-          return;
-        }
-        const sysml = await vscode.workspace.findFiles(
-          new vscode.RelativePattern(folderUri, "**/*.sysml"),
-          null,
-          500
-        );
-        const kerml = await vscode.workspace.findFiles(
-          new vscode.RelativePattern(folderUri, "**/*.kerml"),
-          null,
-          500
-        );
-        const fileUris = [...sysml, ...kerml];
-        if (fileUris.length === 0) {
-          vscode.window.showInformationMessage(
-            `No .sysml or .kerml files found in ${folderUri.fsPath}`
-          );
-          return;
-        }
-        VisualizationPanel.createOrShow(
-          context.extensionUri,
-          lspModelProvider,
-          undefined,
-          fileUris
-        );
       }
     )
   );
@@ -417,13 +514,157 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           return;
         }
+        const packageName = item.element.name;
+        const fileUri = item.elementUri;
+
+        const isWorkspace = modelExplorerProvider?.isWorkspaceMode() ?? false;
+        const workspaceUris = isWorkspace ? modelExplorerProvider?.getWorkspaceFileUris() : undefined;
+
+        const document = await vscode.workspace.openTextDocument(fileUri);
+
+        if (isWorkspace && workspaceUris && workspaceUris.length > 1) {
+          const openDocs: vscode.TextDocument[] = [];
+          let combinedContent = "";
+          const fileNames: string[] = [];
+          for (const uri of workspaceUris) {
+            try {
+              const doc = await vscode.workspace.openTextDocument(uri);
+              openDocs.push(doc);
+              const fileName = uri.fsPath.split(/[/\\]/).pop() ?? "";
+              fileNames.push(fileName);
+              combinedContent += `// === ${fileName} ===\n`;
+              combinedContent += doc.getText();
+              combinedContent += "\n\n";
+            } catch {
+              /* skip */
+            }
+          }
+          if (openDocs.length > 0) {
+            const firstDoc = openDocs[0];
+            const combinedDocumentProxy = {
+              getText: () => combinedContent,
+              uri: firstDoc.uri,
+              languageId: "sysml" as const,
+              version: firstDoc.version,
+              lineCount: combinedContent.split("\n").length,
+              lineAt: (line: number) =>
+                firstDoc.lineAt(Math.min(line, firstDoc.lineCount - 1)),
+              offsetAt: (position: vscode.Position) => firstDoc.offsetAt(position),
+              positionAt: (offset: number) => firstDoc.positionAt(offset),
+              getWordRangeAtPosition: (position: vscode.Position) =>
+                firstDoc.getWordRangeAtPosition(position),
+              validateRange: (range: vscode.Range) => firstDoc.validateRange(range),
+              validatePosition: (position: vscode.Position) =>
+                firstDoc.validatePosition(position),
+              fileName: firstDoc.fileName,
+              isUntitled: false,
+              isDirty: false,
+              isClosed: false,
+              eol: firstDoc.eol,
+              save: () => Promise.resolve(false),
+            } as unknown as vscode.TextDocument;
+            const title = `SysML Visualization - ${fileNames.length} file(s)`;
+            VisualizationPanel.createOrShow(
+              context.extensionUri,
+              combinedDocumentProxy,
+              title,
+              lspModelProvider,
+              workspaceUris
+            );
+            setTimeout(() => {
+              VisualizationPanel.currentPanel?.selectPackage(packageName);
+            }, 500);
+            return;
+          }
+        }
+
         VisualizationPanel.createOrShow(
           context.extensionUri,
-          lspModelProvider,
-          item.element.name
+          document,
+          undefined,
+          lspModelProvider
         );
+        setTimeout(() => {
+          VisualizationPanel.currentPanel?.selectPackage(packageName);
+        }, 500);
       }
     )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sysml.changeVisualizerView", async (viewId?: string) => {
+      if (!VisualizationPanel.currentPanel) {
+        vscode.window.showWarningMessage("No visualization panel is currently open");
+        return;
+      }
+      let selectedViewId = viewId;
+      if (!selectedViewId) {
+        const selected = await vscode.window.showQuickPick(
+          visualizationViews.map((v) => ({
+            label: v.label,
+            description: v.description,
+            viewId: v.id,
+          })),
+          { placeHolder: "Select visualization view" }
+        );
+        selectedViewId = selected?.viewId;
+      }
+      if (selectedViewId) {
+        VisualizationPanel.currentPanel.changeView(selectedViewId);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sysml.visualizeFolderWithView", async (uri: vscode.Uri, selectedUris?: vscode.Uri[]) => {
+      const selected = await vscode.window.showQuickPick(
+        visualizationViews.map((v) => ({
+          label: v.label,
+          description: v.description,
+          viewId: v.id,
+        })),
+        { placeHolder: "Select visualization view" }
+      );
+      if (selected) {
+        await vscode.commands.executeCommand("sysml.visualizeFolder", uri, selectedUris);
+        if (VisualizationPanel.currentPanel) {
+          await vscode.commands.executeCommand("sysml.changeVisualizerView", selected.viewId);
+        }
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sysml.exportVisualization", async () => {
+      if (!VisualizationPanel.currentPanel) {
+        vscode.window.showWarningMessage("No visualization panel is currently open");
+        return;
+      }
+      const config = vscode.workspace.getConfiguration("sysml-language-server");
+      const defaultScale = config.get<number>("visualization.exportScale", 2);
+      const selected = await vscode.window.showQuickPick(
+        [
+          { label: "PNG", format: "png" },
+          { label: "SVG", format: "svg" },
+        ],
+        { placeHolder: "Select export format" }
+      );
+      if (selected) {
+        VisualizationPanel.currentPanel.exportVisualization(selected.format, defaultScale);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sysml.refreshVisualization", async () => {
+      if (!VisualizationPanel.currentPanel) {
+        vscode.window.showWarningMessage("No visualization panel is currently open");
+        return;
+      }
+      const doc = VisualizationPanel.currentPanel.getDocument();
+      VisualizationPanel.currentPanel.dispose();
+      VisualizationPanel.createOrShow(context.extensionUri, doc, undefined, lspModelProvider);
+    })
   );
 
   // Status bar + context for contributed view
@@ -452,6 +693,27 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(
     vscode.languages.onDidChangeDiagnostics(() => updateStatusBar(context))
+  );
+
+  // Notify visualizer when SysML files change so it can refresh
+  const sysmlFileWatcher = vscode.workspace.createFileSystemWatcher("**/*.{sysml,kerml}");
+  sysmlFileWatcher.onDidChange((uri) => {
+    VisualizationPanel.currentPanel?.notifyFileChanged(uri);
+  });
+  sysmlFileWatcher.onDidCreate((uri) => {
+    VisualizationPanel.currentPanel?.notifyFileChanged(uri);
+  });
+  sysmlFileWatcher.onDidDelete((uri) => {
+    VisualizationPanel.currentPanel?.notifyFileChanged(uri);
+  });
+  context.subscriptions.push(sysmlFileWatcher);
+
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (doc.languageId === "sysml" || doc.languageId === "kerml") {
+        VisualizationPanel.currentPanel?.notifyFileChanged(doc.uri);
+      }
+    })
   );
 
   // Workspace mode: when .code-workspace is open, load all SysML/KerML files after delay

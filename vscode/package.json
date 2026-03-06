@@ -42,7 +42,11 @@
     "onCommand:sysml.switchToSemanticModel",
     "onCommand:sysml.toggleWorkspaceViewMode",
     "onCommand:sysml.visualizeFolder",
-    "onCommand:sysml.showOutput"
+    "onCommand:sysml.showOutput",
+    "onCommand:sysml.changeVisualizerView",
+    "onCommand:sysml.exportVisualization",
+    "onCommand:sysml.refreshVisualization",
+    "onCommand:sysml.visualizeFolderWithView"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -158,6 +162,26 @@
         "command": "sysml.showOutput",
         "title": "Show SysML Output (Logs)",
         "category": "SysML"
+      },
+      {
+        "command": "sysml.changeVisualizerView",
+        "title": "Change Visualizer View",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.exportVisualization",
+        "title": "Export Visualization (PNG/SVG)",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.refreshVisualization",
+        "title": "Refresh Visualization",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.visualizeFolderWithView",
+        "title": "Visualize Folder with View...",
+        "category": "SysML"
       }
     ],
     "menus": {
@@ -189,6 +213,16 @@
         {
           "command": "sysml.visualizeFolder",
           "when": "explorerResourceIsFolder",
+          "group": "navigation"
+        },
+        {
+          "command": "sysml.visualizeFolderWithView",
+          "when": "explorerResourceIsFolder",
+          "group": "navigation"
+        },
+        {
+          "command": "sysml.visualizeFolder",
+          "when": "resourceExtname == .sysml || resourceExtname == .kerml",
           "group": "navigation"
         }
       ],
@@ -224,6 +258,15 @@
         },
         {
           "command": "sysml.showOutput"
+        },
+        {
+          "command": "sysml.changeVisualizerView"
+        },
+        {
+          "command": "sysml.exportVisualization"
+        },
+        {
+          "command": "sysml.refreshVisualization"
         }
       ]
     },
@@ -265,12 +308,26 @@
           "type": "boolean",
           "default": false,
           "description": "Enable debug logging to the SysML output channel (View → Output → SysML)."
+        },
+        "sysml-language-server.visualization.defaultView": {
+          "type": "string",
+          "enum": ["elk", "tree", "package", "ibd", "graph", "activity", "state", "sequence", "usecase", "hierarchy"],
+          "default": "elk",
+          "description": "Default view when opening the SysML Model Visualizer."
+        },
+        "sysml-language-server.visualization.exportScale": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Scale factor for PNG/SVG export of the visualization."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run build:webview-assets && npm run compile",
+    "build:webview-assets": "node scripts/copy-webview-assets.js",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "vscode-test",
@@ -287,6 +344,8 @@
   },
   "dependencies": {
     "cytoscape": "^3.28.1",
+    "cytoscape-elk": "^2.3.0",
+    "d3": "^7.9.0",
     "cytoscape-svg": "^0.4.0",
     "elkjs": "^0.8.2",
     "vscode-languageclient": "^9.0.0",

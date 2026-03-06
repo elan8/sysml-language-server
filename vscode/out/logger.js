@@ -26,6 +26,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.log = log;
 exports.logError = logError;
 exports.showChannel = showChannel;
+exports.getOutputChannel = getOutputChannel;
 const vscode = __importStar(require("vscode"));
 let outputChannel;
 function getChannel() {
@@ -68,5 +69,11 @@ function logError(msg, err) {
  */
 function showChannel() {
     getChannel().show();
+}
+/**
+ * Get the SysML output channel for appending lines (used by visualization panel).
+ */
+function getOutputChannel() {
+    return getChannel();
 }
 //# sourceMappingURL=logger.js.map
