@@ -9,26 +9,28 @@ use tower_lsp::lsp_types::{
     TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
 };
 
-/// Converts (line, character) to byte offset in `text`. LSP uses 0-based line and character.
+/// Converts (line, character) to byte offset in `text`. LSP uses 0-based line and character
+/// (character is Unicode scalar index; for multi-byte UTF-8, this differs from byte offset).
 #[allow(dead_code)] // used by tests and for future LSP features (e.g. range resolution)
 pub fn position_to_byte_offset(text: &str, line: u32, character: u32) -> Option<usize> {
-    let lines: Vec<&str> = text.split('\n').collect();
-    let line_usize = line as usize;
-    if line_usize >= lines.len() {
+    let line_str = text.lines().nth(line as usize)?;
+    let char_off = character as usize;
+    let n_chars = line_str.chars().count();
+    if char_off > n_chars {
         return None;
     }
-    let mut offset = 0usize;
-    for (i, ln) in lines.iter().enumerate() {
-        if i == line_usize {
-            let char_off = character as usize;
-            if char_off > ln.len() {
-                return None;
-            }
-            return Some(offset + char_off);
-        }
-        offset += ln.len() + 1; // +1 for newline
-    }
-    None
+    // Use char_indices to convert character index to byte offset (handles multi-byte UTF-8)
+    let byte_in_line = line_str
+        .char_indices()
+        .nth(char_off)
+        .map(|(o, _)| o)
+        .unwrap_or(line_str.len());
+    let line_start = text
+        .lines()
+        .take(line as usize)
+        .map(|l| l.len() + 1)
+        .sum::<usize>();
+    Some(line_start + byte_in_line)
 }
 
 /// Returns the LSP (line, start_char, end_char) and the word at the given position.
@@ -75,21 +77,31 @@ pub fn line_prefix_at_position(text: &str, line: u32, character: u32) -> String 
 }
 
 /// Returns the last token (identifier or keyword prefix) before the cursor for completion.
+/// Iterates by character to handle multi-byte UTF-8 correctly.
 pub fn completion_prefix(line_prefix: &str) -> &str {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == ':' || c == '>'
+    }
     let trimmed = line_prefix.trim_end();
-    let end = trimmed.len();
-    if end == 0 {
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.is_empty() {
         return trimmed;
     }
-    let mut start = end;
-    while start > 0 {
-        let c = trimmed[start - 1..].chars().next().unwrap();
-        if !c.is_alphanumeric() && c != '_' && c != ':' && c != '>' {
+    let mut n_trailing = 0;
+    for c in chars.iter().rev() {
+        if is_ident_char(*c) {
+            n_trailing += 1;
+        } else {
             break;
         }
-        start -= 1;
     }
-    trimmed.get(start..end).unwrap_or("")
+    let start_char_idx = chars.len().saturating_sub(n_trailing);
+    let byte_start = trimmed
+        .char_indices()
+        .nth(start_char_idx)
+        .map(|(o, _)| o)
+        .unwrap_or(trimmed.len());
+    trimmed.get(byte_start..).unwrap_or("")
 }
 
 /// SysML v2 / KerML reserved keywords (BNF 8.2.2.1.2 RESERVED_KEYWORD, plus grammar extensions:
@@ -1632,6 +1644,19 @@ mod tests {
     }
 
     #[test]
+    fn test_position_to_byte_offset_multibyte_utf8() {
+        // "café" = c,a,f,é = 4 chars, 5 bytes (é is 2 bytes)
+        let text = "café\n";
+        assert_eq!(position_to_byte_offset(text, 0, 0), Some(0));
+        assert_eq!(position_to_byte_offset(text, 0, 3), Some(3));
+        assert_eq!(position_to_byte_offset(text, 0, 4), Some(5));
+        assert_eq!(position_to_byte_offset(text, 0, 5), None);
+        // Japanese: 日本 = 2 chars, 6 bytes
+        let text2 = "日本\n";
+        assert_eq!(position_to_byte_offset(text2, 0, 2), Some(6));
+    }
+
+    #[test]
     fn test_word_at_position() {
         let text = "  part foo : Bar  ";
         let (line, start, end, word) = word_at_position(text, 0, 5).unwrap();
@@ -1644,6 +1669,16 @@ mod tests {
         assert_eq!(w, "foo");
         let (_, _, _, w) = word_at_position(text, 0, 13).unwrap();
         assert_eq!(w, "Bar");
+    }
+
+    #[test]
+    fn test_word_at_position_non_ascii() {
+        let text = "part café : String";
+        let (_, _, _, w) = word_at_position(text, 0, 6).unwrap();
+        assert_eq!(w, "café");
+        let text2 = "part 部品 : Type";
+        let (_, _, _, w2) = word_at_position(text2, 0, 6).unwrap();
+        assert_eq!(w2, "部品");
     }
 
     #[test]
@@ -1668,6 +1703,12 @@ mod tests {
         assert_eq!(completion_prefix("  part "), "part");
         assert_eq!(completion_prefix("  part f"), "f");
         assert_eq!(completion_prefix("  pac"), "pac");
+    }
+
+    #[test]
+    fn test_completion_prefix_multibyte() {
+        assert_eq!(completion_prefix("  café "), "café");
+        assert_eq!(completion_prefix("part 部品 "), "部品");
     }
 
     #[test]

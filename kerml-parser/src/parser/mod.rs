@@ -35,10 +35,32 @@ pub(super) trait MemberParser {
 #[grammar = "grammar.pest"]
 pub struct SysMLParser;
 
+/// Maps low-level Pest error messages to friendlier user-facing text.
+/// Original message is appended for debugging.
+fn improve_pest_error_message(raw: &str) -> String {
+    let friendly = if raw.contains("expected metadata_annotation") {
+        "unexpected token; perhaps missing an attribute or expression"
+    } else if raw.contains("expected WHITESPACE") {
+        "unexpected token; possibly missing space"
+    } else if raw.contains("expected EOI") {
+        "unexpected token at end of input"
+    } else if raw.contains(r#"expected ";"#) || raw.contains("expected ;") {
+        "unexpected token; perhaps missing semicolon"
+    } else if raw.contains(r#"expected "}"#) || raw.contains("expected }") {
+        "unexpected token; perhaps missing closing brace"
+    } else if raw.contains(r#"expected "{"#) || raw.contains("expected {") {
+        "unexpected token; perhaps missing opening brace"
+    } else {
+        return raw.to_string();
+    };
+    format!("{} (raw: {})", friendly, raw)
+}
+
 /// Parses SysML v2 source text into a [SysMLDocument](crate::ast::SysMLDocument) AST.
 pub fn parse_sysml(input: &str) -> Result<SysMLDocument> {
     let mut pairs = SysMLParser::parse(Rule::document, input).map_err(|e| {
-        let msg = format!("{}", e);
+        let raw_msg = format!("{}", e);
+        let msg = improve_pest_error_message(&raw_msg);
         let pos = match &e.line_col {
             LineColLocation::Pos((line, col)) | LineColLocation::Span((line, col), _) => {
                 Some(((line.saturating_sub(1)) as u32, (col.saturating_sub(1)) as u32))
@@ -100,20 +122,29 @@ pub fn parse_sysml_collect_errors(input: &str) -> (Result<SysMLDocument>, Vec<Pa
                     }
                     last_pos = Some((line, col));
                     errors.push(current_error.take().unwrap());
-                    if let Some((_line_start, line_end)) = span::line_byte_range(&current, line) {
-                        if let Some(off) = span::line_char_to_byte_offset(&current, line, col) {
-                            let mask_start = off.min(line_end);
-                            if mask_start < line_end {
-                                let len = line_end - mask_start;
-                                let replacement = " ".repeat(len);
-                                current = format!(
-                                    "{}{}{}",
-                                    &current[..mask_start],
-                                    replacement,
-                                    &current[line_end..]
-                                );
-                                continue;
-                            }
+                    if let Some((line_start, line_end)) = span::line_byte_range(&current, line) {
+                        let line_str = &current[line_start..line_end];
+                        // Compute mask region in character boundaries to avoid splitting multi-byte UTF-8.
+                        // Mask from character col to end of line.
+                        let mask_start_byte = line_str
+                            .char_indices()
+                            .nth(col as usize)
+                            .map(|(o, _)| line_start + o)
+                            .unwrap_or(line_end);
+                        // Ensure we only slice at valid UTF-8 boundaries
+                        if mask_start_byte < line_end
+                            && current.is_char_boundary(mask_start_byte)
+                            && current.is_char_boundary(line_end)
+                        {
+                            let len = line_end - mask_start_byte;
+                            let replacement = " ".repeat(len);
+                            current = format!(
+                                "{}{}{}",
+                                &current[..mask_start_byte],
+                                replacement,
+                                &current[line_end..]
+                            );
+                            continue;
                         }
                     }
                 }
@@ -359,6 +390,17 @@ part user : Actor;
         let port = port::parse_port_usage(pair.into_inner(), input, span, &parser).expect("parse_port_usage");
         assert_eq!(port.name.as_deref(), Some("power"));
         assert!(port.members.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sysml_collect_errors_multibyte_utf8() {
+        // Invalid SysML with multi-byte character in error region: "déf" contains é (2 bytes).
+        // Missing semicolon after X triggers parse error.
+        let input = "package P { part déf X }";
+        let (result, errors) = parse_sysml_collect_errors(input);
+        assert!(result.is_err());
+        assert!(!errors.is_empty(), "should collect at least one parse error");
+        // Should not panic; masking must handle UTF-8 character boundaries
     }
 }
 

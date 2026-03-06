@@ -1,6 +1,7 @@
 {
   "name": "sysml-language-server",
   "displayName": "SysML Language Server",
+  "publisher": "Elan8",
   "description": "LSP client for SysML v2 (KerML) via sysml-language-server",
   "version": "0.2.0",
   "license": "MIT",
