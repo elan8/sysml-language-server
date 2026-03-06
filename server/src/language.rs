@@ -409,6 +409,449 @@ pub fn find_reference_ranges(source: &str, name: &str) -> Vec<Range> {
     ranges
 }
 
+/// Relationship for sysml/model (connection, flow, specializes, bind, allocate).
+#[derive(Debug, Clone)]
+pub struct ModelRelationship {
+    pub rel_type: String,
+    pub source: String,
+    pub target: String,
+    pub name: Option<String>,
+}
+
+/// Model element with attributes for sysml/model response (richer than DocumentSymbol).
+#[derive(Debug, Clone)]
+pub struct ModelElement {
+    pub element_type: String,
+    pub name: String,
+    pub range: Range,
+    pub children: Vec<ModelElement>,
+    pub attributes: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Collects relationships (connection, bind, allocate, specializes) from the AST.
+pub fn collect_relationships(doc: &SysMLDocument) -> Vec<ModelRelationship> {
+    let mut out = Vec::new();
+    for pkg in &doc.packages {
+        relationships_from_package(pkg, None, &mut out);
+    }
+    out
+}
+
+fn relationships_from_package(
+    pkg: &kerml_parser::ast::Package,
+    container_prefix: Option<&str>,
+    out: &mut Vec<ModelRelationship>,
+) {
+    let prefix = if pkg.name.is_empty() {
+        container_prefix.map(String::from)
+    } else {
+        let name = pkg.name.as_str();
+        Some(match &container_prefix {
+            Some(p) => format!("{}::{}", p, name),
+            None => name.to_string(),
+        })
+    };
+    for m in &pkg.members {
+        relationships_from_member(m, prefix.as_deref(), out);
+    }
+}
+
+fn relationships_from_member(
+    member: &Member,
+    container_prefix: Option<&str>,
+    out: &mut Vec<ModelRelationship>,
+) {
+    use kerml_parser::ast::Member as M;
+    match member {
+        M::ConnectionUsage(c) => {
+            let name = c.name.as_deref().map(String::from);
+            let (src, tgt) = if let Some(p) = container_prefix {
+                (
+                    format!("{}::{}", p, c.source),
+                    format!("{}::{}", p, c.target),
+                )
+            } else {
+                (c.source.clone(), c.target.clone())
+            };
+            out.push(ModelRelationship {
+                rel_type: "connection".to_string(),
+                source: src,
+                target: tgt,
+                name,
+            });
+        }
+        M::BindStatement(b) => {
+            out.push(ModelRelationship {
+                rel_type: "bind".to_string(),
+                source: b.logical.clone(),
+                target: b.physical.clone(),
+                name: None,
+            });
+        }
+        M::AllocateStatement(a) => {
+            out.push(ModelRelationship {
+                rel_type: "allocate".to_string(),
+                source: a.source.clone(),
+                target: a.target.clone(),
+                name: None,
+            });
+        }
+        M::PartDef(p) => {
+            if let Some(ref s) = p.specializes {
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, p.name),
+                    None => p.name.clone(),
+                };
+                out.push(ModelRelationship {
+                    rel_type: "specializes".to_string(),
+                    source: src,
+                    target: s.clone(),
+                    name: None,
+                });
+            }
+            relationships_from_package_contents(&p.members, container_prefix, &p.name, out);
+        }
+        M::PartUsage(p) => {
+            if let Some(ref s) = p.specializes {
+                let name = p.name.as_deref().unwrap_or("(anonymous)");
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, name),
+                    None => name.to_string(),
+                };
+                out.push(ModelRelationship {
+                    rel_type: "specializes".to_string(),
+                    source: src,
+                    target: s.clone(),
+                    name: None,
+                });
+            }
+            if let Some(ref t) = p.type_ref {
+                let name = p.name.as_deref().unwrap_or("(anonymous)");
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, name),
+                    None => name.to_string(),
+                };
+                out.push(ModelRelationship {
+                    rel_type: "instanceOf".to_string(),
+                    source: src,
+                    target: t.clone(),
+                    name: None,
+                });
+            }
+            relationships_from_package_contents(&p.members, container_prefix, p.name.as_deref().unwrap_or(""), out);
+        }
+        M::PortDef(p) => {
+            if let Some(ref s) = p.specializes {
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, p.name),
+                    None => p.name.clone(),
+                };
+                out.push(ModelRelationship {
+                    rel_type: "specializes".to_string(),
+                    source: src,
+                    target: s.clone(),
+                    name: None,
+                });
+            }
+            relationships_from_package_contents(&p.members, container_prefix, &p.name, out);
+        }
+        M::PortUsage(p) => {
+            if let Some(ref t) = p.type_ref {
+                let name = p.name.as_deref().unwrap_or("(anonymous)");
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, name),
+                    None => name.to_string(),
+                };
+                out.push(ModelRelationship {
+                    rel_type: "instanceOf".to_string(),
+                    source: src,
+                    target: t.clone(),
+                    name: None,
+                });
+            }
+            relationships_from_package_contents(&p.members, container_prefix, p.name.as_deref().unwrap_or(""), out);
+        }
+        M::Package(p) => relationships_from_package(p, container_prefix, out),
+        M::AttributeDef(a) => relationships_from_package_contents(&a.members, container_prefix, &a.name, out),
+        M::AttributeUsage(a) => relationships_from_package_contents(&a.members, container_prefix, &a.name, out),
+        M::InterfaceDef(i) => relationships_from_package_contents(&i.members, container_prefix, &i.name, out),
+        M::ItemDef(i) => relationships_from_package_contents(&i.members, container_prefix, &i.name, out),
+        M::RequirementDef(r) => relationships_from_package_contents(&r.members, container_prefix, &r.name, out),
+        M::RequirementUsage(r) => relationships_from_package_contents(&r.members, container_prefix, &r.name, out),
+        _ => {}
+    }
+}
+
+fn relationships_from_package_contents(
+    members: &[Member],
+    container_prefix: Option<&str>,
+    part_name: &str,
+    out: &mut Vec<ModelRelationship>,
+) {
+    let prefix = match container_prefix {
+        Some(p) if !part_name.is_empty() => Some(format!("{}::{}", p, part_name)),
+        Some(p) => Some(p.to_string()),
+        None if !part_name.is_empty() => Some(part_name.to_string()),
+        None => None,
+    };
+    for m in members {
+        relationships_from_member(m, prefix.as_deref(), out);
+    }
+}
+
+/// Collects model elements with attributes for sysml/model (partType, portType, multiplicity, etc.).
+pub fn collect_model_elements(doc: &SysMLDocument) -> Vec<ModelElement> {
+    let mut out = Vec::new();
+    for pkg in &doc.packages {
+        if let Some(el) = model_element_from_package(pkg) {
+            out.push(el);
+        }
+    }
+    out
+}
+
+fn model_element_from_package(pkg: &kerml_parser::ast::Package) -> Option<ModelElement> {
+    let name = if pkg.name.is_empty() {
+        "(top level)"
+    } else {
+        pkg.name.as_str()
+    };
+    let selection_range = pkg
+        .name_position
+        .as_ref()
+        .map(source_position_to_range)
+        .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+    let range = pkg
+        .range
+        .as_ref()
+        .map(source_range_to_range)
+        .unwrap_or(selection_range);
+    let children = model_elements_from_members(&pkg.members);
+    Some(ModelElement {
+        element_type: "package".to_string(),
+        name: name.to_string(),
+        range,
+        children,
+        attributes: std::collections::HashMap::new(),
+    })
+}
+
+fn model_elements_from_members(members: &[Member]) -> Vec<ModelElement> {
+    let mut out = Vec::new();
+    for m in members {
+        if let Some(el) = model_element_from_member(m) {
+            out.push(el);
+        }
+    }
+    out
+}
+
+fn model_element_from_member(member: &Member) -> Option<ModelElement> {
+    use kerml_parser::ast::Member as M;
+    match member {
+        M::PartDef(p) => {
+            let range = member_range(p.range.as_ref(), p.name_position.as_ref());
+            let mut attrs = std::collections::HashMap::new();
+            if let Some(ref t) = p.type_ref {
+                attrs.insert("partType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref s) = p.specializes {
+                attrs.insert("specializes".to_string(), serde_json::json!(s));
+            }
+            if let Some(ref m) = p.multiplicity {
+                attrs.insert("multiplicity".to_string(), serde_json::json!(format_multiplicity(m)));
+            }
+            Some(ModelElement {
+                element_type: "part def".to_string(),
+                name: p.name.clone(),
+                range,
+                children: model_elements_from_members(&p.members),
+                attributes: attrs,
+            })
+        }
+        M::PartUsage(p) => {
+            let name = p.name.as_deref().unwrap_or("(anonymous)");
+            let range = member_range(p.range.as_ref(), p.name_position.as_ref());
+            let mut attrs = std::collections::HashMap::new();
+            if let Some(ref t) = p.type_ref {
+                attrs.insert("partType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref s) = p.specializes {
+                attrs.insert("specializes".to_string(), serde_json::json!(s));
+            }
+            if let Some(ref m) = p.multiplicity {
+                attrs.insert("multiplicity".to_string(), serde_json::json!(format_multiplicity(m)));
+            }
+            Some(ModelElement {
+                element_type: "part".to_string(),
+                name: name.to_string(),
+                range,
+                children: model_elements_from_members(&p.members),
+                attributes: attrs,
+            })
+        }
+        M::AttributeDef(a) => {
+            let range = member_range(a.range.as_ref(), a.name_position.as_ref());
+            let mut attrs = std::collections::HashMap::new();
+            if let Some(ref t) = a.type_ref {
+                attrs.insert("attributeType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref m) = a.multiplicity {
+                attrs.insert("multiplicity".to_string(), serde_json::json!(format_multiplicity(m)));
+            }
+            Some(ModelElement {
+                element_type: "attribute def".to_string(),
+                name: a.name.clone(),
+                range,
+                children: model_elements_from_members(&a.members),
+                attributes: attrs,
+            })
+        }
+        M::AttributeUsage(a) => {
+            let range = member_range(a.range.as_ref(), a.name_position.as_ref());
+            let mut attrs = std::collections::HashMap::new();
+            if let Some(ref t) = a.type_ref {
+                attrs.insert("attributeType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref m) = a.multiplicity {
+                attrs.insert("multiplicity".to_string(), serde_json::json!(format_multiplicity(m)));
+            }
+            Some(ModelElement {
+                element_type: "attribute".to_string(),
+                name: a.name.clone(),
+                range,
+                children: model_elements_from_members(&a.members),
+                attributes: attrs,
+            })
+        }
+        M::PortDef(p) => {
+            let range = member_range(p.range.as_ref(), p.name_position.as_ref());
+            let mut attrs = std::collections::HashMap::new();
+            if let Some(ref t) = p.type_ref {
+                attrs.insert("portType".to_string(), serde_json::json!(t));
+            }
+            Some(ModelElement {
+                element_type: "port def".to_string(),
+                name: p.name.clone(),
+                range,
+                children: model_elements_from_members(&p.members),
+                attributes: attrs,
+            })
+        }
+        M::PortUsage(p) => {
+            let name = p.name.as_deref().unwrap_or("(anonymous)");
+            let range = member_range(p.range.as_ref(), p.name_position.as_ref());
+            let mut attrs = std::collections::HashMap::new();
+            if let Some(ref t) = p.type_ref {
+                attrs.insert("portType".to_string(), serde_json::json!(t));
+            }
+            Some(ModelElement {
+                element_type: "port".to_string(),
+                name: name.to_string(),
+                range,
+                children: model_elements_from_members(&p.members),
+                attributes: attrs,
+            })
+        }
+        M::InterfaceDef(i) => {
+            let range = member_range(i.range.as_ref(), i.name_position.as_ref());
+            Some(ModelElement {
+                element_type: "interface".to_string(),
+                name: i.name.clone(),
+                range,
+                children: model_elements_from_members(&i.members),
+                attributes: std::collections::HashMap::new(),
+            })
+        }
+        M::ConnectionUsage(c) => {
+            let name = c.name.as_deref().unwrap_or("(connection)");
+            let range = member_range(c.range.as_ref(), c.name_position.as_ref());
+            Some(ModelElement {
+                element_type: "connection".to_string(),
+                name: name.to_string(),
+                range,
+                children: vec![],
+                attributes: std::collections::HashMap::new(),
+            })
+        }
+        M::ItemDef(i) => {
+            let range = member_range(i.range.as_ref(), i.name_position.as_ref());
+            let mut attrs = std::collections::HashMap::new();
+            if let Some(ref s) = i.specializes {
+                attrs.insert("specializes".to_string(), serde_json::json!(s));
+            }
+            Some(ModelElement {
+                element_type: "item def".to_string(),
+                name: i.name.clone(),
+                range,
+                children: model_elements_from_members(&i.members),
+                attributes: attrs,
+            })
+        }
+        M::ItemUsage(i) => {
+            let range = member_range(i.range.as_ref(), i.name_position.as_ref());
+            let mut attrs = std::collections::HashMap::new();
+            if let Some(ref t) = i.type_ref {
+                attrs.insert("itemType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref m) = i.multiplicity {
+                attrs.insert("multiplicity".to_string(), serde_json::json!(format_multiplicity(m)));
+            }
+            Some(ModelElement {
+                element_type: "item".to_string(),
+                name: i.name.clone(),
+                range,
+                children: vec![],
+                attributes: attrs,
+            })
+        }
+        M::RequirementDef(r) => {
+            let range = member_range(r.range.as_ref(), r.name_position.as_ref());
+            Some(ModelElement {
+                element_type: "requirement def".to_string(),
+                name: r.name.clone(),
+                range,
+                children: model_elements_from_members(&r.members),
+                attributes: std::collections::HashMap::new(),
+            })
+        }
+        M::RequirementUsage(r) => {
+            let range = member_range(r.range.as_ref(), r.name_position.as_ref());
+            Some(ModelElement {
+                element_type: "requirement".to_string(),
+                name: r.name.clone(),
+                range,
+                children: model_elements_from_members(&r.members),
+                attributes: std::collections::HashMap::new(),
+            })
+        }
+        M::ActionDef(a) => {
+            let range = member_range(a.range.as_ref(), a.name_position.as_ref());
+            Some(ModelElement {
+                element_type: "action def".to_string(),
+                name: a.name.clone(),
+                range,
+                children: vec![],
+                attributes: std::collections::HashMap::new(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn member_range(
+    range: Option<&SourceRange>,
+    name_position: Option<&SourcePosition>,
+) -> Range {
+    let sel = name_position
+        .map(source_position_to_range)
+        .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+    let r = range
+        .map(source_range_to_range)
+        .unwrap_or(sel);
+    selection_contained_in(sel, r)
+}
+
 /// Collects document symbols (outline) from the AST. Uses AST `range` when present for full extent, else name range for both.
 pub fn collect_document_symbols(doc: &SysMLDocument) -> Vec<DocumentSymbol> {
     let mut out = Vec::new();

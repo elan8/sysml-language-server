@@ -53,13 +53,13 @@ use tower_lsp::lsp_types::*;
 use semantic_tokens::{ast_semantic_ranges, legend, semantic_tokens_full, semantic_tokens_range};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use walkdir::WalkDir;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use language::{
-    collect_definition_ranges, collect_document_symbols, collect_symbol_entries, completion_prefix,
-    collect_folding_ranges, find_reference_ranges, format_document, is_reserved_keyword, keyword_doc,
-    keyword_hover_markdown, line_prefix_at_position, suggest_wrap_in_package, sysml_keywords,
-    word_at_position, SymbolEntry,
+    collect_definition_ranges, collect_document_symbols, collect_model_elements,
+    collect_relationships, collect_symbol_entries, completion_prefix, collect_folding_ranges,
+    find_reference_ranges, format_document, is_reserved_keyword, keyword_doc, keyword_hover_markdown,
+    line_prefix_at_position, suggest_wrap_in_package, sysml_keywords, word_at_position, SymbolEntry,
 };
 
 /// Per-file index entry: content and optional parsed AST (invalidated when content changes).
@@ -85,11 +85,48 @@ struct ServerState {
 // Custom requests (extension)
 // -------------------------
 
-#[derive(Debug, Deserialize)]
-struct SysmlModelParams {
-    #[serde(rename = "textDocument")]
-    text_document: TextDocumentIdentifier,
-    scope: Option<Vec<String>>,
+/// Parse sysml/model params from JSON-RPC value. Accepts both object format
+/// ({"textDocument":{"uri":"..."},"scope":[...]}) and positional array
+/// (for clients that send params as array).
+fn parse_sysml_model_params(v: &serde_json::Value) -> Result<(Url, Vec<String>)> {
+    let (uri_str, scope_value) = if let Some(arr) = v.as_array() {
+        // Positional: [uri_or_text_doc, scope?]
+        let first = arr.get(0).ok_or_else(|| {
+            tower_lsp::jsonrpc::Error::invalid_params("sysml/model params array must have at least one element")
+        })?;
+        let uri_str = if let Some(s) = first.as_str() {
+            Some(s.to_string())
+        } else if let Some(obj) = first.as_object() {
+            obj.get("uri").and_then(|u| u.as_str()).map(String::from)
+                .or_else(|| obj.get("textDocument").and_then(|td| td.get("uri")).and_then(|u| u.as_str()).map(String::from))
+        } else {
+            None
+        };
+        let scope_value = arr.get(1);
+        (uri_str, scope_value)
+    } else if let Some(obj) = v.as_object() {
+        let uri_str = obj.get("uri").and_then(|u| u.as_str()).map(String::from)
+            .or_else(|| obj.get("textDocument").and_then(|td| td.get("uri")).and_then(|u| u.as_str()).map(String::from));
+        let scope_value = obj.get("scope");
+        (uri_str, scope_value)
+    } else {
+        return Err(tower_lsp::jsonrpc::Error::invalid_params(
+            "sysml/model params must be an object or array",
+        ));
+    };
+
+    let uri = uri_str
+        .as_ref()
+        .ok_or_else(|| tower_lsp::jsonrpc::Error::invalid_params("sysml/model requires 'uri' or 'textDocument.uri'"))?;
+    let uri = Url::parse(uri).map_err(|_| {
+        tower_lsp::jsonrpc::Error::invalid_params("sysml/model: invalid URI")
+    })?;
+
+    let scope: Vec<String> = scope_value
+        .and_then(|s| serde_json::from_value(s.clone()).ok())
+        .unwrap_or_default();
+
+    Ok((uri, scope))
 }
 
 #[derive(Debug, Serialize)]
@@ -193,18 +230,13 @@ fn range_to_dto(r: Range) -> RangeDto {
     }
 }
 
-fn doc_symbol_to_element(sym: &DocumentSymbol) -> SysmlElementDto {
-    let children = sym
-        .children
-        .as_ref()
-        .map(|c| c.iter().map(doc_symbol_to_element).collect())
-        .unwrap_or_default();
+fn model_element_to_dto(el: &language::ModelElement) -> SysmlElementDto {
     SysmlElementDto {
-        element_type: sym.detail.clone().unwrap_or_else(|| "symbol".to_string()),
-        name: sym.name.clone(),
-        range: range_to_dto(sym.range),
-        children,
-        attributes: std::collections::HashMap::new(),
+        element_type: el.element_type.clone(),
+        name: el.name.clone(),
+        range: range_to_dto(el.range),
+        children: el.children.iter().map(model_element_to_dto).collect(),
+        attributes: el.attributes.clone(),
         relationships: vec![],
         errors: None,
     }
@@ -997,10 +1029,25 @@ impl LanguageServer for Backend {
     }
 }
 
+fn empty_model_response(build_start: Instant) -> SysmlModelResultDto {
+    SysmlModelResultDto {
+        version: 0,
+        elements: Some(vec![]),
+        relationships: Some(vec![]),
+        stats: Some(SysmlModelStatsDto {
+            total_elements: 0,
+            resolved_elements: 0,
+            unresolved_elements: 0,
+            parse_time_ms: 0,
+            model_build_time_ms: build_start.elapsed().as_millis() as u32,
+            parse_cached: true,
+        }),
+    }
+}
+
 impl Backend {
-    async fn sysml_model(&self, params: SysmlModelParams) -> Result<SysmlModelResultDto> {
-        let uri = params.text_document.uri;
-        let scope = params.scope.unwrap_or_default();
+    async fn sysml_model(&self, params: serde_json::Value) -> Result<SysmlModelResultDto> {
+        let (uri, scope) = parse_sysml_model_params(&params)?;
         let want_elements = scope.is_empty() || scope.iter().any(|s| s == "elements");
         let want_stats = scope.is_empty() || scope.iter().any(|s| s == "stats");
         let want_relationships = scope.iter().any(|s| s == "relationships");
@@ -1010,19 +1057,7 @@ impl Backend {
         let entry = match state.index.get(&uri) {
             Some(e) => e,
             None => {
-                return Ok(SysmlModelResultDto {
-                    version: 0,
-                    elements: Some(vec![]),
-                    relationships: Some(vec![]),
-                    stats: Some(SysmlModelStatsDto {
-                        total_elements: 0,
-                        resolved_elements: 0,
-                        unresolved_elements: 0,
-                        parse_time_ms: 0,
-                        model_build_time_ms: build_start.elapsed().as_millis() as u32,
-                        parse_cached: true,
-                    }),
-                })
+                return Ok(empty_model_response(build_start));
             }
         };
         let doc = match &entry.parsed {
@@ -1031,14 +1066,24 @@ impl Backend {
         };
 
         let elements = if want_elements {
-            let symbols = collect_document_symbols(doc);
-            Some(symbols.iter().map(doc_symbol_to_element).collect::<Vec<_>>())
+            let model_elements = collect_model_elements(&doc);
+            Some(model_elements.iter().map(model_element_to_dto).collect::<Vec<_>>())
         } else {
             None
         };
 
         let relationships = if want_relationships {
-            Some(vec![])
+            let rels = collect_relationships(&doc);
+            Some(
+                rels.iter()
+                    .map(|r| RelationshipDto {
+                        rel_type: r.rel_type.clone(),
+                        source: r.source.clone(),
+                        target: r.target.clone(),
+                        name: r.name.clone(),
+                    })
+                    .collect(),
+            )
         } else {
             None
         };

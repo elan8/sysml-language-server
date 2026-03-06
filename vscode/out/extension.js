@@ -31,6 +31,7 @@ const vscode = __importStar(require("vscode"));
 const node_1 = require("vscode-languageclient/node");
 const lspModelProvider_1 = require("./providers/lspModelProvider");
 const modelExplorerProvider_1 = require("./explorer/modelExplorerProvider");
+const logger_1 = require("./logger");
 const visualizationPanel_1 = require("./visualization/visualizationPanel");
 let client;
 let statusItem;
@@ -97,6 +98,7 @@ function updateStatusBar(context) {
     }
 }
 function activate(context) {
+    (0, logger_1.log)("Extension activating");
     const config = vscode.workspace.getConfiguration("sysml-language-server");
     const serverPath = config.get("serverPath") ?? "sysml-language-server";
     const libraryPathsRaw = config.get("libraryPaths") ?? [];
@@ -112,6 +114,7 @@ function activate(context) {
     else {
         serverCommand = path.resolve(workspaceRoot, serverPath);
     }
+    (0, logger_1.log)("Server command:", serverCommand, "libraryPaths:", libraryPaths);
     const serverOptions = {
         command: serverCommand,
         args: [],
@@ -130,15 +133,13 @@ function activate(context) {
         },
     };
     client = new node_1.LanguageClient("sysmlLanguageServer", "SysML Language Server", serverOptions, clientOptions);
-    client.start();
-    // Avoid unhandled promise rejections when the server binary isn't available
-    // (common in dev/test environments).
-    const maybeOnReady = client.onReady;
-    if (typeof maybeOnReady === "function") {
-        maybeOnReady().catch(() => {
-            // Intentionally swallow; tests already handle missing server gracefully.
-        });
-    }
+    client.start().then(() => {
+        (0, logger_1.log)("Language client ready, refreshing Model Explorer");
+        modelExplorerProvider?.refresh();
+    }).catch(() => {
+        // Intentionally swallow; tests already handle missing server gracefully.
+    });
+    (0, logger_1.log)("Language client started");
     // Model Explorer (phase 3)
     const lspModelProvider = new lspModelProvider_1.LspModelProvider(client);
     lspModelProviderForStatus = lspModelProvider;
@@ -146,14 +147,62 @@ function activate(context) {
     const treeView = vscode.window.createTreeView("sysmlModelExplorer", {
         treeDataProvider: modelExplorerProvider,
     });
+    modelExplorerProvider.setTreeView(treeView);
     context.subscriptions.push(treeView);
-    context.subscriptions.push(vscode.commands.registerCommand("sysml.refreshModelTree", () => {
-        modelExplorerProvider?.refresh();
+    context.subscriptions.push(vscode.commands.registerCommand("sysml.refreshModelTree", async () => {
+        if (modelExplorerProvider?.isWorkspaceMode()) {
+            await loadWorkspaceSysMLFiles(modelExplorerProvider);
+        }
+        else {
+            modelExplorerProvider?.refresh();
+        }
+    }));
+    async function loadWorkspaceSysMLFiles(provider) {
+        const workspaceFile = vscode.workspace.workspaceFile;
+        if (!workspaceFile) {
+            (0, logger_1.log)("loadWorkspaceSysMLFiles: no workspace file");
+            return;
+        }
+        const folders = vscode.workspace.workspaceFolders ?? [];
+        const fileUris = [];
+        for (const folder of folders) {
+            const sysml = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*.sysml"), null, 500);
+            const kerml = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*.kerml"), null, 500);
+            fileUris.push(...sysml, ...kerml);
+        }
+        (0, logger_1.log)("loadWorkspaceSysMLFiles: found", fileUris.length, "files");
+        if (fileUris.length > 0) {
+            await provider.loadWorkspaceModel(fileUris);
+            (0, logger_1.log)("loadWorkspaceSysMLFiles: loaded model for", fileUris.length, "files");
+            vscode.commands.executeCommand("setContext", "sysml.hasWorkspace", true);
+            vscode.commands.executeCommand("setContext", "sysml.workspaceViewMode", provider.getWorkspaceViewMode());
+            vscode.commands.executeCommand("setContext", "sysml.modelLoaded", true);
+        }
+    }
+    context.subscriptions.push(vscode.commands.registerCommand("sysml.switchToByFile", () => {
+        modelExplorerProvider?.setWorkspaceViewMode("byFile");
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("sysml.switchToSemanticModel", () => {
+        modelExplorerProvider?.setWorkspaceViewMode("bySemantic");
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("sysml.toggleWorkspaceViewMode", () => {
+        modelExplorerProvider?.toggleWorkspaceViewMode();
     }));
     context.subscriptions.push(vscode.commands.registerCommand("sysml.openLocation", async (item) => {
-        const dtoRange = item.element.range;
+        (0, logger_1.log)("openLocation called", "item:", !!item, "elementUri:", !!item?.elementUri, "resourceUri:", !!item?.resourceUri);
+        if (!item)
+            return;
+        const uri = item.elementUri ?? item.resourceUri;
+        if (!uri) {
+            (0, logger_1.logError)("openLocation: element has no URI", item);
+            vscode.window.showErrorMessage("Cannot open location: element has no URI.");
+            return;
+        }
+        const dtoRange = item.element?.range;
+        if (!dtoRange)
+            return;
         const range = new vscode.Range(new vscode.Position(dtoRange.start.line, dtoRange.start.character), new vscode.Position(dtoRange.end.line, dtoRange.end.character));
-        const doc = await vscode.workspace.openTextDocument(item.uri);
+        const doc = await vscode.workspace.openTextDocument(uri);
         const editor = await vscode.window.showTextDocument(doc, {
             preserveFocus: false,
             preview: true,
@@ -194,6 +243,7 @@ function activate(context) {
             vscode.window.showInformationMessage("SysML language server restarted.");
         }
         catch (e) {
+            (0, logger_1.logError)("restartServer failed", e);
             vscode.window.showErrorMessage(`Failed to restart server: ${e}`);
         }
     }));
@@ -210,6 +260,32 @@ function activate(context) {
             return;
         }
         visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, lspModelProvider);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("sysml.visualizeFolder", async (folderUri) => {
+        if (!client) {
+            vscode.window.showErrorMessage("SysML language server is not running.");
+            return;
+        }
+        if (!folderUri || folderUri.scheme !== "file") {
+            vscode.window.showWarningMessage("Please select a folder to visualize.");
+            return;
+        }
+        const folderStat = await vscode.workspace.fs.stat(folderUri);
+        if (folderStat.type !== vscode.FileType.Directory) {
+            vscode.window.showWarningMessage("Please select a folder (not a file) to visualize.");
+            return;
+        }
+        const sysml = await vscode.workspace.findFiles(new vscode.RelativePattern(folderUri, "**/*.sysml"), null, 500);
+        const kerml = await vscode.workspace.findFiles(new vscode.RelativePattern(folderUri, "**/*.kerml"), null, 500);
+        const fileUris = [...sysml, ...kerml];
+        if (fileUris.length === 0) {
+            vscode.window.showInformationMessage(`No .sysml or .kerml files found in ${folderUri.fsPath}`);
+            return;
+        }
+        visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, lspModelProvider, undefined, fileUris);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("sysml.showOutput", () => {
+        (0, logger_1.showChannel)();
     }));
     context.subscriptions.push(vscode.commands.registerCommand("sysml.clearCache", async () => {
         if (!client) {
@@ -245,10 +321,30 @@ function activate(context) {
         const loaded = isSysmlDoc(active);
         vscode.commands.executeCommand("setContext", "sysml.modelLoaded", loaded);
         updateStatusBar(context);
+        // Refresh Model Explorer when switching to a SysML doc so the tree shows the correct model
+        if (loaded) {
+            modelExplorerProvider?.refresh();
+        }
     };
     refreshContext();
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => refreshContext()));
+    // When a SysML document is opened, refresh so we load it (did_open will be processed by then)
+    context.subscriptions.push(vscode.workspace.onDidOpenTextDocument((doc) => {
+        if (doc.languageId === "sysml" || doc.languageId === "kerml") {
+            modelExplorerProvider?.refresh();
+        }
+    }));
     context.subscriptions.push(vscode.languages.onDidChangeDiagnostics(() => updateStatusBar(context)));
+    // Workspace mode: when .code-workspace is open, load all SysML/KerML files after delay
+    const workspaceFile = vscode.workspace.workspaceFile;
+    (0, logger_1.log)("Activation complete. Workspace file:", !!workspaceFile);
+    vscode.commands.executeCommand("setContext", "sysml.hasWorkspace", !!workspaceFile);
+    if (workspaceFile && modelExplorerProvider) {
+        const provider = modelExplorerProvider;
+        setTimeout(() => {
+            loadWorkspaceSysMLFiles(provider).catch(() => { });
+        }, 3000);
+    }
 }
 function deactivate() {
     return client?.stop();
