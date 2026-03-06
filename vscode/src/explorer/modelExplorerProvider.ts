@@ -14,7 +14,8 @@ export class ModelTreeItem extends vscode.TreeItem {
         : vscode.TreeItemCollapsibleState.None
     );
 
-    this.contextValue = "sysmlElement";
+    this.contextValue =
+      element.type === "package" ? "sysmlPackage" : "sysmlElement";
     this.description = element.type;
     this.tooltip = `${element.type}: ${element.name}`;
     this.command = {

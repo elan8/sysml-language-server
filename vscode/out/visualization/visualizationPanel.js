@@ -41,9 +41,10 @@ class VisualizationPanel {
         this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
         this.panel.webview.onDidReceiveMessage((msg) => this.onMessage(msg), null, this.disposables);
     }
-    static createOrShow(extensionUri, modelProvider) {
+    static createOrShow(extensionUri, modelProvider, focusPackageName) {
         if (VisualizationPanel.currentPanel) {
             VisualizationPanel.currentPanel.panel.reveal(vscode.ViewColumn.Beside);
+            VisualizationPanel.currentPanel.focusPackage = focusPackageName;
             VisualizationPanel.currentPanel.refresh();
             return VisualizationPanel.currentPanel;
         }
@@ -52,6 +53,7 @@ class VisualizationPanel {
             retainContextWhenHidden: true,
         });
         VisualizationPanel.currentPanel = new VisualizationPanel(panel, modelProvider);
+        VisualizationPanel.currentPanel.focusPackage = focusPackageName;
         VisualizationPanel.currentPanel.panel.webview.html =
             VisualizationPanel.currentPanel.renderHtml(extensionUri);
         VisualizationPanel.currentPanel.refresh();
@@ -70,6 +72,7 @@ class VisualizationPanel {
                 command: "setTree",
                 title: "No active SysML/KerML document.",
                 html: "",
+                focusPackage: undefined,
             });
             return;
         }
@@ -78,10 +81,12 @@ class VisualizationPanel {
             const res = await this.modelProvider.getModel(doc.uri.toString(), ["elements", "stats"]);
             elements = res.elements ?? [];
             const total = res.stats?.totalElements ?? elements.length;
+            const focusPackage = this.focusPackage;
             this.panel.webview.postMessage({
                 command: "setTree",
                 title: `${doc.fileName.split(/[\\/]/).pop()} · ${total} element(s)`,
                 html: this.renderTreeHtml(elements),
+                focusPackage,
             });
         }
         catch (e) {
@@ -89,18 +94,21 @@ class VisualizationPanel {
                 command: "setTree",
                 title: "Failed to load model",
                 html: `<div class="err">${escapeHtml(String(e))}</div>`,
+                focusPackage: undefined,
             });
         }
     }
     renderTreeHtml(elements) {
         const renderNode = (el) => {
-            const label = `${escapeHtml(el.name || "(anonymous)")}`;
+            const name = el.name || "(anonymous)";
+            const label = escapeHtml(name);
             const type = escapeHtml(el.type || "symbol");
             const payload = escapeHtml(JSON.stringify(el.range));
+            const nameAttr = name.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
             const children = (el.children ?? []).map(renderNode).join("");
             if (children) {
                 return `
-          <li>
+          <li data-name="${nameAttr}">
             <details open>
               <summary>
                 <button class="jump" data-range="${payload}" title="Jump to source">⤴</button>
@@ -113,7 +121,7 @@ class VisualizationPanel {
         `;
             }
             return `
-        <li>
+        <li data-name="${nameAttr}">
           <div class="leaf">
             <button class="jump" data-range="${payload}" title="Jump to source">⤴</button>
             <span class="name">${label}</span>
@@ -274,6 +282,12 @@ class VisualizationPanel {
             } catch {}
           });
         });
+        if (msg.focusPackage) {
+          const found = Array.from(root.querySelectorAll('li[data-name]')).find(
+            (li) => li.getAttribute('data-name') === msg.focusPackage
+          );
+          if (found) found.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
       });
     </script>
   </body>

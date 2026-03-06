@@ -35,7 +35,9 @@
     "onCommand:sysml.showVisualizer",
     "onCommand:sysml.formatDocument",
     "onCommand:sysml.validateModel",
-    "onCommand:sysml.restartServer"
+    "onCommand:sysml.restartServer",
+    "onCommand:sysml.clearCache",
+    "onCommand:sysml.visualizePackage"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -115,9 +117,25 @@
         "command": "sysml.showVisualizer",
         "title": "Show SysML Visualizer",
         "category": "SysML"
+      },
+      {
+        "command": "sysml.clearCache",
+        "title": "Clear SysML Parse Cache",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.visualizePackage",
+        "title": "Visualize Package",
+        "category": "SysML"
       }
     ],
     "menus": {
+      "view/item/context": [
+        {
+          "command": "sysml.visualizePackage",
+          "when": "view == sysmlModelExplorer && viewItem == sysmlPackage"
+        }
+      ],
       "commandPalette": [
         {
           "command": "sysml.formatDocument",
@@ -138,6 +156,9 @@
         },
         {
           "command": "sysml.showVisualizer"
+        },
+        {
+          "command": "sysml.clearCache"
         }
       ]
     },

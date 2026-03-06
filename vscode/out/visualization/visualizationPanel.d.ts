@@ -6,9 +6,10 @@ export declare class VisualizationPanel {
     private readonly panel;
     private disposables;
     private constructor();
-    static createOrShow(extensionUri: vscode.Uri, modelProvider: LspModelProvider): VisualizationPanel;
+    static createOrShow(extensionUri: vscode.Uri, modelProvider: LspModelProvider, focusPackageName?: string): VisualizationPanel;
+    focusPackage?: string;
     dispose(): void;
-    private refresh;
+    refresh(): Promise<void>;
     private renderTreeHtml;
     private onMessage;
     private renderHtml;

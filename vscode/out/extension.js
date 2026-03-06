@@ -35,6 +35,7 @@ const visualizationPanel_1 = require("./visualization/visualizationPanel");
 let client;
 let statusItem;
 let modelExplorerProvider;
+let lspModelProviderForStatus;
 function getBundledServerCommand(extensionPath) {
     const platform = process.platform;
     const arch = process.arch;
@@ -78,8 +79,22 @@ function updateStatusBar(context) {
     const warnings = diags.filter((d) => d.severity === vscode.DiagnosticSeverity.Warning).length;
     const icon = errors > 0 ? "$(error)" : warnings > 0 ? "$(warning)" : "$(check)";
     item.text = `${icon} SysML: ${errors}E ${warnings}W`;
-    item.tooltip = `${errors} error(s), ${warnings} warning(s)\nClick to open Problems panel.`;
+    const baseTooltip = `${errors} error(s), ${warnings} warning(s)\nClick to open Problems panel.`;
+    item.tooltip = baseTooltip;
     item.show();
+    // Append server health to tooltip (async, best-effort)
+    const provider = lspModelProviderForStatus;
+    if (provider) {
+        provider.getServerStats().then((stats) => {
+            if (!stats || !statusItem)
+                return;
+            const uptimeStr = stats.uptime >= 60
+                ? `${Math.floor(stats.uptime / 60)}m ${stats.uptime % 60}s`
+                : `${stats.uptime}s`;
+            const caches = stats.caches;
+            item.tooltip = `${baseTooltip}\n\n── LSP Server ──\nUptime: ${uptimeStr}\nCaches: ${caches.documents} docs, ${caches.symbolTables} symbols`;
+        }).catch(() => { });
+    }
 }
 function activate(context) {
     const config = vscode.workspace.getConfiguration("sysml-language-server");
@@ -126,6 +141,7 @@ function activate(context) {
     }
     // Model Explorer (phase 3)
     const lspModelProvider = new lspModelProvider_1.LspModelProvider(client);
+    lspModelProviderForStatus = lspModelProvider;
     modelExplorerProvider = new modelExplorerProvider_1.ModelExplorerProvider(lspModelProvider);
     const treeView = vscode.window.createTreeView("sysmlModelExplorer", {
         treeDataProvider: modelExplorerProvider,
@@ -193,9 +209,35 @@ function activate(context) {
             vscode.window.showErrorMessage("SysML language server is not running.");
             return;
         }
-        // Reuse the same LSP model provider as the explorer.
-        const provider = new lspModelProvider_1.LspModelProvider(client);
-        visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, provider);
+        visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, lspModelProvider);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("sysml.clearCache", async () => {
+        if (!client) {
+            vscode.window.showErrorMessage("SysML language server is not running.");
+            return;
+        }
+        const result = await lspModelProvider.clearCache();
+        if (result) {
+            const total = result.documents + result.symbolTables + result.semanticTokens;
+            vscode.window.showInformationMessage(`SysML: Cleared ${total} cache entries (${result.documents} docs, ${result.symbolTables} symbols)`);
+            modelExplorerProvider?.refresh();
+            // Refresh visualizer if open
+            visualizationPanel_1.VisualizationPanel.currentPanel?.refresh();
+        }
+        else {
+            vscode.window.showWarningMessage("SysML: Could not clear cache (server may not be ready).");
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand("sysml.visualizePackage", async (item) => {
+        if (!item || !client) {
+            vscode.window.showErrorMessage("No package selected or server not running.");
+            return;
+        }
+        if (item.element.type !== "package") {
+            vscode.window.showInformationMessage("Visualize package is available for package elements.");
+            return;
+        }
+        visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, lspModelProvider, item.element.name);
     }));
     // Status bar + context for contributed view
     const refreshContext = () => {

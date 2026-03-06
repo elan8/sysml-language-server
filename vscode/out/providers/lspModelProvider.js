@@ -12,6 +12,22 @@ class LspModelProvider {
         };
         return this.client.sendRequest("sysml/model", params, token);
     }
+    async getServerStats() {
+        try {
+            return await this.client.sendRequest("sysml/serverStats");
+        }
+        catch {
+            return undefined;
+        }
+    }
+    async clearCache() {
+        try {
+            return await this.client.sendRequest("sysml/clearCache");
+        }
+        catch {
+            return undefined;
+        }
+    }
 }
 exports.LspModelProvider = LspModelProvider;
 //# sourceMappingURL=lspModelProvider.js.map
