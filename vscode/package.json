@@ -2,9 +2,16 @@
   "name": "sysml-language-server",
   "displayName": "SysML v2 Language Support",
   "publisher": "Elan8",
-  "description": "LSP client for SysML v2 (KerML) via sysml-language-server",
+  "description": "Language support for SysML v2 including syntax validation, navigation and diagnostics.",
   "version": "0.2.2",
   "license": "MIT",
+  "keywords": [
+    "sysml",
+    "sysml-v2",
+    "mbse",
+    "systems engineering",
+    "model based systems engineering"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/elan8/sysml-language-server.git"
