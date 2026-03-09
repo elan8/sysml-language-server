@@ -15,6 +15,27 @@ export interface RelationshipDTO {
   name?: string;
 }
 
+export interface GraphNodeDTO {
+  id: string;
+  type: string;
+  name: string;
+  parentId?: string;
+  range: RangeDTO;
+  attributes: Record<string, unknown>;
+}
+
+export interface GraphEdgeDTO {
+  source: string;
+  target: string;
+  type: string;
+  name?: string;
+}
+
+export interface SysMLGraphDTO {
+  nodes: GraphNodeDTO[];
+  edges: GraphEdgeDTO[];
+}
+
 export interface SysMLElementDTO {
   type: string;
   name: string;
@@ -36,13 +57,12 @@ export interface SysMLModelStatsDTO {
 
 export interface SysMLModelParams {
   textDocument: { uri: string };
-  scope?: Array<"elements" | "relationships" | "stats" | "sequenceDiagrams" | "activityDiagrams">;
+  scope?: Array<"graph" | "stats" | "sequenceDiagrams" | "activityDiagrams">;
 }
 
 export interface SysMLModelResult {
   version: number;
-  elements?: SysMLElementDTO[];
-  relationships?: RelationshipDTO[];
+  graph?: SysMLGraphDTO;
   sequenceDiagrams?: SequenceDiagramDTO[];
   activityDiagrams?: ActivityDiagramDTO[];
   stats?: SysMLModelStatsDTO;

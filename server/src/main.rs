@@ -3,6 +3,7 @@
 
 mod language;
 mod model;
+mod semantic_model;
 mod semantic_tokens;
 
 use kerml_parser::ast::SysMLDocument;
@@ -57,8 +58,8 @@ use walkdir::WalkDir;
 use serde::Serialize;
 
 use language::{
-    collect_definition_ranges, collect_document_symbols, collect_model_elements,
-    collect_relationships, collect_symbol_entries, completion_prefix, collect_folding_ranges,
+    collect_definition_ranges, collect_document_symbols, collect_symbol_entries,
+    completion_prefix, collect_folding_ranges,
     find_reference_ranges, format_document, is_reserved_keyword, keyword_doc, keyword_hover_markdown,
     line_prefix_at_position, suggest_wrap_in_package, sysml_keywords, word_at_position, SymbolEntry,
 };
@@ -80,6 +81,8 @@ struct ServerState {
     index: std::collections::HashMap<Url, IndexEntry>,
     /// Workspace-wide symbol table: flat list of definable symbols, updated when index changes.
     symbol_table: Vec<SymbolEntry>,
+    /// Semantic graph (nodes = elements, edges = relationships). Source for sysml/model.
+    semantic_graph: semantic_model::SemanticGraph,
 }
 
 // -------------------------
@@ -151,6 +154,36 @@ struct RelationshipDto {
     name: Option<String>,
 }
 
+/// Graph node for frontend (qualified name as id).
+#[derive(Debug, Serialize)]
+struct GraphNodeDto {
+    id: String,
+    #[serde(rename = "type")]
+    element_type: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "parentId")]
+    parent_id: Option<String>,
+    range: RangeDto,
+    attributes: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Graph edge (source/target are node ids).
+#[derive(Debug, Serialize)]
+struct GraphEdgeDto {
+    source: String,
+    target: String,
+    #[serde(rename = "type")]
+    rel_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SysmlGraphDto {
+    nodes: Vec<GraphNodeDto>,
+    edges: Vec<GraphEdgeDto>,
+}
+
 #[derive(Debug, Serialize)]
 struct SysmlElementDto {
     #[serde(rename = "type")]
@@ -183,8 +216,7 @@ struct SysmlModelStatsDto {
 #[serde(rename_all = "camelCase")]
 struct SysmlModelResultDto {
     version: u32,
-    elements: Option<Vec<SysmlElementDto>>,
-    relationships: Option<Vec<RelationshipDto>>,
+    graph: Option<SysmlGraphDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     activity_diagrams: Option<Vec<model::ActivityDiagramDto>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -236,14 +268,87 @@ fn range_to_dto(r: Range) -> RangeDto {
     }
 }
 
+fn semantic_node_to_dto(
+    node: &semantic_model::SemanticNode,
+    graph: &semantic_model::SemanticGraph,
+) -> SysmlElementDto {
+    let mut relationships = Vec::new();
+    if let Some(v) = node
+        .attributes
+        .get("partType")
+        .or_else(|| node.attributes.get("portType"))
+        .or_else(|| node.attributes.get("actorType"))
+    {
+        if let Some(t) = v.as_str() {
+            relationships.push(RelationshipDto {
+                rel_type: "typing".to_string(),
+                source: node.name.clone(),
+                target: t.to_string(),
+                name: None,
+            });
+        }
+    }
+    if let Some(v) = node.attributes.get("specializes") {
+        if let Some(s) = v.as_str() {
+            relationships.push(RelationshipDto {
+                rel_type: "specializes".to_string(),
+                source: node.name.clone(),
+                target: s.to_string(),
+                name: None,
+            });
+        }
+    }
+    let children = graph
+        .children_of(node)
+        .into_iter()
+        .map(|c| semantic_node_to_dto(c, graph))
+        .collect();
+    SysmlElementDto {
+        element_type: node.element_kind.clone(),
+        name: node.name.clone(),
+        range: range_to_dto(node.range),
+        children,
+        attributes: node.attributes.clone(),
+        relationships,
+        errors: None,
+    }
+}
+
+#[allow(dead_code)] // Kept as fallback; sysml/model now uses semantic graph
 fn model_element_to_dto(el: &language::ModelElement) -> SysmlElementDto {
+    let mut relationships = Vec::new();
+    if let Some(v) = el
+        .attributes
+        .get("partType")
+        .or_else(|| el.attributes.get("portType"))
+        .or_else(|| el.attributes.get("actorType"))
+    {
+        if let Some(t) = v.as_str() {
+            relationships.push(RelationshipDto {
+                rel_type: "typing".to_string(),
+                source: el.name.clone(),
+                target: t.to_string(),
+                name: None,
+            });
+        }
+    }
+    if let Some(v) = el.attributes.get("specializes") {
+        if let Some(s) = v.as_str() {
+            relationships.push(RelationshipDto {
+                rel_type: "specializes".to_string(),
+                source: el.name.clone(),
+                target: s.to_string(),
+                name: None,
+            });
+        }
+    }
     SysmlElementDto {
         element_type: el.element_type.clone(),
         name: el.name.clone(),
         range: range_to_dto(el.range),
         children: el.children.iter().map(model_element_to_dto).collect(),
         attributes: el.attributes.clone(),
-        relationships: vec![],
+        relationships,
         errors: None,
     }
 }
@@ -270,6 +375,19 @@ fn update_symbol_table_for_uri(
 /// Removes all symbol table entries for `uri`.
 fn remove_symbol_table_entries_for_uri(state: &mut ServerState, uri: &Url) {
     state.symbol_table.retain(|e| e.uri != *uri);
+}
+
+/// Updates the semantic graph for a URI: removes existing nodes, then merges new graph from parsed doc.
+fn update_semantic_graph_for_uri(
+    state: &mut ServerState,
+    uri: &Url,
+    doc: Option<&SysMLDocument>,
+) {
+    state.semantic_graph.remove_nodes_for_uri(uri);
+    if let Some(d) = doc {
+        let new_graph = semantic_model::build_graph_from_doc(d, uri);
+        state.semantic_graph.merge(new_graph);
+    }
 }
 
 /// Returns true if `uri` is under any of the library path roots (path prefix check).
@@ -444,6 +562,7 @@ impl LanguageServer for Backend {
             for (uri, content) in entries {
                 let parsed = kerml_parser::parse_sysml(&content).ok();
                 let new_entries = parsed.as_ref().map(|doc| collect_symbol_entries(doc, &uri));
+                update_semantic_graph_for_uri(&mut st, &uri, parsed.as_ref());
                 st.index.insert(
                     uri.clone(),
                     IndexEntry {
@@ -467,6 +586,7 @@ impl LanguageServer for Backend {
         {
             let mut state = self.state.write().await;
             let new_entries = parsed.as_ref().map(|doc| collect_symbol_entries(doc, &uri));
+            update_semantic_graph_for_uri(&mut state, &uri, parsed.as_ref());
             state.index.insert(
                 uri.clone(),
                 IndexEntry {
@@ -506,6 +626,17 @@ impl LanguageServer for Backend {
             };
             if should_update {
                 update_symbol_table_for_uri(&mut state, &uri, new_entries.as_deref());
+                let doc_for_graph = state
+                    .index
+                    .get(&uri)
+                    .and_then(|e| e.parsed.as_ref())
+                    .map(|d| semantic_model::build_graph_from_doc(d, &uri));
+                if let Some(new_graph) = doc_for_graph {
+                    state.semantic_graph.remove_nodes_for_uri(&uri);
+                    state.semantic_graph.merge(new_graph);
+                } else {
+                    state.semantic_graph.remove_nodes_for_uri(&uri);
+                }
             }
         }
         let state = self.state.read().await;
@@ -539,6 +670,11 @@ impl LanguageServer for Backend {
                         let parsed = kerml_parser::parse_sysml(&content).ok();
                         let new_entries =
                             parsed.as_ref().map(|doc| collect_symbol_entries(doc, &event.uri));
+                        update_semantic_graph_for_uri(
+                            &mut state,
+                            &event.uri,
+                            parsed.as_ref(),
+                        );
                         state.index.insert(
                             event.uri.clone(),
                             IndexEntry { content, parsed },
@@ -553,6 +689,7 @@ impl LanguageServer for Backend {
             } else if event.typ == FileChangeType::DELETED {
                 state.index.remove(&event.uri);
                 remove_symbol_table_entries_for_uri(&mut state, &event.uri);
+                state.semantic_graph.remove_nodes_for_uri(&event.uri);
             }
         }
     }
@@ -578,6 +715,7 @@ impl LanguageServer for Backend {
         for uri in &uris_to_remove {
             state.index.remove(uri);
             remove_symbol_table_entries_for_uri(&mut state, uri);
+            state.semantic_graph.remove_nodes_for_uri(uri);
         }
         state.library_paths = new_library_paths.clone();
         drop(state);
@@ -617,6 +755,7 @@ impl LanguageServer for Backend {
             for (uri, content) in entries {
                 let parsed = kerml_parser::parse_sysml(&content).ok();
                 let new_entries = parsed.as_ref().map(|doc| collect_symbol_entries(doc, &uri));
+                update_semantic_graph_for_uri(&mut st, &uri, parsed.as_ref());
                 st.index.insert(
                     uri.clone(),
                     IndexEntry {
@@ -1038,8 +1177,10 @@ impl LanguageServer for Backend {
 fn empty_model_response(build_start: Instant) -> SysmlModelResultDto {
     SysmlModelResultDto {
         version: 0,
-        elements: Some(vec![]),
-        relationships: Some(vec![]),
+        graph: Some(SysmlGraphDto {
+            nodes: vec![],
+            edges: vec![],
+        }),
         activity_diagrams: None,
         sequence_diagrams: None,
         stats: Some(SysmlModelStatsDto {
@@ -1056,9 +1197,8 @@ fn empty_model_response(build_start: Instant) -> SysmlModelResultDto {
 impl Backend {
     async fn sysml_model(&self, params: serde_json::Value) -> Result<SysmlModelResultDto> {
         let (uri, scope) = parse_sysml_model_params(&params)?;
-        let want_elements = scope.is_empty() || scope.iter().any(|s| s == "elements");
+        let want_graph = scope.is_empty() || scope.iter().any(|s| s == "graph") || scope.iter().any(|s| s == "elements") || scope.iter().any(|s| s == "relationships");
         let want_stats = scope.is_empty() || scope.iter().any(|s| s == "stats");
-        let want_relationships = scope.iter().any(|s| s == "relationships");
         let want_activity_diagrams = scope.is_empty() || scope.iter().any(|s| s == "activityDiagrams");
         let want_sequence_diagrams = scope.is_empty() || scope.iter().any(|s| s == "sequenceDiagrams");
 
@@ -1067,60 +1207,108 @@ impl Backend {
         let entry = match state.index.get(&uri) {
             Some(e) => e,
             None => {
+                let uri_display = uri.as_str();
+                let index_len = state.index.len();
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!(
+                            "sysml/model: document not in index (uri not opened via textDocument/didOpen). \
+                            uri={}, index_size={}, indexed_uris=[{}]. \
+                            Open the file in the editor first.",
+                            uri_display,
+                            index_len,
+                            state
+                                .index
+                                .keys()
+                                .take(3)
+                                .map(|u| u.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        ),
+                    )
+                    .await;
                 return Ok(empty_model_response(build_start));
             }
         };
-        let doc = match &entry.parsed {
-            Some(d) => d,
-            None => {
-                return Ok(SysmlModelResultDto {
-                    version: 0,
-                    elements: Some(vec![]),
-                    relationships: Some(vec![]),
-                    activity_diagrams: None,
-                    sequence_diagrams: None,
-                    stats: None,
-                });
-            }
-        };
 
-        let elements = if want_elements {
-            let model_elements = collect_model_elements(doc);
-            Some(model_elements.iter().map(model_element_to_dto).collect::<Vec<_>>())
+        let graph = if want_graph {
+            let sg_nodes = state.semantic_graph.nodes_for_uri(&uri);
+            let node_count = sg_nodes.len();
+            let graph_uris = state.semantic_graph.uris_with_nodes();
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!(
+                        "sysml/model: req_uri={} index_ok=true semantic_nodes={} graph_uris={:?}",
+                        uri.as_str(),
+                        node_count,
+                        graph_uris,
+                    ),
+                )
+                .await;
+            let nodes: Vec<GraphNodeDto> = sg_nodes
+                .into_iter()
+                .map(|n| GraphNodeDto {
+                    id: n.id.qualified_name.clone(),
+                    element_type: n.element_kind.clone(),
+                    name: n.name.clone(),
+                    parent_id: n.parent_id.as_ref().map(|p| p.qualified_name.clone()),
+                    range: range_to_dto(n.range),
+                    attributes: n.attributes.clone(),
+                })
+                .collect();
+
+            let mut edges: Vec<GraphEdgeDto> = state
+                .semantic_graph
+                .edges_for_uri_as_strings(&uri)
+                .into_iter()
+                .map(|(src, tgt, kind, name)| GraphEdgeDto {
+                    source: src,
+                    target: tgt,
+                    rel_type: kind.as_str().to_string(),
+                    name,
+                })
+                .collect();
+
+            for n in state.semantic_graph.nodes_for_uri(&uri) {
+                if let Some(ref pid) = n.parent_id {
+                    edges.push(GraphEdgeDto {
+                        source: pid.qualified_name.clone(),
+                        target: n.id.qualified_name.clone(),
+                        rel_type: "contains".to_string(),
+                        name: None,
+                    });
+                }
+            }
+
+            Some(SysmlGraphDto { nodes, edges })
         } else {
             None
         };
 
-        let relationships = if want_relationships {
-            let rels = collect_relationships(doc);
+        let doc = entry.parsed.as_ref();
+
+        let activity_diagrams = if want_activity_diagrams {
             Some(
-                rels.iter()
-                    .map(|r| RelationshipDto {
-                        rel_type: r.rel_type.clone(),
-                        source: r.source.clone(),
-                        target: r.target.clone(),
-                        name: r.name.clone(),
-                    })
-                    .collect(),
+                doc.map(model::extract_activity_diagrams)
+                    .unwrap_or_default(),
             )
         } else {
             None
         };
 
-        let activity_diagrams = if want_activity_diagrams {
-            Some(model::extract_activity_diagrams(doc))
-        } else {
-            None
-        };
-
         let sequence_diagrams = if want_sequence_diagrams {
-            Some(model::extract_sequence_diagrams(doc))
+            Some(
+                doc.map(model::extract_sequence_diagrams)
+                    .unwrap_or_default(),
+            )
         } else {
             None
         };
 
         let stats = if want_stats {
-            let total = elements.as_ref().map(|e| count_elements(e)).unwrap_or(0);
+            let total = graph.as_ref().map(|g| g.nodes.len() as u32).unwrap_or(0);
             Some(SysmlModelStatsDto {
                 total_elements: total,
                 resolved_elements: 0,
@@ -1133,10 +1321,24 @@ impl Backend {
             None
         };
 
+        let node_count = graph.as_ref().map(|g| g.nodes.len()).unwrap_or(0);
+        let edge_count = graph.as_ref().map(|g| g.edges.len()).unwrap_or(0);
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "sysml/model: uri={} scope={:?} -> graph nodes={} edges={}",
+                    uri.as_str(),
+                    scope,
+                    node_count,
+                    edge_count,
+                ),
+            )
+            .await;
+
         Ok(SysmlModelResultDto {
             version: 0,
-            elements,
-            relationships,
+            graph,
             activity_diagrams,
             sequence_diagrams,
             stats,
@@ -1162,6 +1364,7 @@ impl Backend {
         let syms = state.symbol_table.len();
         state.index.clear();
         state.symbol_table.clear();
+        state.semantic_graph = semantic_model::SemanticGraph::default();
         Ok(SysmlClearCacheResultDto {
             documents: docs,
             symbol_tables: syms,

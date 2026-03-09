@@ -143,15 +143,17 @@ function activate(context) {
         },
     };
     client = new node_1.LanguageClient("sysmlLanguageServer", "SysML Language Server", serverOptions, clientOptions);
-    client.start().then(() => {
+    const clientReadyPromise = client.start()
+        .then(() => {
         (0, logger_1.log)("Language client ready, refreshing Model Explorer");
         modelExplorerProvider?.refresh();
-    }).catch(() => {
+    })
+        .catch(() => {
         // Intentionally swallow; tests already handle missing server gracefully.
     });
     (0, logger_1.log)("Language client started");
-    // Model Explorer (phase 3)
-    const lspModelProvider = new lspModelProvider_1.LspModelProvider(client);
+    // Model Explorer (phase 3). getModel awaits whenReady so the server has received didOpen.
+    const lspModelProvider = new lspModelProvider_1.LspModelProvider(client, clientReadyPromise);
     lspModelProviderForStatus = lspModelProvider;
     modelExplorerProvider = new modelExplorerProvider_1.ModelExplorerProvider(lspModelProvider);
     context.subscriptions.push(vscode.window.registerWebviewPanelSerializer("sysmlVisualizer", {

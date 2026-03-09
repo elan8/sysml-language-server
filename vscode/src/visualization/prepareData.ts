@@ -6,13 +6,65 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/**
+ * Build a tree of elements from graph (nodes + edges).
+ * Used when data has graph instead of elements for views that need tree structure.
+ */
+export function graphToElementTree(graph: any): any[] {
+    if (!graph?.nodes?.length) return [];
+    const nodes = graph.nodes;
+    const edges = graph.edges || [];
+    const nodeMap = new Map<string, any>();
+    nodes.forEach((n: any) => {
+        nodeMap.set(n.id, {
+            id: n.id,
+            name: n.name,
+            type: n.type,
+            range: n.range,
+            attributes: n.attributes || {},
+            relationships: [] as any[],
+            children: [] as any[]
+        });
+    });
+    edges.forEach((e: any) => {
+        if ((e.type || '').toLowerCase() === 'contains' && e.source && e.target) {
+            const parent = nodeMap.get(e.source);
+            const child = nodeMap.get(e.target);
+            if (parent && child) {
+                parent.children.push(child);
+            }
+        }
+        const relTypes = ['typing', 'specializes', 'connection', 'bind', 'allocate', 'transition', 'satisfy', 'verify'];
+        if (relTypes.includes((e.type || '').toLowerCase())) {
+            const src = nodeMap.get(e.source);
+            if (src) {
+                src.relationships.push({ source: e.source, target: e.target, type: e.type, name: e.name });
+            }
+        }
+    });
+    const targetsOfContains = new Set(edges.filter((e: any) => (e.type || '').toLowerCase() === 'contains').map((e: any) => e.target));
+    const roots = nodes
+        .filter((n: any) => !targetsOfContains.has(n.id))
+        .map((n: any) => nodeMap.get(n.id))
+        .filter(Boolean);
+    return roots;
+}
+
 export function prepareDataForView(data: any, view: string): any {
     if (!data) {
         return data;
     }
 
-    const elements = data.elements || [];
-    const relationships = data.relationships || [];
+    const hasGraph = data.graph?.nodes;
+    const elements = hasGraph ? graphToElementTree(data.graph) : (data.elements || []);
+    const relationships = hasGraph
+        ? (data.graph.edges || []).filter((e: any) => (e.type || '') !== 'contains').map((e: any) => ({
+            source: e.source,
+            target: e.target,
+            type: e.type,
+            name: e.name
+        }))
+        : (data.relationships || []);
 
     function collectAllElements(elementList: any[], collected: any[] = [], parentElement: any = null): any[] {
         elementList.forEach((el: any) => {

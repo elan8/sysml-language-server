@@ -27,7 +27,7 @@ const assert = __importStar(require("assert"));
 const prepareData_1 = require("../../visualization/prepareData");
 /**
  * Minimal mock data in the format produced by modelFetcher / fetchModelData.
- * Structure matches convertDTOElementsToJSON output.
+ * With graph: nodes + edges (preferred). Without: elements + relationships (legacy).
  */
 const createMockData = (overrides = {}) => ({
     elements: [
@@ -154,6 +154,37 @@ describe("prepareDataForView", () => {
         assert.ok(result != null);
         assert.ok(Array.isArray(result.elements));
         assert.strictEqual(result.elements.length, 0);
+    });
+    it("handles graph input and produces elements for views", () => {
+        const graphData = {
+            graph: {
+                nodes: [
+                    { id: "pkg1", name: "pkg1", type: "package", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, attributes: {} },
+                    { id: "pkg1::el1", name: "el1", type: "part def", parentId: "pkg1", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } }, attributes: {} },
+                ],
+                edges: [
+                    { source: "pkg1", target: "pkg1::el1", type: "contains" },
+                    { source: "pkg1::el1", target: "Other", type: "typing" },
+                ],
+            },
+        };
+        const result = (0, prepareData_1.prepareDataForView)(graphData, "interconnection-view");
+        assert.ok(Array.isArray(result.parts));
+        assert.ok(Array.isArray(result.connectors));
+    });
+    it("graphToElementTree builds tree from contains edges", () => {
+        const graph = {
+            nodes: [
+                { id: "root", name: "root", type: "package", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, attributes: {} },
+                { id: "root::child", name: "child", type: "part", parentId: "root", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } }, attributes: {} },
+            ],
+            edges: [{ source: "root", target: "root::child", type: "contains" }],
+        };
+        const roots = (0, prepareData_1.graphToElementTree)(graph);
+        assert.strictEqual(roots.length, 1);
+        assert.strictEqual(roots[0].name, "root");
+        assert.strictEqual(roots[0].children?.length, 1);
+        assert.strictEqual(roots[0].children[0].name, "child");
     });
 });
 //# sourceMappingURL=prepareData.test.js.map

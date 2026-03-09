@@ -1,12 +1,54 @@
 "use strict";
 (() => {
   // src/visualization/prepareData.ts
+  function graphToElementTree(graph) {
+    if (!graph?.nodes?.length) return [];
+    const nodes = graph.nodes;
+    const edges = graph.edges || [];
+    const nodeMap = /* @__PURE__ */ new Map();
+    nodes.forEach((n) => {
+      nodeMap.set(n.id, {
+        id: n.id,
+        name: n.name,
+        type: n.type,
+        range: n.range,
+        attributes: n.attributes || {},
+        relationships: [],
+        children: []
+      });
+    });
+    edges.forEach((e) => {
+      if ((e.type || "").toLowerCase() === "contains" && e.source && e.target) {
+        const parent = nodeMap.get(e.source);
+        const child = nodeMap.get(e.target);
+        if (parent && child) {
+          parent.children.push(child);
+        }
+      }
+      const relTypes = ["typing", "specializes", "connection", "bind", "allocate", "transition", "satisfy", "verify"];
+      if (relTypes.includes((e.type || "").toLowerCase())) {
+        const src = nodeMap.get(e.source);
+        if (src) {
+          src.relationships.push({ source: e.source, target: e.target, type: e.type, name: e.name });
+        }
+      }
+    });
+    const targetsOfContains = new Set(edges.filter((e) => (e.type || "").toLowerCase() === "contains").map((e) => e.target));
+    const roots = nodes.filter((n) => !targetsOfContains.has(n.id)).map((n) => nodeMap.get(n.id)).filter(Boolean);
+    return roots;
+  }
   function prepareDataForView(data, view) {
     if (!data) {
       return data;
     }
-    const elements = data.elements || [];
-    const relationships = data.relationships || [];
+    const hasGraph = data.graph?.nodes;
+    const elements = hasGraph ? graphToElementTree(data.graph) : data.elements || [];
+    const relationships = hasGraph ? (data.graph.edges || []).filter((e) => (e.type || "") !== "contains").map((e) => ({
+      source: e.source,
+      target: e.target,
+      type: e.type,
+      name: e.name
+    })) : data.relationships || [];
     function collectAllElements(elementList, collected = [], parentElement = null) {
       elementList.forEach((el) => {
         if (parentElement && !el.parent) {
@@ -514,12 +556,20 @@
     verification: GENERAL_VIEW_PALETTE.behavior.calc,
     analysis: GENERAL_VIEW_PALETTE.behavior.action,
     allocation: GENERAL_VIEW_PALETTE.other.allocation,
+    "allocation def": GENERAL_VIEW_PALETTE.other.allocation,
     "item def": GENERAL_VIEW_PALETTE.structural.item,
     item: GENERAL_VIEW_PALETTE.structural.item,
     "calc def": GENERAL_VIEW_PALETTE.behavior.calc,
     calc: GENERAL_VIEW_PALETTE.behavior.calc,
     "constraint def": GENERAL_VIEW_PALETTE.other.constraint,
     constraint: GENERAL_VIEW_PALETTE.other.constraint,
+    "enumeration def": GENERAL_VIEW_PALETTE.behavior.calc,
+    enumeration: GENERAL_VIEW_PALETTE.behavior.calc,
+    "metadata def": "#8B7355",
+    metadata: "#8B7355",
+    "occurrence def": GENERAL_VIEW_PALETTE.structural.item,
+    occurrence: GENERAL_VIEW_PALETTE.structural.item,
+    package: "#6B7280",
     default: GENERAL_VIEW_PALETTE.other.default
   };
 
@@ -558,6 +608,12 @@
     }
     return properties;
   }
+  function getElementProperties(element) {
+    if (element?.properties) {
+      return element.properties;
+    }
+    return normalizeAttributes(element?.attributes);
+  }
   function formatStereotype(type) {
     if (!type) {
       return "";
@@ -572,14 +628,9 @@
     if (!normalized) {
       return "";
     }
-    const suffixReplacements = [" def", " definition"];
-    for (const suffix of suffixReplacements) {
-      if (normalized.endsWith(suffix)) {
-        const stripped = normalized.slice(0, -suffix.length).trim();
-        if (stripped.length > 0) {
-          return stripped;
-        }
-      }
+    if (normalized.endsWith(" definition")) {
+      const stripped = normalized.slice(0, -11).trim() + " def";
+      if (stripped.length > 0) return stripped;
     }
     return normalized;
   }
@@ -2296,6 +2347,102 @@
   }
 
   // src/visualization/webview/elk.ts
+  function renderGeneralViewCytoscape(ctx, width, height, data) {
+    ctx.setSysMLToolbarVisible(true);
+    const container = document.getElementById("visualization");
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    const dataGraph = data?.graph;
+    const hasElements = dataGraph?.nodes?.length > 0 || dataGraph?.edges?.length > 0;
+    if (!hasElements) {
+      const msg = document.createElement("div");
+      msg.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--vscode-descriptionForeground);text-align:center;padding:2rem;";
+      msg.innerHTML = '<strong style="color:var(--vscode-editor-foreground);font-size:1.1rem;">General View</strong><p style="margin:1rem 0;">No elements to display.</p><p>The parser did not return any elements.</p>';
+      container.appendChild(msg);
+      return;
+    }
+    const cyContainer = document.createElement("div");
+    cyContainer.id = "sysml-cytoscape";
+    cyContainer.style.width = "100%";
+    cyContainer.style.height = "100%";
+    cyContainer.style.position = "absolute";
+    cyContainer.style.top = "0";
+    cyContainer.style.left = "0";
+    container.appendChild(cyContainer);
+    const builtGraph = ctx.buildGeneralViewGraph(data);
+    ctx.renderGeneralChips(builtGraph.typeStats);
+    const nodeCount = builtGraph.elements.filter((el) => el.group === "nodes").length;
+    if (nodeCount === 0) {
+      const msg = document.createElement("div");
+      msg.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--vscode-descriptionForeground);text-align:center;padding:2rem;";
+      msg.innerHTML = '<strong style="color:var(--vscode-editor-foreground);font-size:1.1rem;">General View</strong><p style="margin:1rem 0;">No matching elements to display.</p><p>Try enabling more categories using the filter chips above.</p>';
+      container.appendChild(msg);
+      return;
+    }
+    const existingCy = ctx.getCy();
+    if (existingCy) {
+      existingCy.destroy();
+    }
+    const cy2 = cytoscape({
+      container: cyContainer,
+      elements: builtGraph.elements,
+      style: ctx.getGeneralViewStyles(),
+      minZoom: MIN_SYSML_ZOOM,
+      maxZoom: MAX_SYSML_ZOOM,
+      wheelSensitivity: 1,
+      boxSelectionEnabled: false,
+      autounselectify: true
+    });
+    ctx.setCy(cy2);
+    cy2.on("zoom", () => {
+      window.userHasManuallyZoomed = true;
+      ctx.updateMinimap();
+    });
+    cy2.on("pan", () => {
+      ctx.updateMinimap();
+    });
+    cy2.on("tap", (event) => {
+      if (event.target === cy2) {
+        cy2.elements().removeClass("highlighted-sysml");
+        ctx.clearVisualHighlights();
+      }
+    });
+    let tapTimeout = null;
+    let lastTapped = null;
+    cy2.on("tap", 'node[type = "element"]', (event) => {
+      const node = event.target;
+      cy2.elements().removeClass("highlighted-sysml");
+      node.addClass("highlighted-sysml");
+      const statusEl = document.getElementById("status-text");
+      if (statusEl) statusEl.textContent = node.data("label") + " [" + node.data("sysmlType") + "]";
+      ctx.centerOnNode(node);
+      if (tapTimeout && lastTapped === node.id()) {
+        clearTimeout(tapTimeout);
+        tapTimeout = null;
+        lastTapped = null;
+        const elementNameToJump = node.data("elementName");
+        ctx.postMessage({
+          command: "jumpToElement",
+          elementName: elementNameToJump
+        });
+      } else {
+        lastTapped = node.id();
+        tapTimeout = setTimeout(() => {
+          tapTimeout = null;
+          lastTapped = null;
+        }, 250);
+      }
+    });
+    cy2.resize();
+    cy2.forceRender();
+    setTimeout(() => {
+      ctx.runGeneralViewLayout(true);
+      const statusEl = document.getElementById("status-text");
+      if (statusEl) statusEl.textContent = "General View \u2022 Tap element to highlight, double-tap to jump";
+    }, 100);
+  }
   function renderSysMLView(ctx, width, height, data) {
     ctx.setSysMLToolbarVisible(true);
     const container = document.getElementById("visualization");
@@ -2312,7 +2459,7 @@
     cyContainer.style.left = "0";
     container.appendChild(cyContainer);
     const useHierarchicalNesting = ctx.sysmlMode === "hierarchy";
-    const graph = ctx.buildSysMLGraph(data.elements || [], data.relationships || [], useHierarchicalNesting);
+    const graph = ctx.buildSysMLGraph(data, void 0, useHierarchicalNesting);
     ctx.setLastPillarStats(graph.stats);
     ctx.renderPillarChips(graph.stats);
     const existingCy = ctx.getCy();
@@ -2325,7 +2472,7 @@
       style: ctx.getSysMLStyles(),
       minZoom: MIN_SYSML_ZOOM,
       maxZoom: MAX_SYSML_ZOOM,
-      wheelSensitivity: 0.2,
+      wheelSensitivity: 1,
       boxSelectionEnabled: false,
       autounselectify: true
     });
@@ -2378,902 +2525,6 @@
         if (statusEl) statusEl.textContent = "SysML Pillar View \u2022 Tap a pillar to expand/collapse";
       }
     }, 100);
-  }
-  async function renderElkTreeView(ctx, width, height, data) {
-    const svg2 = ctx.getSvg();
-    const g2 = ctx.getG();
-    if (!svg2 || !g2) return;
-    try {
-      let collectChildAttributesAndPorts2 = function(elements) {
-        if (!elements || !Array.isArray(elements)) return;
-        elements.forEach((el) => {
-          if (!el) return;
-          if (el.children && el.children.length > 0) {
-            el.children.forEach((child) => {
-              if (!child || !child.name) return;
-              const cType = (child.type || "").toLowerCase();
-              if (cType === "attribute" || cType.includes("attribute")) childAttributeNames.add(child.name);
-              if (cType === "port" || cType.includes("port")) childPortNames.add(child.name);
-            });
-          }
-          if (el.children) collectChildAttributesAndPorts2(el.children);
-        });
-      }, findTopLevelElements2 = function(elements, depth) {
-        if (!elements || !Array.isArray(elements)) return;
-        elements.forEach((el) => {
-          if (!el || !el.name) return;
-          const typeLower = (el.type || "").toLowerCase().trim();
-          if (PACKAGE_TYPES.has(typeLower) || typeLower.includes("package")) {
-            if (el.children) findTopLevelElements2(el.children, depth);
-            return;
-          }
-          if ((typeLower === "attribute" || typeLower.includes("attribute")) && childAttributeNames.has(el.name)) return;
-          if ((typeLower === "port" || typeLower.includes("port")) && childPortNames.has(el.name)) return;
-          const category = ctx.getCategoryForType(typeLower);
-          if (!ctx.expandedGeneralCategories.has(category)) {
-            if (el.children) findTopLevelElements2(el.children, depth + 1);
-            return;
-          }
-          topLevelElements.push(el);
-          elementMap.set(el.name, el);
-          if (typeLower.includes("def")) defElements.set(el.name, el);
-          if (el.children) findTopLevelElements2(el.children, depth + 1);
-        });
-      }, collectPartToDefLinks2 = function(elements, parentElement) {
-        if (!elements) return;
-        elements.forEach((el) => {
-          if (!el || !el.name) return;
-          const typeLower = (el.type || "").toLowerCase().trim();
-          if (PACKAGE_TYPES.has(typeLower) || typeLower.includes("package")) {
-            if (el.children) collectPartToDefLinks2(el.children, null);
-            return;
-          }
-          const isPartDef = typeLower.includes("part") && typeLower.includes("def");
-          const isPartUsage = typeLower.includes("part") && !typeLower.includes("def");
-          const isRequirementDef = typeLower.includes("requirement") && typeLower.includes("def");
-          const isRequirementUsage = typeLower.includes("requirement") && !typeLower.includes("def");
-          const isDefElement = isPartDef || isRequirementDef;
-          const isUsageElement = isPartUsage || isRequirementUsage;
-          if (parentElement && isUsageElement) {
-            partToDefLinks.push({ source: parentElement, target: el.name, type: "contains" });
-          }
-          if (el.relationships) {
-            el.relationships.forEach((rel) => {
-              if (rel.type === "specializes" && rel.target) {
-                partToDefLinks.push({ source: el.name, target: rel.target, type: "specializes" });
-              }
-            });
-          }
-          let partTypes = [];
-          if (el.typings && el.typings.length > 0) {
-            partTypes = el.typings.map((t) => t.replace(/^:/, "").trim()).filter(Boolean);
-          } else {
-            let partType = null;
-            if (el.attributes && el.attributes.get) {
-              partType = el.attributes.get("partType") || el.attributes.get("type") || el.attributes.get("typedBy");
-            }
-            if (!partType && el.partType) partType = el.partType;
-            if (!partType && el.typing) partType = el.typing.replace(/^:/, "").trim();
-            if (!partType && el.fullText) {
-              const typeMatch = el.fullText.match(/:\s*([A-Z][a-zA-Z0-9_]*)/);
-              if (typeMatch) partType = typeMatch[1];
-            }
-            if (partType) {
-              partTypes = partType.split(",").map((t) => t.trim()).filter(Boolean);
-            }
-          }
-          if (partTypes.length > 0 && !typeLower.includes("def")) {
-            partTypes.forEach((pt) => {
-              partToDefLinks.push({ source: el.name, target: pt, type: "typed by" });
-            });
-          }
-          const nextParent = isDefElement || isUsageElement ? el.name : parentElement;
-          if (el.children) collectPartToDefLinks2(el.children, nextParent);
-        });
-      }, calculateTypeStats2 = function(elements) {
-        if (!elements) return;
-        elements.forEach((el) => {
-          if (!el || !el.type) return;
-          const typeLower = (el.type || "").toLowerCase().trim();
-          if (PACKAGE_TYPES.has(typeLower) || typeLower.includes("package")) {
-            if (el.children) calculateTypeStats2(el.children);
-            return;
-          }
-          const category = ctx.getCategoryForType(typeLower);
-          typeStats[category] = (typeStats[category] || 0) + 1;
-          if (el.children) calculateTypeStats2(el.children);
-        });
-      }, truncateText2 = function(text, maxChars) {
-        if (!text) return "";
-        if (text.length <= maxChars) return text;
-        return text.substring(0, maxChars - 2) + "..";
-      }, collectNodeContent2 = function(el) {
-        const sections = [];
-        const attrLines = [];
-        const portLines = [];
-        const partLines = [];
-        const actionLines = [];
-        const otherLines = [];
-        const docLines = [];
-        const subjectLines = [];
-        const stakeholderLines = [];
-        const constraintLines = [];
-        const typeLower = (el.type || "").toLowerCase();
-        const isRequirement = typeLower.includes("requirement");
-        let doc = null;
-        if (el.attributes) {
-          if (typeof el.attributes.get === "function") {
-            doc = el.attributes.get("doc") || el.attributes.get("documentation") || el.attributes.get("text");
-          } else {
-            doc = el.attributes.doc || el.attributes.documentation || el.attributes.text;
-          }
-        }
-        if (!doc && el.documentation) doc = el.documentation;
-        if (!doc && el.text) doc = el.text;
-        if (!doc && el.children && el.children.length > 0) {
-          for (let i = 0; i < el.children.length; i++) {
-            const child = el.children[i];
-            if (child && child.type && child.type.toLowerCase() === "doc") {
-              if (child.attributes) {
-                if (typeof child.attributes.get === "function") {
-                  doc = child.attributes.get("content");
-                } else {
-                  doc = child.attributes.content;
-                }
-              }
-              if (!doc) {
-                doc = child.fullText || child.name || "";
-                if (doc && doc.includes("/*")) {
-                  const startIdx = doc.indexOf("/*");
-                  const endIdx = doc.indexOf("*/");
-                  if (startIdx >= 0 && endIdx > startIdx) {
-                    doc = doc.substring(startIdx + 2, endIdx).trim();
-                  }
-                }
-              }
-              if (doc) break;
-            }
-          }
-        }
-        if (doc && typeof doc === "string") {
-          const cleanDoc = doc.split("/*").join("").split("*/").join("").trim();
-          if (cleanDoc.length > 0) {
-            docLines.push({ type: "doc", text: cleanDoc, rawDoc: true });
-          }
-        }
-        if (el.children && el.children.length > 0) {
-          el.children.forEach((child) => {
-            if (!child || !child.name) return;
-            const cType = (child.type || "").toLowerCase();
-            if (cType.includes("state") || cType.includes("package") || cType === "doc") return;
-            if (isRequirement) {
-              if (cType === "subject" || cType.includes("subject") || child.name === "subject" || child.attributes && child.attributes.get && child.attributes.get("isSubject")) {
-                let subjectType = child.typing || (child.attributes && child.attributes.get ? child.attributes.get("type") || child.attributes.get("typedBy") : "");
-                if (subjectType) subjectType = subjectType.replace(/^[:~]+/, "").trim();
-                subjectLines.push({ type: "subject", text: "\u{1F464} " + child.name + (subjectType ? " : " + subjectType : "") });
-                return;
-              }
-              if (cType === "stakeholder" || cType.includes("stakeholder")) {
-                let stakeholderType = child.typing || (child.attributes && child.attributes.get ? child.attributes.get("type") || child.attributes.get("typedBy") : "");
-                if (stakeholderType) stakeholderType = stakeholderType.replace(/^[:~]+/, "").trim();
-                stakeholderLines.push({ type: "stakeholder", text: "\u{1F3E2} " + child.name + (stakeholderType ? " : " + stakeholderType : ""), stakeholderType });
-                return;
-              }
-              if (cType.includes("constraint") || cType === "require constraint" || cType === "assume constraint" || cType === "require") {
-                const constraintExpr = child.attributes && child.attributes.get ? child.attributes.get("expression") || child.attributes.get("constraint") : "";
-                const constraintText = child.name || constraintExpr || "constraint";
-                constraintLines.push({ type: "constraint", text: "\u2699 " + constraintText });
-                return;
-              }
-            }
-            if (cType === "attribute" || cType.includes("attribute")) {
-              const dataType = child.attributes && child.attributes.get ? child.attributes.get("dataType") : null;
-              const typeStr = dataType ? " : " + dataType.split("::").pop() : "";
-              attrLines.push({ type: "attr", text: "\u25C6 " + child.name + typeStr });
-            } else if (cType === "port" || cType.includes("port")) {
-              const portType = child.attributes && child.attributes.get ? child.attributes.get("portType") : null;
-              const pTypeStr = portType ? " : " + portType : "";
-              portLines.push({ type: "port", name: child.name, text: "\u25A2 " + child.name + pTypeStr });
-              portToOwner.set(child.name, el.name);
-            } else if (cType.includes("part")) {
-              const partType = child.type ? child.type.split(" ").pop() : "";
-              partLines.push({ type: "part", text: "\u25A0 " + child.name + (partType ? " : " + partType : "") });
-            } else if (cType.includes("action")) {
-              actionLines.push({ type: "action", text: "\u25B6 " + child.name });
-            } else if (cType.includes("requirement")) {
-              otherLines.push({ type: "req", text: "\u2713 " + child.name });
-            } else if (cType.includes("interface") || cType.includes("connect")) {
-              otherLines.push({ type: "conn", text: "\u2194 " + child.name });
-            } else if (cType.includes("constraint")) {
-              constraintLines.push({ type: "constraint", text: "\u2699 " + child.name });
-            }
-          });
-        }
-        if (el.ports && el.ports.length > 0) {
-          el.ports.forEach((p) => {
-            const pName = typeof p === "string" ? p : p.name || "port";
-            if (!portLines.some((pl) => pl.name === pName)) {
-              const pType = typeof p === "object" && p.portType ? " : " + p.portType : "";
-              portLines.push({ type: "port", name: pName, text: "\u25A2 " + pName + pType });
-              portToOwner.set(pName, el.name);
-            }
-          });
-        }
-        if (isRequirement) {
-          if (docLines.length > 0) sections.push({ title: "Documentation", lines: docLines.slice(0, 6) });
-          if (subjectLines.length > 0) sections.push({ title: "Subject", lines: subjectLines.slice(0, 3) });
-          if (stakeholderLines.length > 0) sections.push({ title: "Stakeholder", lines: stakeholderLines.slice(0, 3) });
-          if (attrLines.length > 0) sections.push({ title: "Attributes", lines: attrLines.slice(0, 8) });
-          if (constraintLines.length > 0) sections.push({ title: "Constraints", lines: constraintLines.slice(0, 4) });
-          if (otherLines.length > 0) sections.push({ title: "Nested Reqs", lines: otherLines.slice(0, 4) });
-        } else {
-          if (docLines.length > 0) sections.push({ title: "Doc", lines: docLines.slice(0, 4) });
-          if (attrLines.length > 0) sections.push({ title: "Attributes", lines: attrLines.slice(0, 12) });
-          if (partLines.length > 0) sections.push({ title: "Parts", lines: partLines.slice(0, 10) });
-          if (actionLines.length > 0) sections.push({ title: "Actions", lines: actionLines.slice(0, 6) });
-          if (constraintLines.length > 0) sections.push({ title: "Constraints", lines: constraintLines.slice(0, 3) });
-          if (otherLines.length > 0) sections.push({ title: "Other", lines: otherLines.slice(0, 4) });
-        }
-        return sections;
-      }, drawGeneralEdges2 = function() {
-        g2.selectAll(".general-edges").remove();
-        const edgeGroup = g2.insert("g", ".general-nodes").attr("class", "general-edges");
-        portPositions.clear();
-        nodePositions.forEach((pos, name) => {
-          const el = pos.element;
-          if (!el) return;
-          const portSize = 10;
-          const portSpacing = 16;
-          const nodePorts = [];
-          if (el.children) {
-            el.children.forEach((child) => {
-              if (!child || !child.name) return;
-              const cType = (child.type || "").toLowerCase();
-              if (cType === "port" || cType.includes("port")) {
-                nodePorts.push({
-                  name: child.name,
-                  type: child.type,
-                  direction: child.attributes?.get ? child.attributes.get("direction") || "inout" : "inout"
-                });
-              }
-            });
-          }
-          if (el.ports) {
-            el.ports.forEach((p) => {
-              const pName = typeof p === "string" ? p : p.name || "port";
-              if (!nodePorts.some((np) => np.name === pName)) {
-                nodePorts.push({ name: pName, type: "port", direction: typeof p === "object" && p.direction ? p.direction : "inout" });
-              }
-            });
-          }
-          const leftPorts = [];
-          const rightPorts = [];
-          nodePorts.forEach((p, i) => {
-            if (i % 2 === 0) leftPorts.push(p);
-            else rightPorts.push(p);
-          });
-          const portStartY = 55;
-          leftPorts.forEach((port, i) => {
-            const py = portStartY + i * portSpacing;
-            if (py <= pos.height - 20) {
-              portPositions.set(port.name, { ownerName: name, x: pos.x, y: pos.y + py, side: "left" });
-            }
-          });
-          rightPorts.forEach((port, i) => {
-            const py = portStartY + i * portSpacing;
-            if (py <= pos.height - 20) {
-              portPositions.set(port.name, { ownerName: name, x: pos.x + pos.width, y: pos.y + py, side: "right" });
-            }
-          });
-        });
-        const connections = [];
-        function collectRelationships(elements) {
-          if (!elements) return;
-          elements.forEach((el) => {
-            if (el.relationships) {
-              el.relationships.forEach((rel) => {
-                const tgt = rel.target || rel.relatedElement;
-                if (elementMap.has(el.name) && elementMap.has(tgt)) {
-                  const rType = rel.type || "relates";
-                  connections.push({
-                    source: el.name,
-                    target: tgt,
-                    type: rType,
-                    isSpecialization: rType === "specializes",
-                    isTypedBy: rType === "typing" || rType === "typed by",
-                    isContains: rType === "contains" || rType === "containment"
-                  });
-                }
-              });
-            }
-            if (el.children) collectRelationships(el.children);
-          });
-        }
-        collectRelationships(elementsData);
-        partToDefLinks.forEach((link) => {
-          if (elementMap.has(link.source) && elementMap.has(link.target)) {
-            connections.push({
-              source: link.source,
-              target: link.target,
-              type: link.type,
-              isSpecialization: link.type === "specializes",
-              isTypedBy: link.type === "typed by",
-              isContains: link.type === "contains"
-            });
-          }
-        });
-        const drawnEdges = /* @__PURE__ */ new Set();
-        const edgeOffsets = {};
-        connections.forEach((conn) => {
-          const srcPos = nodePositions.get(conn.source);
-          const tgtPos = nodePositions.get(conn.target);
-          if (!srcPos || !tgtPos || conn.source === conn.target) return;
-          let edgeTypeNorm = conn.type;
-          if (edgeTypeNorm === "typing") edgeTypeNorm = "typed by";
-          if (edgeTypeNorm === "connection") edgeTypeNorm = "connect";
-          if (edgeTypeNorm === "allocation") edgeTypeNorm = "allocate";
-          if (edgeTypeNorm === "binding") edgeTypeNorm = "bind";
-          if (edgeTypeNorm === "containment") edgeTypeNorm = "contains";
-          const edgeKey = conn.source + "->" + conn.target + "::" + edgeTypeNorm;
-          if (drawnEdges.has(edgeKey)) return;
-          drawnEdges.add(edgeKey);
-          const pairKey = [conn.source, conn.target].sort().join("--");
-          const pairCount = (edgeOffsets[pairKey] || 0) + 1;
-          edgeOffsets[pairKey] = pairCount;
-          const offsetStep = 22;
-          const isReverse = conn.source > conn.target;
-          const offset = (pairCount - 1) * offsetStep * (isReverse && pairCount > 1 ? -1 : 1);
-          const srcCx = srcPos.x + srcPos.width / 2;
-          const srcCy = srcPos.y + srcPos.height / 2;
-          const tgtCx = tgtPos.x + tgtPos.width / 2;
-          const tgtCy = tgtPos.y + tgtPos.height / 2;
-          const dx = tgtCx - srcCx;
-          const dy = tgtCy - srcCy;
-          let x1, y1, x2, y2;
-          if (Math.abs(dx) > Math.abs(dy)) {
-            x1 = dx > 0 ? srcPos.x + srcPos.width : srcPos.x;
-            y1 = srcCy + offset;
-            x2 = dx > 0 ? tgtPos.x : tgtPos.x + tgtPos.width;
-            y2 = tgtCy + offset;
-          } else {
-            x1 = srcCx + offset;
-            y1 = dy > 0 ? srcPos.y + srcPos.height : srcPos.y;
-            x2 = tgtCx + offset;
-            y2 = dy > 0 ? tgtPos.y : tgtPos.y + tgtPos.height;
-          }
-          const midX = (x1 + x2) / 2;
-          const midY = (y1 + y2) / 2;
-          let pathD;
-          if (Math.abs(dx) > Math.abs(dy)) {
-            pathD = "M" + x1 + "," + y1 + " L" + midX + "," + y1 + " L" + midX + "," + y2 + " L" + x2 + "," + y2;
-          } else {
-            pathD = "M" + x1 + "," + y1 + " L" + x1 + "," + midY + " L" + x2 + "," + midY + " L" + x2 + "," + y2;
-          }
-          let strokeColor, strokeDash, markerEnd, strokeWidth;
-          if (conn.isSpecialization || conn.type === "specializes") {
-            strokeColor = GENERAL_VIEW_PALETTE.structural.port;
-            strokeDash = "none";
-            markerEnd = "url(#general-specializes)";
-            strokeWidth = "1.5px";
-          } else if (conn.isTypedBy || conn.type === "typed by" || conn.type === "typing") {
-            strokeColor = GENERAL_VIEW_PALETTE.requirements.requirement;
-            strokeDash = "5,3";
-            markerEnd = "url(#general-typed-by)";
-            strokeWidth = "1.5px";
-          } else if (conn.isContains || conn.type === "contains" || conn.type === "containment") {
-            strokeColor = GENERAL_VIEW_PALETTE.structural.part;
-            strokeDash = "none";
-            markerEnd = "url(#general-contains)";
-            strokeWidth = "1.5px";
-          } else if (conn.type === "connect" || conn.type === "connection" || conn.type === "interface") {
-            strokeColor = GENERAL_VIEW_PALETTE.structural.interface;
-            strokeDash = "none";
-            markerEnd = "url(#general-connect)";
-            strokeWidth = "2px";
-          } else if (conn.type === "bind" || conn.type === "binding") {
-            strokeColor = "#808080";
-            strokeDash = "2,2";
-            markerEnd = "none";
-            strokeWidth = "1px";
-          } else if (conn.type === "allocate" || conn.type === "allocation") {
-            strokeColor = GENERAL_VIEW_PALETTE.other.allocation;
-            strokeDash = "8,4";
-            markerEnd = "url(#general-arrow)";
-            strokeWidth = "1.5px";
-          } else if (conn.type === "flow") {
-            strokeColor = GENERAL_VIEW_PALETTE.structural.part;
-            strokeDash = "none";
-            markerEnd = "url(#general-arrow)";
-            strokeWidth = "2px";
-          } else if (conn.type === "subsetting" || conn.type === "redefinition") {
-            strokeColor = GENERAL_VIEW_PALETTE.behavior.state;
-            strokeDash = "4,2";
-            markerEnd = "url(#general-arrow)";
-            strokeWidth = "1.5px";
-          } else if (conn.type === "satisfy" || conn.type === "verify") {
-            strokeColor = GENERAL_VIEW_PALETTE.behavior.action;
-            strokeDash = "6,3";
-            markerEnd = "url(#general-arrow)";
-            strokeWidth = "1.5px";
-          } else if (conn.type === "dependency") {
-            strokeColor = GENERAL_VIEW_PALETTE.other.allocation;
-            strokeDash = "6,3";
-            markerEnd = "url(#general-arrow)";
-            strokeWidth = "1.5px";
-          } else {
-            strokeColor = "var(--vscode-charts-blue)";
-            strokeDash = "none";
-            markerEnd = "url(#general-arrow)";
-            strokeWidth = "1.5px";
-          }
-          const origStroke = strokeColor;
-          const origWidth = strokeWidth;
-          const edgePath = edgeGroup.append("path").attr("d", pathD).attr("class", "relationship-edge general-connector").attr("data-connector-id", "rel-" + conn.source + "-" + conn.target).attr("data-source", conn.source).attr("data-target", conn.target).attr("data-type", conn.type || "relates").style("fill", "none").style("stroke", strokeColor).style("stroke-width", strokeWidth).style("stroke-dasharray", strokeDash).style("opacity", 0.85).style("marker-end", markerEnd).style("cursor", "pointer");
-          edgePath.on("click", function(event) {
-            event.stopPropagation();
-            d3.selectAll(".general-connector").each(function() {
-              const el = d3.select(this);
-              const os = el.attr("data-original-stroke");
-              const ow = el.attr("data-original-width");
-              if (os) {
-                el.style("stroke", os).style("stroke-width", ow).classed("connector-highlighted", false);
-                el.attr("data-original-stroke", null).attr("data-original-width", null);
-              }
-            });
-            d3.select(this).attr("data-original-stroke", origStroke).attr("data-original-width", origWidth).style("stroke", "#FFD700").style("stroke-width", "4px").classed("connector-highlighted", true);
-            this.parentNode.appendChild(this);
-            ctx.postMessage({ command: "connectorSelected", source: conn.source, target: conn.target, type: conn.type });
-          });
-          edgePath.on("mouseenter", function() {
-            const self = d3.select(this);
-            if (!self.classed("connector-highlighted")) self.style("stroke-width", "3px");
-          });
-          edgePath.on("mouseleave", function() {
-            const self = d3.select(this);
-            if (!self.classed("connector-highlighted")) self.style("stroke-width", origWidth);
-          });
-          if (conn.type) {
-            const labelX = Math.abs(dx) > Math.abs(dy) ? midX : (x1 + x2) / 2;
-            const labelY = Math.abs(dx) > Math.abs(dy) ? (y1 + y2) / 2 - 6 : midY - 6;
-            let labelText = conn.type;
-            if (conn.isSpecialization || conn.type === "specializes") labelText = ":>";
-            else if (conn.isTypedBy || conn.type === "typed by") labelText = ":";
-            else if (conn.isContains || conn.type === "contains") labelText = "\u25C6";
-            else if (conn.type === "connect") labelText = "connect";
-            else if (conn.type === "bind") labelText = "=";
-            else if (conn.type.length > 12) labelText = conn.type.substring(0, 10) + "..";
-            edgeGroup.append("rect").attr("x", labelX - 22).attr("y", labelY - 9).attr("width", 44).attr("height", 14).attr("rx", 7).style("fill", "var(--vscode-editor-background)").style("opacity", 0.92);
-            edgeGroup.append("text").attr("x", labelX).attr("y", labelY).attr("text-anchor", "middle").text(labelText).style("font-size", "9px").style("font-weight", "bold").style("fill", strokeColor);
-          }
-        });
-        const portConnections = [];
-        function collectPortConnections(elements) {
-          if (!elements) return;
-          elements.forEach((el) => {
-            const elType = (el.type || "").toLowerCase();
-            if (elType.includes("connection") || elType.includes("interface") || elType.includes("connect") || elType === "bind") {
-              const fromAttr = el.attributes?.get ? el.attributes.get("from") : el.attributes?.from;
-              const toAttr = el.attributes?.get ? el.attributes.get("to") : el.attributes?.to;
-              if (fromAttr && toAttr) {
-                portConnections.push({
-                  name: el.name,
-                  fromPort: fromAttr.split(".").pop(),
-                  toPort: toAttr.split(".").pop(),
-                  fromFull: fromAttr,
-                  toFull: toAttr,
-                  type: elType === "bind" ? "bind" : "connect"
-                });
-              }
-            }
-            if (el.children?.length > 0 && (elType.includes("connection") || elType.includes("interface"))) {
-              const ends = [];
-              el.children.forEach((child) => {
-                const childType = (child.type || "").toLowerCase();
-                if (childType === "end" || child.name === "end") {
-                  let ref = child.attributes?.get ? child.attributes.get("reference") || child.attributes.get("typedBy") : "";
-                  if (!ref && child.attributes) ref = child.attributes.reference || child.attributes.typedBy || "";
-                  if (ref) ends.push(ref);
-                }
-              });
-              if (ends.length >= 2) {
-                portConnections.push({
-                  name: el.name,
-                  fromPort: ends[0].split(".").pop(),
-                  toPort: ends[1].split(".").pop(),
-                  fromFull: ends[0],
-                  toFull: ends[1],
-                  type: "connect"
-                });
-              }
-            }
-            if (el.children) collectPortConnections(el.children);
-          });
-        }
-        collectPortConnections(elementsData);
-        portConnections.forEach((pConn) => {
-          const fromPos = portPositions.get(pConn.fromPort);
-          const toPos = portPositions.get(pConn.toPort);
-          if (!fromPos || !toPos) return;
-          let x1 = fromPos.x, y1 = fromPos.y, x2 = toPos.x, y2 = toPos.y;
-          if (fromPos.side === "left") x1 -= 5;
-          else if (fromPos.side === "right") x1 += 5;
-          if (toPos.side === "left") x2 -= 5;
-          else if (toPos.side === "right") x2 += 5;
-          const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
-          const dx = x2 - x1, dy = y2 - y1;
-          let pathD;
-          if (Math.abs(dx) > Math.abs(dy)) {
-            pathD = "M" + x1 + "," + y1 + " L" + midX + "," + y1 + " L" + midX + "," + y2 + " L" + x2 + "," + y2;
-          } else {
-            pathD = "M" + x1 + "," + y1 + " L" + x1 + "," + midY + " L" + x2 + "," + midY + " L" + x2 + "," + y2;
-          }
-          const isBind = pConn.type === "bind";
-          const strokeColor = isBind ? GENERAL_VIEW_PALETTE.requirements.requirement : GENERAL_VIEW_PALETTE.structural.interface;
-          const strokeDash = isBind ? "4,2" : "none";
-          const portOrigStroke = strokeColor;
-          const portOrigWidth = "2px";
-          const portEdge = edgeGroup.append("path").attr("d", pathD).attr("class", "port-connection-edge general-connector").attr("data-connector-id", "port-" + pConn.fromPort + "-" + pConn.toPort).attr("data-source", pConn.fromFull || pConn.fromPort).attr("data-target", pConn.toFull || pConn.toPort).attr("data-type", pConn.type || "connect").style("fill", "none").style("stroke", strokeColor).style("stroke-width", "2px").style("stroke-dasharray", strokeDash).style("opacity", 0.9).style("marker-end", "url(#general-connect)").style("marker-start", "url(#general-connect)").style("cursor", "pointer");
-          portEdge.on("click", function(event) {
-            event.stopPropagation();
-            d3.selectAll(".general-connector").each(function() {
-              const el = d3.select(this);
-              const os = el.attr("data-original-stroke");
-              const ow = el.attr("data-original-width");
-              if (os) {
-                el.style("stroke", os).style("stroke-width", ow).classed("connector-highlighted", false);
-                el.attr("data-original-stroke", null).attr("data-original-width", null);
-              }
-            });
-            d3.select(this).attr("data-original-stroke", portOrigStroke).attr("data-original-width", portOrigWidth).style("stroke", "#FFD700").style("stroke-width", "4px").classed("connector-highlighted", true);
-            this.parentNode.appendChild(this);
-            ctx.postMessage({ command: "connectorSelected", source: pConn.fromFull || pConn.fromPort, target: pConn.toFull || pConn.toPort, type: pConn.type, name: pConn.name });
-          });
-          portEdge.on("mouseenter", function() {
-            const self = d3.select(this);
-            if (!self.classed("connector-highlighted")) self.style("stroke-width", "3px");
-          });
-          portEdge.on("mouseleave", function() {
-            const self = d3.select(this);
-            if (!self.classed("connector-highlighted")) self.style("stroke-width", portOrigWidth);
-          });
-          if (pConn.name) {
-            edgeGroup.append("text").attr("x", midX).attr("y", midY - 6).attr("text-anchor", "middle").text(pConn.name.length > 15 ? pConn.name.substring(0, 13) + ".." : pConn.name).style("font-size", "8px").style("fill", strokeColor).style("font-style", "italic");
-          }
-        });
-      };
-      var collectChildAttributesAndPorts = collectChildAttributesAndPorts2, findTopLevelElements = findTopLevelElements2, collectPartToDefLinks = collectPartToDefLinks2, calculateTypeStats = calculateTypeStats2, truncateText = truncateText2, collectNodeContent = collectNodeContent2, drawGeneralEdges = drawGeneralEdges2;
-      let elementsData = data && data.elements ? data.elements : ctx.currentData ? ctx.currentData.elements : null;
-      if (ctx.selectedDiagramIndex > 0 && elementsData) {
-        let findPackagesForFilter2 = function(elementList, depth = 0) {
-          elementList.forEach((el) => {
-            const typeLower = (el.type || "").toLowerCase();
-            if (typeLower.includes("package") && depth <= 3 && !seenPackages.has(el.name)) {
-              seenPackages.add(el.name);
-              packagesArray.push({ name: el.name, element: el });
-            }
-            if (el.children && el.children.length > 0) {
-              findPackagesForFilter2(el.children, depth + 1);
-            }
-          });
-        };
-        var findPackagesForFilter = findPackagesForFilter2;
-        const packagesArray = [];
-        const seenPackages = /* @__PURE__ */ new Set();
-        findPackagesForFilter2(elementsData);
-        const selectedPackageIdx = ctx.selectedDiagramIndex - 1;
-        if (selectedPackageIdx >= 0 && selectedPackageIdx < packagesArray.length) {
-          const selectedPackage = packagesArray[selectedPackageIdx];
-          if (selectedPackage.element) {
-            elementsData = [selectedPackage.element];
-          }
-        }
-      }
-      if (!elementsData || elementsData.length === 0) {
-        ctx.renderPlaceholder(
-          width,
-          height,
-          "General View",
-          "No elements to display.\\n\\nThe parser did not return any elements.",
-          ctx.currentData
-        );
-        return;
-      }
-      const PACKAGE_TYPES = /* @__PURE__ */ new Set(["package", "library package", "standard library package"]);
-      const topLevelElements = [];
-      const elementMap = /* @__PURE__ */ new Map();
-      const portToOwner = /* @__PURE__ */ new Map();
-      const defElements = /* @__PURE__ */ new Map();
-      const partToDefLinks = [];
-      const childAttributeNames = /* @__PURE__ */ new Set();
-      const childPortNames = /* @__PURE__ */ new Set();
-      const typeStats = {};
-      calculateTypeStats2(elementsData);
-      ctx.renderGeneralChips(typeStats);
-      collectChildAttributesAndPorts2(elementsData);
-      findTopLevelElements2(elementsData, 0);
-      collectPartToDefLinks2(elementsData, null);
-      if (topLevelElements.length === 0) {
-        ctx.renderPlaceholder(
-          width,
-          height,
-          "General View",
-          "No matching elements to display.\\n\\nTry enabling more categories using the filter chips above.",
-          ctx.currentData
-        );
-        return;
-      }
-      const elementCount = topLevelElements.length;
-      const nodeWidth = 150;
-      const nodeBaseHeight = 44;
-      const lineHeight = 13;
-      const sectionGap = 5;
-      const padding = 24;
-      const hSpacing = elementCount > 25 ? 40 : 34;
-      const vSpacing = elementCount > 25 ? 36 : 32;
-      const nodePositions = /* @__PURE__ */ new Map();
-      const portPositions = /* @__PURE__ */ new Map();
-      const availableWidth = width - padding * 2;
-      const maxColsByWidth = Math.max(4, Math.floor((availableWidth + hSpacing) / (nodeWidth + hSpacing)));
-      const cols = Math.max(4, Math.min(maxColsByWidth, topLevelElements.length));
-      const nodeData = topLevelElements.map((el, index) => {
-        const sections = collectNodeContent2(el);
-        let totalLines = 0;
-        const lineMaxChars = Math.floor((nodeWidth - 20) / 5);
-        sections.forEach((s) => {
-          totalLines += 1;
-          s.lines.forEach((line) => {
-            if (line.rawDoc && line.type === "doc") {
-              const estimatedLines = Math.ceil(line.text.length / (lineMaxChars - 3));
-              const maxDocLines = s.title === "Documentation" ? 6 : 4;
-              totalLines += Math.min(estimatedLines, maxDocLines);
-            } else {
-              totalLines += 1;
-            }
-          });
-        });
-        const nodeHeight = Math.max(60, nodeBaseHeight + totalLines * lineHeight + sections.length * sectionGap);
-        const typeLower = (el.type || "").toLowerCase();
-        const category = ctx.getCategoryForType(typeLower);
-        return { el, sections, height: nodeHeight, index, category };
-      });
-      const categoryOrder = ctx.GENERAL_VIEW_CATEGORIES.map((c) => c.id);
-      const groupedNodes = {};
-      categoryOrder.forEach((catId) => {
-        groupedNodes[catId] = [];
-      });
-      nodeData.forEach((nd) => {
-        if (!groupedNodes[nd.category]) groupedNodes[nd.category] = [];
-        groupedNodes[nd.category].push(nd);
-      });
-      const categoryStartPositions = /* @__PURE__ */ new Map();
-      let currentY = padding;
-      const groupSpacing = ctx.showCategoryHeaders ? 65 : 45;
-      const categoryLabelHeight = ctx.showCategoryHeaders ? 28 : 0;
-      categoryOrder.forEach((catId) => {
-        const group = groupedNodes[catId];
-        if (!group || group.length === 0) return;
-        categoryStartPositions.set(catId, { y: currentY, count: group.length });
-        currentY += categoryLabelHeight;
-        const groupRowHeights = [];
-        for (let i = 0; i < group.length; i += cols) {
-          const rowNodes = group.slice(i, Math.min(i + cols, group.length));
-          groupRowHeights.push(Math.max(...rowNodes.map((n) => n.height)));
-        }
-        group.forEach((nd, idx) => {
-          const col = idx % cols;
-          const row = Math.floor(idx / cols);
-          let y = currentY;
-          for (let r = 0; r < row; r++) {
-            y += groupRowHeights[r] + vSpacing;
-          }
-          nodePositions.set(nd.el.name, {
-            x: padding + col * (nodeWidth + hSpacing),
-            y,
-            width: nodeWidth,
-            height: nd.height,
-            element: nd.el,
-            sections: nd.sections,
-            category: nd.category
-          });
-        });
-        let totalGroupHeight = 0;
-        groupRowHeights.forEach((h) => {
-          totalGroupHeight += h + vSpacing;
-        });
-        currentY += totalGroupHeight + groupSpacing;
-      });
-      const defs = svg2.select("defs").empty() ? svg2.append("defs") : svg2.select("defs");
-      defs.selectAll("#general-node-shadow").remove();
-      defs.append("filter").attr("id", "general-node-shadow").attr("x", "-20%").attr("y", "-20%").attr("width", "140%").attr("height", "140%").append("feDropShadow").attr("dx", 0).attr("dy", 1).attr("stdDeviation", 2).attr("flood-color", "#000").attr("flood-opacity", 0.15);
-      defs.selectAll("#general-arrow").remove();
-      defs.append("marker").attr("id", "general-arrow").attr("viewBox", "0 -5 10 10").attr("refX", 8).attr("refY", 0).attr("markerWidth", 5).attr("markerHeight", 5).attr("orient", "auto").append("path").attr("d", "M0,-4L10,0L0,4").style("fill", "var(--vscode-charts-blue)");
-      if (ctx.showCategoryHeaders) {
-        const headerGroup = g2.append("g").attr("class", "category-headers");
-        categoryStartPositions.forEach((info, catId) => {
-          const category = ctx.GENERAL_VIEW_CATEGORIES.find((c) => c.id === catId);
-          if (!category) return;
-          const headerG = headerGroup.append("g").attr("transform", "translate(" + padding + "," + info.y + ")");
-          headerG.append("text").attr("x", 0).attr("y", 16).style("font-size", "14px").style("font-weight", "600").style("fill", category.color).text(category.label + " (" + info.count + ")");
-          headerG.append("line").attr("x1", 0).attr("y1", 24).attr("x2", availableWidth).attr("y2", 24).style("stroke", category.color).style("stroke-width", "2px").style("opacity", 0.35);
-        });
-      }
-      const nodeGroup = g2.append("g").attr("class", "general-nodes");
-      defs.selectAll("#general-specializes").remove();
-      defs.append("marker").attr("id", "general-specializes").attr("viewBox", "0 -6 12 12").attr("refX", 11).attr("refY", 0).attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5Z").style("fill", "var(--vscode-editor-background)").style("stroke", GENERAL_VIEW_PALETTE.structural.port).style("stroke-width", "1.5px");
-      defs.selectAll("#general-typed-by").remove();
-      defs.append("marker").attr("id", "general-typed-by").attr("viewBox", "0 -5 10 10").attr("refX", 9).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-4L10,0L0,4Z").style("fill", GENERAL_VIEW_PALETTE.requirements.requirement);
-      defs.selectAll("#general-contains").remove();
-      defs.append("marker").attr("id", "general-contains").attr("viewBox", "-6 -6 12 12").attr("refX", 0).attr("refY", 0).attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto").append("path").attr("d", "M-5,0L0,-4L5,0L0,4Z").style("fill", GENERAL_VIEW_PALETTE.structural.part);
-      defs.selectAll("#general-connect").remove();
-      defs.append("marker").attr("id", "general-connect").attr("viewBox", "0 -4 8 8").attr("refX", 4).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("circle").attr("cx", 4).attr("cy", 0).attr("r", 3).style("fill", GENERAL_VIEW_PALETTE.structural.interface);
-      defs.selectAll("#general-arrow").remove();
-      defs.append("marker").attr("id", "general-arrow").attr("viewBox", "0 -5 10 10").attr("refX", 8).attr("refY", 0).attr("markerWidth", 5).attr("markerHeight", 5).attr("orient", "auto").append("path").attr("d", "M0,-4L10,0L0,4").style("fill", "var(--vscode-charts-blue)");
-      nodePositions.forEach((pos, name) => {
-        const el = pos.element;
-        const typeLower = (el.type || "").toLowerCase();
-        const typeColor = getTypeColor(el.type);
-        const isLibValidated = ctx.isLibraryValidated(el);
-        const isDefinition = typeLower.includes("def");
-        const isUsage = !isDefinition && (typeLower.includes("part") || typeLower.includes("action") || typeLower.includes("port"));
-        let typedByName = null;
-        if (el.attributes?.get) {
-          typedByName = el.attributes.get("partType") || el.attributes.get("type") || el.attributes.get("typedBy");
-        }
-        if (!typedByName && el.partType) typedByName = el.partType;
-        const nodeG = nodeGroup.append("g").attr("transform", "translate(" + pos.x + "," + pos.y + ")").attr("class", "general-node" + (isDefinition ? " definition-node" : " usage-node")).attr("data-element-name", name).style("cursor", "pointer");
-        const _nodeStroke = isLibValidated ? GENERAL_VIEW_PALETTE.structural.part : typeColor;
-        const _nodeStrokeW = isUsage ? "3px" : "2px";
-        nodeG.append("rect").attr("class", "node-background").attr("width", pos.width).attr("height", pos.height).attr("rx", isDefinition ? 5 : 10).attr("data-original-stroke", _nodeStroke).attr("data-original-width", _nodeStrokeW).style("fill", "var(--vscode-editor-background)").style("stroke", _nodeStroke).style("stroke-width", _nodeStrokeW).style("stroke-dasharray", isDefinition ? "6,3" : "none").style("filter", "url(#general-node-shadow)");
-        nodeG.append("rect").attr("width", pos.width).attr("height", 5).attr("rx", 2).style("fill", typeColor);
-        nodeG.append("rect").attr("y", 5).attr("width", pos.width).attr("height", typedByName ? 36 : 28).style("fill", "var(--vscode-button-secondaryBackground)");
-        let stereoDisplay = el.type || "element";
-        if (typeLower.includes("part def")) stereoDisplay = "part def";
-        else if (typeLower.includes("part")) stereoDisplay = "part";
-        else if (typeLower.includes("port def")) stereoDisplay = "port def";
-        else if (typeLower.includes("action def")) stereoDisplay = "action def";
-        else if (typeLower.includes("action")) stereoDisplay = "action";
-        else if (typeLower.includes("requirement def")) stereoDisplay = "requirement def";
-        else if (typeLower.includes("requirement")) stereoDisplay = "requirement";
-        else if (typeLower.includes("use case def")) stereoDisplay = "use case def";
-        else if (typeLower.includes("use case")) stereoDisplay = "use case";
-        else if (typeLower.includes("interface def")) stereoDisplay = "interface def";
-        else if (typeLower.includes("interface")) stereoDisplay = "interface";
-        else if (typeLower.includes("state def")) stereoDisplay = "state def";
-        else if (typeLower.includes("state")) stereoDisplay = "state";
-        else if (typeLower.includes("attribute def")) stereoDisplay = "attribute def";
-        else if (typeLower.includes("attribute")) stereoDisplay = "attribute";
-        nodeG.append("text").attr("x", pos.width / 2).attr("y", 17).attr("text-anchor", "middle").text("\xAB" + stereoDisplay + "\xBB").style("font-size", "9px").style("fill", typeColor);
-        const displayName = truncateText2(name, 26);
-        nodeG.append("text").attr("class", "node-name-text").attr("data-element-name", name).attr("x", pos.width / 2).attr("y", 31).attr("text-anchor", "middle").text(displayName).style("font-size", "11px").style("font-weight", "bold").style("fill", "var(--vscode-editor-foreground)");
-        if (typedByName) {
-          nodeG.append("text").attr("x", pos.width / 2).attr("y", 43).attr("text-anchor", "middle").text(": " + truncateText2(typedByName, 24)).style("font-size", "10px").style("font-style", "italic").style("fill", GENERAL_VIEW_PALETTE.requirements.requirement);
-        }
-        const contentStartY = typedByName ? 50 : 38;
-        const clipId = "clip-" + name.replace(/[^a-zA-Z0-9]/g, "_");
-        defs.append("clipPath").attr("id", clipId).append("rect").attr("x", 4).attr("y", contentStartY).attr("width", pos.width - 8).attr("height", pos.height - contentStartY - 4);
-        const contentGroup = nodeG.append("g").attr("clip-path", "url(#" + clipId + ")");
-        let yOffset = contentStartY + 8;
-        pos.sections.forEach((section) => {
-          contentGroup.append("text").attr("x", 8).attr("y", yOffset).text("\u2500 " + section.title + " \u2500").style("font-size", "9px").style("font-weight", "bold").style("fill", "var(--vscode-descriptionForeground)");
-          yOffset += lineHeight;
-          section.lines.forEach((line) => {
-            if (line.type === "port" && line.name) {
-              portPositions.set(line.name, { ownerName: name, x: pos.x, y: pos.y + yOffset, nodeWidth: pos.width });
-            }
-            const fillColor = line.type === "port" ? "var(--vscode-charts-yellow)" : line.type === "part" ? "var(--vscode-charts-green)" : line.type === "action" ? "var(--vscode-charts-orange)" : line.type === "req" ? "var(--vscode-charts-blue)" : line.type === "attr" ? "var(--vscode-charts-lines)" : line.type === "doc" ? "var(--vscode-foreground)" : line.type === "subject" ? "var(--vscode-charts-purple)" : line.type === "constraint" ? "var(--vscode-charts-red)" : "var(--vscode-descriptionForeground)";
-            const lineMaxChars = Math.floor((pos.width - 20) / 5);
-            if (line.rawDoc && line.type === "doc") {
-              const docText = line.text;
-              const words = docText.split(/\s+/);
-              const docLineTexts = [];
-              let currentDocLine = "";
-              let isFirst = true;
-              words.forEach((word) => {
-                const limit = isFirst ? lineMaxChars - 3 : lineMaxChars;
-                if ((currentDocLine + " " + word).length > limit) {
-                  if (currentDocLine) {
-                    docLineTexts.push((isFirst ? "\u{1F4C4} " : "") + currentDocLine);
-                    isFirst = false;
-                  }
-                  currentDocLine = word;
-                } else {
-                  currentDocLine = currentDocLine ? currentDocLine + " " + word : word;
-                }
-              });
-              if (currentDocLine) docLineTexts.push((isFirst ? "\u{1F4C4} " : "") + currentDocLine);
-              const maxDocLines = section.title === "Documentation" ? 6 : 4;
-              docLineTexts.slice(0, maxDocLines).forEach((docLine) => {
-                contentGroup.append("text").attr("x", 12).attr("y", yOffset).text(docLine).style("font-size", "10px").style("fill", fillColor);
-                yOffset += lineHeight;
-              });
-            } else {
-              contentGroup.append("text").attr("x", 12).attr("y", yOffset).text(truncateText2(line.text, lineMaxChars)).style("font-size", "10px").style("fill", fillColor);
-              yOffset += lineHeight;
-            }
-          });
-          yOffset += sectionGap;
-        });
-        nodeG.on("click", function(event) {
-          event.stopPropagation();
-          ctx.clearVisualHighlights();
-          const clickedNode = d3.select(this);
-          clickedNode.classed("highlighted-element", true);
-          clickedNode.select(".node-background").style("stroke", "#FFD700").style("stroke-width", "3px");
-          ctx.postMessage({ command: "jumpToElement", elementName: name, skipCentering: true });
-        }).on("dblclick", function(event) {
-          event.stopPropagation();
-          ctx.onStartInlineEdit(nodeG, name, pos.x, pos.y, pos.width);
-        });
-        nodeG.style("cursor", "grab");
-        const generalDrag = d3.drag().on("start", function(event) {
-          d3.select(this).raise().style("cursor", "grabbing");
-          event.sourceEvent.stopPropagation();
-        }).on("drag", function(event) {
-          pos.x += event.dx;
-          pos.y += event.dy;
-          d3.select(this).attr("transform", "translate(" + pos.x + "," + pos.y + ")");
-          drawGeneralEdges2();
-        }).on("end", function() {
-          d3.select(this).style("cursor", "grab");
-        });
-        nodeG.call(generalDrag);
-        const portSize = 10;
-        const portSpacing = 16;
-        const nodePorts = [];
-        if (el.children) {
-          el.children.forEach((child) => {
-            if (!child || !child.name) return;
-            const cType = (child.type || "").toLowerCase();
-            if (cType === "port" || cType.includes("port")) {
-              nodePorts.push({
-                name: child.name,
-                type: child.type,
-                direction: child.attributes?.get ? child.attributes.get("direction") || "inout" : "inout"
-              });
-            }
-          });
-        }
-        if (el.ports) {
-          el.ports.forEach((p) => {
-            const pName = typeof p === "string" ? p : p.name || "port";
-            if (!nodePorts.some((np) => np.name === pName)) {
-              nodePorts.push({ name: pName, type: "port", direction: typeof p === "object" && p.direction ? p.direction : "inout" });
-            }
-          });
-        }
-        const leftPorts = [];
-        const rightPorts = [];
-        nodePorts.forEach((p, i) => {
-          if (i % 2 === 0) leftPorts.push(p);
-          else rightPorts.push(p);
-        });
-        const portStartY = Math.max(55, contentStartY + 10);
-        leftPorts.forEach((port, i) => {
-          const py = portStartY + i * portSpacing;
-          if (py > pos.height - 20) return;
-          nodeG.append("rect").attr("class", "port-icon").attr("x", -portSize / 2).attr("y", py - portSize / 2).attr("width", portSize).attr("height", portSize).style("fill", port.direction === "in" ? GENERAL_VIEW_PALETTE.structural.port : port.direction === "out" ? GENERAL_VIEW_PALETTE.structural.part : GENERAL_VIEW_PALETTE.structural.attribute).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "1px");
-          nodeG.append("text").attr("x", -portSize - 3).attr("y", py + 3).attr("text-anchor", "end").text(port.name).style("font-size", "8px").style("fill", GENERAL_VIEW_PALETTE.structural.port);
-          portPositions.set(port.name, { ownerName: name, x: pos.x, y: pos.y + py, side: "left" });
-        });
-        rightPorts.forEach((port, i) => {
-          const py = portStartY + i * portSpacing;
-          if (py > pos.height - 20) return;
-          nodeG.append("rect").attr("class", "port-icon").attr("x", pos.width - portSize / 2).attr("y", py - portSize / 2).attr("width", portSize).attr("height", portSize).style("fill", port.direction === "in" ? GENERAL_VIEW_PALETTE.structural.port : port.direction === "out" ? GENERAL_VIEW_PALETTE.structural.part : GENERAL_VIEW_PALETTE.structural.attribute).style("stroke", "var(--vscode-editor-background)").style("stroke-width", "1px");
-          nodeG.append("text").attr("x", pos.width + portSize + 3).attr("y", py + 3).attr("text-anchor", "start").text(port.name).style("font-size", "8px").style("fill", GENERAL_VIEW_PALETTE.structural.port);
-          portPositions.set(port.name, { ownerName: name, x: pos.x + pos.width, y: pos.y + py, side: "right" });
-        });
-      });
-      drawGeneralEdges2();
-    } catch (error) {
-      console.error("[General] Error:", error);
-      ctx.renderPlaceholder(
-        width,
-        height,
-        "General View",
-        "An error occurred while rendering.\\n\\nError: " + (error.message || "Unknown error"),
-        ctx.currentData
-      );
-    }
   }
 
   // src/visualization/webview/minimap.ts
@@ -3807,8 +3058,18 @@
   var showMetadata = false;
   var showCategoryHeaders = true;
   var sysmlElementLookup = /* @__PURE__ */ new Map();
-  var SYSML_PILLARS = [];
-  var PILLAR_COLOR_MAP = {};
+  var SYSML_PILLARS = [
+    { id: "structure", label: "Structure", keywords: ["part", "port", "attribute", "item", "interface", "package", "allocation", "constraint"] },
+    { id: "behavior", label: "Behavior", keywords: ["action", "state", "activity", "calc", "enumeration"] },
+    { id: "requirement", label: "Requirements", keywords: ["requirement", "req"] },
+    { id: "usecases", label: "Use Cases", keywords: ["use case", "usecase"] }
+  ];
+  var PILLAR_COLOR_MAP = {
+    structure: GENERAL_VIEW_PALETTE.structural.part,
+    behavior: GENERAL_VIEW_PALETTE.behavior.action,
+    requirement: GENERAL_VIEW_PALETTE.requirements.requirement,
+    usecases: GENERAL_VIEW_PALETTE.requirements.useCase
+  };
   var expandedPillars = /* @__PURE__ */ new Set();
   var pillarOrientation = "horizontal";
   var sysmlToolbarInitialized = false;
@@ -3898,8 +3159,7 @@
         break;
       case "update":
         const newHash = quickHash({
-          elements: message.elements,
-          relationships: message.relationships
+          graph: message.graph
         });
         if (newHash === lastDataHash && currentData) {
           hideLoading();
@@ -4316,19 +3576,35 @@
     });
   }
   var GENERAL_VIEW_CATEGORIES = [
+    { id: "partDefs", label: "Part defs", keywords: ["part def", "part definition"], color: GENERAL_VIEW_PALETTE.structural.part },
     { id: "parts", label: "Parts", keywords: ["part"], color: GENERAL_VIEW_PALETTE.structural.part },
-    { id: "attributes", label: "Attributes", keywords: ["attribute", "attr"], color: GENERAL_VIEW_PALETTE.structural.attribute },
+    { id: "portDefs", label: "Port defs", keywords: ["port def", "port definition"], color: GENERAL_VIEW_PALETTE.structural.port },
     { id: "ports", label: "Ports", keywords: ["port"], color: GENERAL_VIEW_PALETTE.structural.port },
-    { id: "actions", label: "Actions", keywords: ["action"], color: GENERAL_VIEW_PALETTE.behavior.action },
-    { id: "states", label: "States", keywords: ["state"], color: GENERAL_VIEW_PALETTE.behavior.state },
+    { id: "attributeDefs", label: "Attribute defs", keywords: ["attribute def", "attribute definition"], color: GENERAL_VIEW_PALETTE.structural.attribute },
+    { id: "attributes", label: "Attributes", keywords: ["attribute"], color: GENERAL_VIEW_PALETTE.structural.attribute },
+    { id: "reqDefs", label: "Requirement defs", keywords: ["requirement def", "requirement definition"], color: GENERAL_VIEW_PALETTE.requirements.requirement },
     { id: "requirements", label: "Requirements", keywords: ["requirement", "req"], color: GENERAL_VIEW_PALETTE.requirements.requirement },
+    { id: "actionDefs", label: "Action defs", keywords: ["action def", "action definition"], color: GENERAL_VIEW_PALETTE.behavior.action },
+    { id: "actions", label: "Actions", keywords: ["action"], color: GENERAL_VIEW_PALETTE.behavior.action },
+    { id: "stateDefs", label: "State defs", keywords: ["state def", "state definition"], color: GENERAL_VIEW_PALETTE.behavior.state },
+    { id: "states", label: "States", keywords: ["state"], color: GENERAL_VIEW_PALETTE.behavior.state },
+    { id: "interfaceDefs", label: "Interface defs", keywords: ["interface def", "interface definition"], color: GENERAL_VIEW_PALETTE.structural.interface },
     { id: "interfaces", label: "Interfaces", keywords: ["interface"], color: GENERAL_VIEW_PALETTE.structural.interface },
-    { id: "usecases", label: "Use Cases", keywords: ["use case", "usecase"], color: GENERAL_VIEW_PALETTE.requirements.useCase },
+    { id: "usecaseDefs", label: "Use case defs", keywords: ["use case def", "usecase def"], color: GENERAL_VIEW_PALETTE.requirements.useCase },
+    { id: "usecases", label: "Use cases", keywords: ["use case", "usecase"], color: GENERAL_VIEW_PALETTE.requirements.useCase },
+    { id: "allocationDefs", label: "Allocation defs", keywords: ["allocation def", "allocate def"], color: GENERAL_VIEW_PALETTE.other.allocation },
+    { id: "allocations", label: "Allocations", keywords: ["allocation", "allocate"], color: GENERAL_VIEW_PALETTE.other.allocation },
+    { id: "constraintDefs", label: "Constraint defs", keywords: ["constraint def", "constraint definition"], color: GENERAL_VIEW_PALETTE.other.constraint },
+    { id: "constraints", label: "Constraints", keywords: ["constraint"], color: GENERAL_VIEW_PALETTE.other.constraint },
+    { id: "enumerations", label: "Enumerations", keywords: ["enumeration", "enum"], color: GENERAL_VIEW_PALETTE.behavior.calc },
+    { id: "metadata", label: "Metadata", keywords: ["metadata"], color: "#8B7355" },
+    { id: "occurrences", label: "Occurrences", keywords: ["occurrence"], color: GENERAL_VIEW_PALETTE.structural.item },
     { id: "concerns", label: "Concerns", keywords: ["concern", "viewpoint", "stakeholder", "frame"], color: GENERAL_VIEW_PALETTE.other.allocation },
     { id: "items", label: "Items", keywords: ["item"], color: GENERAL_VIEW_PALETTE.structural.item },
+    { id: "packages", label: "Packages", keywords: ["package"], color: "#6B7280" },
     { id: "other", label: "Other", keywords: [], color: "#808080" }
   ];
-  var expandedGeneralCategories = new Set(GENERAL_VIEW_CATEGORIES.map((c) => c.id));
+  var expandedGeneralCategories = /* @__PURE__ */ new Set(["partDefs", "parts"]);
   function renderGeneralChips(typeStats) {
     const container = document.getElementById("general-chips");
     if (!container) return;
@@ -4378,7 +3654,7 @@
     renderPillarChips(lastPillarStats);
   }
   function updatePillarVisibility() {
-    if (!cy) {
+    if (!cy || currentView === "general-view") {
       return;
     }
     cy.batch(() => {
@@ -4453,7 +3729,12 @@
     }
     return null;
   }
-  function buildSysMLGraph(elements, relationships = [], useHierarchicalNesting = false) {
+  function buildSysMLGraph(dataOrElements, relationships = [], useHierarchicalNesting = false) {
+    const graph = dataOrElements?.graph;
+    if (graph) {
+      return graphToCytoscapeElementsForSysML(graph, useHierarchicalNesting);
+    }
+    const elements = Array.isArray(dataOrElements) ? dataOrElements : dataOrElements?.elements ?? [];
     sysmlElementLookup.clear();
     const cyElements = [];
     const stats = {};
@@ -4592,6 +3873,551 @@
       });
     });
     return { elements: cyElements, stats };
+  }
+  function graphToCytoscapeElementsForGeneralView(graph) {
+    if (!graph || !graph.nodes?.length && !graph.edges?.length) {
+      return { elements: [], typeStats: {} };
+    }
+    const nodes = graph.nodes || [];
+    const edges = graph.edges || [];
+    const cyElements = [];
+    const typeStats = {};
+    const PACKAGE_TYPES = /* @__PURE__ */ new Set(["package", "library package", "standard library package"]);
+    const idToCyId = /* @__PURE__ */ new Map();
+    const filteredNodes = nodes.filter((node) => {
+      if (!node || isMetadataElement(node.type)) return false;
+      const typeLower = (node.type || "").toLowerCase().trim();
+      const isPackage = PACKAGE_TYPES.has(typeLower);
+      const category = getCategoryForType(typeLower);
+      const matchesCategory = isPackage ? expandedGeneralCategories.has("packages") : expandedGeneralCategories.has(category);
+      return matchesCategory;
+    });
+    const categoryOrder = new Map(GENERAL_VIEW_CATEGORIES.map((c, i) => [c.id, i]));
+    filteredNodes.sort((a, b) => {
+      const catA = getCategoryForType((a.type || "").toLowerCase());
+      const catB = getCategoryForType((b.type || "").toLowerCase());
+      const orderA = categoryOrder.get(catA) ?? 999;
+      const orderB = categoryOrder.get(catB) ?? 999;
+      if (orderA !== orderB) return orderA - orderB;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+    filteredNodes.forEach((node, index) => {
+      const cyId = "gv-" + slugify(node.id) + "-" + index;
+      idToCyId.set(node.id, cyId);
+      const category = getCategoryForType((node.type || "").toLowerCase());
+      typeStats[category] = (typeStats[category] || 0) + 1;
+      const baseLabel = buildElementDisplayLabel({ name: node.name, type: node.type });
+      const typeLower = (node.type || "").toLowerCase();
+      const isDefinition = typeLower.includes("def") || typeLower.includes("definition");
+      const color = getTypeColor(node.type);
+      const cat = GENERAL_VIEW_CATEGORIES.find((c) => c.id === category);
+      const borderColor = cat && cat.color || color;
+      const attrs = node.attributes || {};
+      const metadata = {
+        documentation: typeof attrs.documentation !== "undefined" ? attrs.documentation : null,
+        properties: attrs
+      };
+      cyElements.push({
+        group: "nodes",
+        data: {
+          id: cyId,
+          label: baseLabel,
+          baseLabel,
+          type: "element",
+          sysmlType: node.type,
+          elementName: node.name,
+          color: borderColor,
+          isDefinition,
+          category,
+          metadata
+        }
+      });
+    });
+    const validNodeIds = new Set(cyElements.filter((el) => el.group === "nodes").map((el) => el.data.id));
+    const hierarchyEdgeIds = /* @__PURE__ */ new Set();
+    const relationshipEdgeIds = /* @__PURE__ */ new Set();
+    const resolveCyId = (backendId) => idToCyId.get(backendId) || null;
+    edges.forEach((edge) => {
+      const sourceCyId = resolveCyId(edge.source);
+      const targetCyId = resolveCyId(edge.target);
+      if (!sourceCyId || !targetCyId || sourceCyId === targetCyId || !validNodeIds.has(sourceCyId) || !validNodeIds.has(targetCyId)) return;
+      const isContains = (edge.type || "").toLowerCase() === "contains";
+      if (isContains) {
+        const edgeId = "hier-" + sourceCyId + "-" + targetCyId;
+        if (!hierarchyEdgeIds.has(edgeId)) {
+          hierarchyEdgeIds.add(edgeId);
+          cyElements.push({
+            group: "edges",
+            data: { id: edgeId, source: sourceCyId, target: targetCyId, type: "hierarchy", label: "" }
+          });
+        }
+      } else {
+        const edgeId = "rel-" + slugify(edge.type || "rel") + "-" + sourceCyId + "-" + targetCyId;
+        if (!relationshipEdgeIds.has(edgeId)) {
+          relationshipEdgeIds.add(edgeId);
+          let edgeLabel = edge.name || "";
+          if (!edgeLabel) {
+            if (edge.type === "typing") edgeLabel = ": " + edge.target;
+            else if (edge.type === "specializes") edgeLabel = ":> " + edge.target;
+            else edgeLabel = edge.type || "";
+          }
+          cyElements.push({
+            group: "edges",
+            data: {
+              id: edgeId,
+              source: sourceCyId,
+              target: targetCyId,
+              type: "relationship",
+              relType: edge.type || "relationship",
+              label: edgeLabel
+            }
+          });
+        }
+      }
+    });
+    return { elements: cyElements, typeStats };
+  }
+  function graphToCytoscapeElementsForSysML(graph, useHierarchicalNesting = false) {
+    if (!graph || !graph.nodes?.length && !graph.edges?.length) {
+      const cyElements2 = [];
+      const stats2 = {};
+      SYSML_PILLARS.forEach((p) => {
+        stats2[p.id] = 0;
+        cyElements2.push({
+          group: "nodes",
+          data: { id: "pillar-" + p.id, label: p.label, type: "pillar", pillar: p.id, color: PILLAR_COLOR_MAP[p.id] }
+        });
+      });
+      return { elements: cyElements2, stats: stats2 };
+    }
+    sysmlElementLookup.clear();
+    const nodes = graph.nodes || [];
+    const edges = graph.edges || [];
+    const cyElements = [];
+    const stats = {};
+    SYSML_PILLARS.forEach((p) => {
+      stats[p.id] = 0;
+      cyElements.push({
+        group: "nodes",
+        data: { id: "pillar-" + p.id, label: p.label, type: "pillar", pillar: p.id, color: PILLAR_COLOR_MAP[p.id] }
+      });
+    });
+    const idToCyId = /* @__PURE__ */ new Map();
+    const filteredNodes = nodes.filter((n) => n && !isMetadataElement(n.type));
+    filteredNodes.forEach((node, index) => {
+      const pillarId = getPillarForElement({ type: node.type });
+      stats[pillarId] = (stats[pillarId] || 0) + 1;
+      const cyId = "element-" + pillarId + "-" + slugify(node.name || node.id) + "-" + stats[pillarId];
+      idToCyId.set(node.id, cyId);
+      const lookupKey = (node.name || "").toLowerCase() || cyId;
+      const existing = sysmlElementLookup.get(lookupKey) || [];
+      existing.push(cyId);
+      sysmlElementLookup.set(lookupKey, existing);
+      const baseLabel = buildElementDisplayLabel({ name: node.name, type: node.type });
+      const attrs = node.attributes || {};
+      const metadata = {
+        documentation: typeof attrs.documentation !== "undefined" ? attrs.documentation : null,
+        properties: attrs
+      };
+      cyElements.push({
+        group: "nodes",
+        data: {
+          id: cyId,
+          label: baseLabel,
+          baseLabel,
+          type: "element",
+          pillar: pillarId,
+          color: PILLAR_COLOR_MAP[pillarId] || GENERAL_VIEW_PALETTE.other.default,
+          sysmlType: node.type,
+          elementName: node.name,
+          metadata
+        }
+      });
+    });
+    const validNodeIds = new Set(cyElements.filter((el) => el.group === "nodes").map((el) => el.data.id));
+    const resolveCyId = (backendId) => idToCyId.get(backendId) || null;
+    const hierarchyEdgeIds = /* @__PURE__ */ new Set();
+    const relationshipEdgeIds = /* @__PURE__ */ new Set();
+    edges.forEach((edge) => {
+      const sourceCyId = resolveCyId(edge.source);
+      const targetCyId = resolveCyId(edge.target);
+      if (!sourceCyId || !targetCyId || sourceCyId === targetCyId || !validNodeIds.has(sourceCyId) || !validNodeIds.has(targetCyId)) return;
+      const isContains = (edge.type || "").toLowerCase() === "contains";
+      if (isContains) {
+        const edgeId = "hier-" + sourceCyId + "-" + targetCyId;
+        if (!hierarchyEdgeIds.has(edgeId)) {
+          hierarchyEdgeIds.add(edgeId);
+          cyElements.push({
+            group: "edges",
+            data: { id: edgeId, source: sourceCyId, target: targetCyId, type: "hierarchy", label: "" }
+          });
+        }
+      } else {
+        const edgeId = "rel-" + slugify(edge.type || "rel") + "-" + sourceCyId + "-" + targetCyId;
+        if (!relationshipEdgeIds.has(edgeId)) {
+          relationshipEdgeIds.add(edgeId);
+          let edgeLabel = edge.name || (edge.type === "typing" ? ": " + edge.target : edge.type || "");
+          cyElements.push({
+            group: "edges",
+            data: {
+              id: edgeId,
+              source: sourceCyId,
+              target: targetCyId,
+              type: "relationship",
+              relType: edge.type || "relationship",
+              label: edgeLabel
+            }
+          });
+        }
+      }
+    });
+    return { elements: cyElements, stats };
+  }
+  function collectElementsWithDepth(els, depth, result) {
+    if (!els || !Array.isArray(els)) return;
+    const PACKAGE_TYPES = /* @__PURE__ */ new Set(["package", "library package", "standard library package"]);
+    for (const el of els) {
+      if (!el || isMetadataElement(el.type)) continue;
+      const typeLower = (el.type || "").toLowerCase().trim();
+      const isPackage = PACKAGE_TYPES.has(typeLower);
+      const category = getCategoryForType(typeLower);
+      const matchesCategory = isPackage ? expandedGeneralCategories.has("packages") : expandedGeneralCategories.has(category);
+      if (matchesCategory) {
+        result.push({ element: el, depth });
+      }
+      collectElementsWithDepth(el.children, depth + 1, result);
+    }
+  }
+  function collectRelationshipsFromElements(els, collected = []) {
+    if (!els || !Array.isArray(els)) return collected;
+    for (const el of els) {
+      const rels = el.relationships || [];
+      for (const r of rels) {
+        if (r && (r.source || r.sourceId) && (r.target || r.targetId)) {
+          collected.push({
+            source: r.source || r.sourceId,
+            target: r.target || r.targetId,
+            type: r.type || "relationship",
+            name: r.name,
+            sourceElement: el
+          });
+        }
+      }
+      collectRelationshipsFromElements(el.children, collected);
+    }
+    return collected;
+  }
+  function buildGeneralViewGraph(dataOrElements, relationships = []) {
+    const graph = dataOrElements?.graph;
+    if (graph) {
+      return graphToCytoscapeElementsForGeneralView(graph);
+    }
+    const elements = Array.isArray(dataOrElements) ? dataOrElements : dataOrElements?.elements ?? [];
+    const cyElements = [];
+    const typeStats = {};
+    const withDepth = [];
+    collectElementsWithDepth(elements || [], 0, withDepth);
+    const hierarchyLinks = createLinksFromHierarchy(elements || []);
+    const flatRels = (relationships || []).filter(
+      (r) => (r.type || r.rel_type) !== "typing" && (r.type || r.rel_type) !== "instanceOf"
+    );
+    const allRelationships = [...flatRels];
+    collectRelationshipsFromElements(elements || [], allRelationships);
+    function deriveTypingFromElements(els, derivedList) {
+      if (!els || !Array.isArray(els)) return;
+      for (const el of els) {
+        const typingTargets = el.typings || (el.typing ? [el.typing] : []);
+        const attrType = el.attributes?.partType || el.attributes?.get?.("partType") || el.attributes?.portType || el.attributes?.get?.("portType") || el.attributes?.actorType || el.attributes?.get?.("actorType");
+        if (attrType) {
+          const targets = (typeof attrType === "string" ? attrType.split(",") : [String(attrType)]).map((s) => s.trim()).filter(Boolean);
+          targets.forEach((t) => derivedList.push({ sourceElement: el, target: t, type: "typing" }));
+        }
+        typingTargets.forEach((t) => {
+          const target = (t || "").replace(/^[:~]+/, "").trim();
+          if (target) derivedList.push({ sourceElement: el, target, type: "typing" });
+        });
+        deriveTypingFromElements(el.children, derivedList);
+      }
+    }
+    const derivedTypingList = [];
+    deriveTypingFromElements(elements || [], derivedTypingList);
+    derivedTypingList.forEach((rel) => {
+      if (rel.sourceElement?.name && rel.target && rel.sourceElement.name !== rel.target) {
+        allRelationships.push({
+          source: rel.sourceElement.name,
+          target: rel.target,
+          type: "typing",
+          sourceElement: rel.sourceElement
+        });
+      }
+    });
+    const filtered = withDepth;
+    const categoryOrder = new Map(GENERAL_VIEW_CATEGORIES.map((c, i) => [c.id, i]));
+    filtered.sort((a, b) => {
+      const catA = getCategoryForType((a.element.type || "").toLowerCase());
+      const catB = getCategoryForType((b.element.type || "").toLowerCase());
+      const orderA = categoryOrder.get(catA) ?? 999;
+      const orderB = categoryOrder.get(catB) ?? 999;
+      if (orderA !== orderB) return orderA - orderB;
+      if (a.depth !== b.depth) return a.depth - b.depth;
+      return String(a.element.name || "").localeCompare(String(b.element.name || ""));
+    });
+    const nameToNodeId = /* @__PURE__ */ new Map();
+    const elementToNodeId = /* @__PURE__ */ new Map();
+    filtered.forEach(({ element }, index) => {
+      const nodeId = "gv-" + slugify(element.name) + "-" + index;
+      elementToNodeId.set(element, nodeId);
+      const lookupKey = (element.name || "").toLowerCase();
+      if (!nameToNodeId.has(lookupKey)) {
+        nameToNodeId.set(lookupKey, []);
+      }
+      nameToNodeId.get(lookupKey).push(nodeId);
+      const category = getCategoryForType((element.type || "").toLowerCase());
+      typeStats[category] = (typeStats[category] || 0) + 1;
+      const baseLabel = buildEnhancedElementLabel(element);
+      const typeLower = (element.type || "").toLowerCase();
+      const isDefinition = typeLower.includes("def") || typeLower.includes("definition");
+      const color = getTypeColor(element.type);
+      const cat = GENERAL_VIEW_CATEGORIES.find((c) => c.id === category);
+      const borderColor = cat && cat.color || color;
+      const metadata = {
+        documentation: extractDocumentation(element),
+        properties: getElementProperties(element) || {}
+      };
+      cyElements.push({
+        group: "nodes",
+        data: {
+          id: nodeId,
+          label: baseLabel,
+          baseLabel,
+          type: "element",
+          sysmlType: element.type,
+          elementName: element.name,
+          color: borderColor,
+          isDefinition,
+          category,
+          metadata
+        }
+      });
+    });
+    const validNodeIds = new Set(cyElements.filter((el) => el.group === "nodes").map((el) => el.data.id));
+    function resolveNodeId(name) {
+      let key = (name || "").toLowerCase();
+      let ids = nameToNodeId.get(key);
+      if (!ids || ids.length === 0) {
+        const lastSeg = key.includes("::") ? key.split("::").pop()?.trim() || key : null;
+        if (lastSeg && lastSeg !== key) {
+          ids = nameToNodeId.get(lastSeg);
+        }
+      }
+      if (!ids || ids.length === 0) return null;
+      return ids.find((id) => validNodeIds.has(id)) || ids[0];
+    }
+    const hierarchyEdgeIds = /* @__PURE__ */ new Set();
+    hierarchyLinks.forEach((link) => {
+      const sourceId = resolveNodeId(link.source);
+      const targetId = resolveNodeId(link.target);
+      if (sourceId && targetId && sourceId !== targetId && validNodeIds.has(sourceId) && validNodeIds.has(targetId)) {
+        const edgeId = "hier-" + sourceId + "-" + targetId;
+        if (!hierarchyEdgeIds.has(edgeId)) {
+          hierarchyEdgeIds.add(edgeId);
+          cyElements.push({
+            group: "edges",
+            data: {
+              id: edgeId,
+              source: sourceId,
+              target: targetId,
+              type: "hierarchy",
+              label: ""
+            }
+          });
+        }
+      }
+    });
+    const relationshipEdgeIds = /* @__PURE__ */ new Set();
+    allRelationships.forEach((rel) => {
+      const isTyping = rel.type === "typing" || rel.relType === "typing";
+      const isSpecializes = rel.type === "specializes" || rel.relType === "specializes";
+      const isTypingOrSpecializes = isTyping || isSpecializes;
+      const useSourceElement = rel.sourceElement && elementToNodeId.has(rel.sourceElement);
+      let sourceId;
+      if (isTyping) {
+        if (!useSourceElement) return;
+        sourceId = elementToNodeId.get(rel.sourceElement);
+      } else if (useSourceElement && isSpecializes) {
+        sourceId = elementToNodeId.get(rel.sourceElement);
+      } else {
+        sourceId = resolveNodeId(rel.source);
+      }
+      const targetId = resolveNodeId(rel.target);
+      if (!sourceId || !targetId || sourceId === targetId || !validNodeIds.has(sourceId) || !validNodeIds.has(targetId)) {
+        return;
+      }
+      const edgeId = "rel-" + slugify(rel.type || "rel") + "-" + sourceId + "-" + targetId;
+      if (relationshipEdgeIds.has(edgeId)) return;
+      relationshipEdgeIds.add(edgeId);
+      let edgeLabel = rel.name || "";
+      if (!edgeLabel) {
+        if (rel.type === "typing") edgeLabel = ": " + rel.target;
+        else if (rel.type === "specializes") edgeLabel = ":> " + rel.target;
+        else edgeLabel = rel.type || "";
+      }
+      cyElements.push({
+        group: "edges",
+        data: {
+          id: edgeId,
+          source: sourceId,
+          target: targetId,
+          type: "relationship",
+          relType: rel.type || "relationship",
+          label: edgeLabel
+        }
+      });
+    });
+    return { elements: cyElements, typeStats };
+  }
+  function getGeneralViewStyles() {
+    const editorFg = getCSSVariable("--vscode-editor-foreground");
+    const editorBg = getCSSVariable("--vscode-editor-background");
+    return [
+      {
+        selector: "node",
+        style: {
+          "label": "data(label)",
+          "color": editorFg,
+          "text-valign": "center",
+          "text-halign": "center",
+          "font-size": 11,
+          "font-weight": 600,
+          "background-color": "rgba(255,255,255,0.02)",
+          "border-width": 2,
+          "border-color": "data(color)",
+          "padding": "18px",
+          "shape": "round-rectangle",
+          "text-wrap": "wrap",
+          "text-max-width": 200,
+          "width": "label",
+          "height": "label",
+          "min-width": "100px",
+          "min-height": "60px",
+          "compound-sizing-wrt-labels": "include",
+          "text-margin-x": "5px",
+          "text-margin-y": "5px",
+          "line-height": 1.5
+        }
+      },
+      {
+        selector: 'node[type = "element"][isDefinition = true]',
+        style: {
+          "shape": "rectangle",
+          "border-style": "solid",
+          "border-width": 3
+        }
+      },
+      {
+        selector: 'node[type = "element"][isDefinition = false]',
+        style: {
+          "shape": "round-rectangle",
+          "border-style": "dashed",
+          "border-width": 2
+        }
+      },
+      {
+        selector: "edge",
+        style: {
+          "width": 2,
+          "line-color": "rgba(180,200,255,0.85)",
+          "target-arrow-color": "rgba(180,200,255,0.85)",
+          "curve-style": "bezier",
+          "target-arrow-shape": "triangle"
+        }
+      },
+      {
+        selector: 'edge[type = "hierarchy"]',
+        style: {
+          "line-color": "rgba(160,180,220,0.7)",
+          "target-arrow-color": "rgba(160,180,220,0.7)"
+        }
+      },
+      {
+        selector: 'edge[type = "relationship"]',
+        style: {
+          "line-color": "rgba(100,150,255,0.9)",
+          "target-arrow-color": "rgba(100,150,255,0.9)"
+        }
+      }
+    ];
+  }
+  function removeNodeOverlaps() {
+    if (!cy) return;
+    const nodes = cy.nodes();
+    const minGap = 20;
+    const maxIterations = 50;
+    let iter = 0;
+    let hadOverlap = true;
+    while (hadOverlap && iter < maxIterations) {
+      hadOverlap = false;
+      iter++;
+      for (let i = 0; i < nodes.length; i++) {
+        const a = nodes[i];
+        const ab = a.boundingBox();
+        const ax = ab.x1 + ab.w / 2;
+        const ay = ab.y1 + ab.h / 2;
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b = nodes[j];
+          const bb = b.boundingBox();
+          const bx = bb.x1 + bb.w / 2;
+          const by = bb.y1 + bb.h / 2;
+          const overlapX = ab.w / 2 + bb.w / 2 + minGap - Math.abs(ax - bx);
+          const overlapY = ab.h / 2 + bb.h / 2 + minGap - Math.abs(ay - by);
+          if (overlapX > 0 && overlapY > 0) {
+            hadOverlap = true;
+            const dx = ax - bx;
+            const dy = ay - by;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const nx = dx / dist;
+            const ny = dy / dist;
+            const push = Math.max(overlapX, overlapY) * 0.55;
+            a.position({ x: a.position("x") + nx * push, y: a.position("y") + ny * push });
+            b.position({ x: b.position("x") - nx * push, y: b.position("y") - ny * push });
+          }
+        }
+      }
+    }
+  }
+  function runGeneralViewLayout(fit = false) {
+    if (!cy) return;
+    const layoutOptions = {
+      name: "elk",
+      nodeDimensionsIncludeLabels: true,
+      elk: {
+        algorithm: "stress",
+        "elk.spacing.nodeNode": "180",
+        "elk.spacing.edgeNode": "80",
+        "elk.spacing.componentComponent": "150",
+        "elk.stress.desiredEdgeLength": "180",
+        "elk.separateConnectedComponents": "true",
+        "elk.aspectRatio": "1.4",
+        "elk.padding": "[top=80,left=80,bottom=80,right=80]"
+      },
+      fit,
+      padding: 80,
+      animate: true
+    };
+    const layout = cy.layout(layoutOptions);
+    if (fit) {
+      cy.one("layoutstop", () => {
+        removeNodeOverlaps();
+        cy.forceRender();
+        fitSysMLView(80);
+      });
+    } else {
+      cy.one("layoutstop", () => {
+        removeNodeOverlaps();
+        cy.forceRender();
+      });
+    }
+    layout.run();
   }
   function getCSSVariable(varName) {
     return getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || "#cccccc";
@@ -5350,22 +5176,6 @@
       const showLayoutBtn = ["state-transition-view"].includes(activeView);
       layoutDirBtn.style.display = showLayoutBtn ? "inline-flex" : "none";
     }
-    const categoryHeadersBtn = document.getElementById("category-headers-btn");
-    if (categoryHeadersBtn) {
-      categoryHeadersBtn.style.display = activeView === "general-view" ? "inline-flex" : "none";
-      categoryHeadersBtn.textContent = showCategoryHeaders ? "\u2630 Grouped" : "\u2637 Flat";
-      if (showCategoryHeaders) {
-        categoryHeadersBtn.classList.add("active");
-        categoryHeadersBtn.style.background = "var(--vscode-button-background)";
-        categoryHeadersBtn.style.color = "var(--vscode-button-foreground)";
-        categoryHeadersBtn.style.borderColor = "var(--vscode-button-background)";
-      } else {
-        categoryHeadersBtn.classList.remove("active");
-        categoryHeadersBtn.style.background = "";
-        categoryHeadersBtn.style.color = "";
-        categoryHeadersBtn.style.borderColor = "";
-      }
-    }
     const dropdownButton = document.getElementById("view-dropdown-btn");
     const dropdownConfig = VIEW_OPTIONS[activeView];
     if (dropdownButton) {
@@ -5408,7 +5218,7 @@
         });
       };
       var findPackages = findPackages2;
-      const elements = currentData?.elements || [];
+      const elements = currentData?.elements ?? (currentData?.graph ? graphToElementTree(currentData.graph) : []);
       const packagesArray = [];
       const seenPackages = /* @__PURE__ */ new Set();
       diagrams.push({ name: "All Packages", element: null, isAll: true });
@@ -5465,7 +5275,7 @@
         });
       };
       var findPackagesForView = findPackagesForView2;
-      const elements = currentData?.elements || [];
+      const elements = currentData?.elements ?? (currentData?.graph ? graphToElementTree(currentData.graph) : []);
       const packagesArray = [];
       const seenPackages = /* @__PURE__ */ new Set();
       diagrams.push({ name: "All Packages", element: null, isAll: true });
@@ -5554,27 +5364,6 @@
     updateLayoutDirectionButton(currentView);
     renderVisualization(currentView);
   }
-  function toggleCategoryHeaders() {
-    showCategoryHeaders = !showCategoryHeaders;
-    const btn = document.getElementById("category-headers-btn");
-    if (btn) {
-      btn.textContent = showCategoryHeaders ? "\u2630 Grouped" : "\u2637 Flat";
-      if (showCategoryHeaders) {
-        btn.classList.add("active");
-        btn.style.background = "var(--vscode-button-background)";
-        btn.style.color = "var(--vscode-button-foreground)";
-        btn.style.borderColor = "var(--vscode-button-background)";
-      } else {
-        btn.classList.remove("active");
-        btn.style.background = "";
-        btn.style.color = "";
-        btn.style.borderColor = "";
-      }
-    }
-    if (currentView === "general-view") {
-      renderVisualization("general-view");
-    }
-  }
   window.changeView = changeView;
   function renderVisualization(view, preserveZoomOverride = null, allowDuringResize = false) {
     if (!currentData) {
@@ -5590,7 +5379,7 @@
     let baseData = filteredData || currentData;
     if (selectedDiagramIndex > 0 && view === "interconnection-view") {
       let findPackagesForRender2 = function(elementList, depth = 0) {
-        elementList.forEach((el) => {
+        (elementList || []).forEach((el) => {
           const typeLower = (el.type || "").toLowerCase();
           if (typeLower.includes("package") && depth <= 3 && !seenPackages.has(el.name)) {
             seenPackages.add(el.name);
@@ -5602,7 +5391,7 @@
         });
       };
       var findPackagesForRender = findPackagesForRender2;
-      const elements = baseData?.elements || [];
+      const elements = baseData?.elements ?? (baseData?.graph ? graphToElementTree(baseData.graph) : []);
       const packagesArray = [];
       const seenPackages = /* @__PURE__ */ new Set();
       findPackagesForRender2(elements);
@@ -5637,6 +5426,9 @@
           getSvg: () => svg,
           getG: () => g,
           buildSysMLGraph,
+          buildGeneralViewGraph,
+          getGeneralViewStyles,
+          runGeneralViewLayout,
           setSysMLToolbarVisible,
           renderPillarChips,
           setLastPillarStats: (stats) => {
@@ -5711,6 +5503,16 @@
         }, 100);
         return;
       }
+      if (view === "general-view") {
+        renderGeneralViewCytoscape(buildElkContext2(), width, height, dataToRender);
+        lastView = view;
+        setTimeout(() => {
+          isRendering = false;
+          hideLoading();
+          updateMinimap();
+        }, 150);
+        return;
+      }
       svg = d3.select("#visualization").append("svg").attr("width", width).attr("height", height);
       zoom = d3.zoom().scaleExtent([MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM]).on("zoom", (event) => {
         g.attr("transform", event.transform);
@@ -5724,7 +5526,7 @@
         window.userHasManuallyZoomed = true;
         const mouse = d3.pointer(event, this);
         const currentTransform2 = d3.zoomTransform(this);
-        const factor = event.deltaY > 0 ? 0.75 : 1.33;
+        const factor = event.deltaY > 0 ? 0.7 : 1.45;
         const newScale = Math.min(
           Math.max(currentTransform2.k * factor, MIN_CANVAS_ZOOM),
           MAX_CANVAS_ZOOM
@@ -5774,48 +5576,28 @@
           });
         }
       });
-      if (view === "general-view") {
-        renderElkTreeView(buildElkContext2(), width, height, dataToRender).then(() => {
-          if (shouldPreserveZoom) {
-            restoreZoom();
-          } else {
-            setTimeout(() => zoomToFit("auto"), 200);
-          }
-          setTimeout(() => {
-            updateDimensionsDisplay();
-            isRendering = false;
-            updateMinimap();
-            hideLoading();
-          }, 300);
-        }).catch((error) => {
-          console.error("[General View] Render error:", error);
-          isRendering = false;
-          hideLoading();
-        });
+      if (view === "sequence-view") {
+        renderSequenceView(buildRenderContext2(width, height), dataToRender);
+      } else if (view === "interconnection-view") {
+        renderIbdView(buildRenderContext2(width, height), dataToRender);
+      } else if (view === "action-flow-view") {
+        renderActivityView(buildRenderContext2(width, height), dataToRender);
+      } else if (view === "state-transition-view") {
+        renderStateView(buildRenderContext2(width, height), dataToRender);
       } else {
-        if (view === "sequence-view") {
-          renderSequenceView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "interconnection-view") {
-          renderIbdView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "action-flow-view") {
-          renderActivityView(buildRenderContext2(width, height), dataToRender);
-        } else if (view === "state-transition-view") {
-          renderStateView(buildRenderContext2(width, height), dataToRender);
-        } else {
-          renderPlaceholderView(width, height, "Unknown View", "The selected view is not yet implemented.", dataToRender);
-        }
-        if (shouldPreserveZoom) {
-          restoreZoom();
-        } else {
-          setTimeout(() => zoomToFit("auto"), 100);
-        }
-        setTimeout(() => {
-          updateDimensionsDisplay();
-          isRendering = false;
-          updateMinimap();
-          hideLoading();
-        }, 200);
+        renderPlaceholderView(width, height, "Unknown View", "The selected view is not yet implemented.", dataToRender);
       }
+      if (shouldPreserveZoom) {
+        restoreZoom();
+      } else {
+        setTimeout(() => zoomToFit("auto"), 100);
+      }
+      setTimeout(() => {
+        updateDimensionsDisplay();
+        isRendering = false;
+        updateMinimap();
+        hideLoading();
+      }, 200);
       lastView = view;
     } catch (error) {
       console.error("Error during rendering:", error);
@@ -5882,23 +5664,51 @@
     });
     return cyElements;
   }
+  function filterNodesBySearch(nodes, searchTerm) {
+    if (!nodes || !searchTerm) return nodes || [];
+    return nodes.filter((node) => {
+      const nameMatch = (node.name || "").toLowerCase().includes(searchTerm);
+      const typeMatch = (node.type || "").toLowerCase().includes(searchTerm);
+      const idMatch = (node.id || "").toLowerCase().includes(searchTerm);
+      let attributeMatch = false;
+      if (node.attributes && typeof node.attributes === "object") {
+        for (const [k, v] of Object.entries(node.attributes)) {
+          if (String(k).toLowerCase().includes(searchTerm) || String(v).toLowerCase().includes(searchTerm)) {
+            attributeMatch = true;
+            break;
+          }
+        }
+      }
+      return nameMatch || typeMatch || idMatch || attributeMatch;
+    });
+  }
   function filterElements(query) {
-    if (!currentData || !currentData.elements && !currentData.pillarElements) return;
+    const hasGraph = currentData?.graph?.nodes;
+    const hasElements = currentData?.elements;
+    if (!currentData || !hasGraph && !hasElements && !currentData.pillarElements) return;
     const searchTerm = query.toLowerCase().trim();
     if (searchTerm === "") {
       filteredData = null;
       document.getElementById("status-text").textContent = "Ready \u2022 Use filter to search elements";
     } else {
-      const filteredDiagramElements = currentData.elements ? filterElementsRecursive(cloneElements(currentData.elements), searchTerm) : [];
-      filteredData = {
-        ...currentData,
-        elements: filteredDiagramElements
-      };
-      const activeSource = currentData.elements;
-      const activeFiltered = filteredDiagramElements;
-      const totalElements = countAllElements(activeSource || []);
-      const filteredCount = countAllElements(activeFiltered || []);
-      document.getElementById("status-text").textContent = "Filtering: " + filteredCount + " of " + totalElements + ' elements match "' + searchTerm + '"';
+      if (hasGraph) {
+        const filteredNodes = filterNodesBySearch(currentData.graph.nodes, searchTerm);
+        const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
+        const filteredEdges = (currentData.graph.edges || []).filter(
+          (e) => filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
+        );
+        filteredData = {
+          ...currentData,
+          graph: { nodes: filteredNodes, edges: filteredEdges }
+        };
+        document.getElementById("status-text").textContent = "Filtering: " + filteredNodes.length + " of " + (currentData.graph.nodes?.length || 0) + ' elements match "' + searchTerm + '"';
+      } else {
+        const filteredDiagramElements = filterElementsRecursive(cloneElements(currentData.elements || []), searchTerm);
+        filteredData = { ...currentData, elements: filteredDiagramElements };
+        const totalElements = countAllElements(currentData.elements || []);
+        const filteredCount = countAllElements(filteredDiagramElements || []);
+        document.getElementById("status-text").textContent = "Filtering: " + filteredCount + " of " + totalElements + ' elements match "' + searchTerm + '"';
+      }
     }
     if (currentView) {
       renderVisualization(currentView);
@@ -5944,17 +5754,19 @@
     };
   }
   function resetZoom() {
-    if (currentView === "sysml" && cy) {
+    const cytoscapeViews = ["sysml", "general-view"];
+    if (cytoscapeViews.includes(currentView) && cy) {
       cy.reset();
       fitSysMLView(80, { preferSelection: false });
       return;
     }
     window.userHasManuallyZoomed = true;
-    svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
+    if (svg) svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
   }
   function zoomToFit(trigger = "user") {
     const isAuto = trigger === "auto";
-    if (currentView === "sysml" && cy) {
+    const cytoscapeViews = ["sysml", "general-view"];
+    if (cytoscapeViews.includes(currentView) && cy) {
       fitSysMLView(80, { preferSelection: true });
       return;
     }
@@ -6026,7 +5838,7 @@
     const maxCharsPerLine = 38;
     const wrappedLines = [];
     rawLines.forEach((l) => wrappedLines.push.apply(wrappedLines, wrapTextToFit(l, maxCharsPerLine)));
-    const hasFooter = data && data.elements && data.elements.length > 0;
+    const hasFooter = data && (data.elements && data.elements.length > 0 || data.graph?.nodes && data.graph.nodes.length > 0);
     const cardWidth = 320;
     const lineHeight = 22;
     const cardHeight = Math.max(120, 70 + wrappedLines.length * lineHeight + (hasFooter ? 30 : 0));
@@ -6035,8 +5847,9 @@
     wrappedLines.forEach((line, i) => {
       messageGroup.append("text").attr("x", 0).attr("y", -cardHeight / 2 + 52 + i * lineHeight).attr("text-anchor", "middle").text(line).style("font-size", "13px").style("fill", "var(--vscode-descriptionForeground)");
     });
-    if (data && data.elements && data.elements.length > 0) {
-      messageGroup.append("text").attr("x", 0).attr("y", cardHeight / 2 - 20).attr("text-anchor", "middle").text(data.elements.length + " element(s) in model").style("font-size", "11px").style("fill", "var(--vscode-descriptionForeground)").style("opacity", "0.8");
+    const elementCount = (data?.elements?.length ?? 0) || (data?.graph?.nodes?.length ?? 0);
+    if (data && elementCount > 0) {
+      messageGroup.append("text").attr("x", 0).attr("y", cardHeight / 2 - 20).attr("text-anchor", "middle").text(elementCount + " element(s) in model").style("font-size", "11px").style("fill", "var(--vscode-descriptionForeground)").style("opacity", "0.8");
     }
   }
   var viewDropdownBtn = document.getElementById("view-dropdown-btn");
@@ -6066,7 +5879,6 @@
   document.getElementById("fit-btn").addEventListener("click", zoomToFit);
   document.getElementById("reset-btn").addEventListener("click", resetZoom);
   document.getElementById("layout-direction-btn").addEventListener("click", toggleLayoutDirection);
-  document.getElementById("category-headers-btn").addEventListener("click", toggleCategoryHeaders);
   document.getElementById("clear-filter-btn").addEventListener("click", clearSelection);
   (function setupLegend() {
     const legendBtn = document.getElementById("legend-btn");

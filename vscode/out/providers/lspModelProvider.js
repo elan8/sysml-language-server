@@ -27,6 +27,22 @@ exports.LspModelProvider = void 0;
 exports.toVscodeRange = toVscodeRange;
 const vscode = __importStar(require("vscode"));
 const logger_1 = require("../logger");
+/** Convert GraphNodeDTO to SysMLElementDTO for findElement compatibility. */
+function graphNodeToElementDTO(node, graph) {
+    const children = (graph.nodes || []).filter((n) => n.parentId === node.id);
+    const childDTOs = children.map((c) => graphNodeToElementDTO(c, graph));
+    const relationships = (graph.edges || [])
+        .filter((e) => e.source === node.id && (e.type || "").toLowerCase() !== "contains")
+        .map((e) => ({ source: e.source, target: e.target, type: e.type, name: e.name }));
+    return {
+        type: node.type,
+        name: node.name,
+        range: node.range,
+        children: childDTOs,
+        attributes: node.attributes || {},
+        relationships,
+    };
+}
 /** Convert LSP PositionDTO to vscode.Position. */
 function toVscodePosition(p) {
     return new vscode.Position(p.line, p.character);
@@ -36,8 +52,11 @@ function toVscodeRange(r) {
     return new vscode.Range(toVscodePosition(r.start), toVscodePosition(r.end));
 }
 class LspModelProvider {
-    constructor(client) {
+    constructor(client, 
+    /** Resolves when the LSP client is ready. Prevents getModel before didOpen is processed. */
+    whenReady = Promise.resolve()) {
         this.client = client;
+        this.whenReady = whenReady;
     }
     async getModel(uri, scopes, token) {
         const trimmed = (uri || "").trim();
@@ -45,18 +64,27 @@ class LspModelProvider {
             (0, logger_1.log)("getModel: empty URI, returning empty model");
             return {
                 version: 0,
-                elements: [],
-                relationships: [],
+                graph: { nodes: [], edges: [] },
             };
         }
         (0, logger_1.log)("getModel:", trimmed.slice(-60), "scopes:", scopes);
+        await this.whenReady;
         const params = {
             textDocument: { uri: trimmed },
             scope: scopes,
         };
+        const doRequest = () => this.client.sendRequest("sysml/model", params, token);
         try {
-            const result = await this.client.sendRequest("sysml/model", params, token);
-            (0, logger_1.log)("getModel result:", result.elements?.length ?? 0, "elements,", result.relationships?.length ?? 0, "relationships");
+            let result = await doRequest();
+            const nodeCount = result.graph?.nodes?.length ?? 0;
+            const edgeCount = result.graph?.edges?.length ?? 0;
+            // Retry once if empty: server may not have processed didOpen yet
+            if (nodeCount === 0 && edgeCount === 0 && scopes?.includes("graph")) {
+                (0, logger_1.log)("getModel: 0 nodes/edges, retrying after 300ms (didOpen may not be processed yet)");
+                await new Promise((r) => setTimeout(r, 300));
+                result = await doRequest();
+            }
+            (0, logger_1.log)("getModel result:", result.graph?.nodes?.length ?? 0, "nodes,", result.graph?.edges?.length ?? 0, "edges");
             return result;
         }
         catch (e) {
@@ -83,33 +111,33 @@ class LspModelProvider {
         }
     }
     /**
-     * Find an element by name in the model. Performs a depth-first search
-     * over elements returned by getModel.
+     * Find an element by name in the model. Searches graph.nodes and optionally
+     * scopes by parentContext (qualified name or name of parent).
      */
     async findElement(uri, elementName, parentContext, token) {
-        const result = await this.getModel(uri, ["elements"], token);
-        if (!result.elements) {
+        const result = await this.getModel(uri, ["graph"], token);
+        if (!result.graph?.nodes?.length) {
             return undefined;
         }
+        const nodes = result.graph.nodes;
+        const byName = new Map();
+        for (const n of nodes) {
+            const key = (n.name || "").toLowerCase();
+            if (!byName.has(key))
+                byName.set(key, []);
+            byName.get(key).push(n);
+        }
+        const candidates = byName.get(elementName.toLowerCase()) ?? [];
         if (parentContext) {
-            const parent = this.findRecursive(parentContext, result.elements);
-            if (parent?.children?.length) {
-                const found = this.findRecursive(elementName, parent.children);
-                if (found)
-                    return found;
+            const parentKey = parentContext.toLowerCase();
+            const parentIds = new Set(nodes.filter((n) => (n.name || "").toLowerCase() === parentKey || (n.id || "").toLowerCase() === parentKey).map((n) => n.id));
+            const scoped = candidates.filter((c) => c.parentId && parentIds.has(c.parentId));
+            if (scoped.length > 0) {
+                return graphNodeToElementDTO(scoped[0], result.graph);
             }
         }
-        return this.findRecursive(elementName, result.elements);
-    }
-    findRecursive(name, elements) {
-        for (const el of elements) {
-            if (el.name === name)
-                return el;
-            if (el.children?.length) {
-                const found = this.findRecursive(name, el.children);
-                if (found)
-                    return found;
-            }
+        if (candidates.length > 0) {
+            return graphNodeToElementDTO(candidates[0], result.graph);
         }
         return undefined;
     }

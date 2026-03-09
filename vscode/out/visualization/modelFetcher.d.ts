@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { LspModelProvider } from '../providers/lspModelProvider';
-import type { SysMLElementDTO } from '../providers/sysmlModelTypes';
+import type { SysMLGraphDTO } from '../providers/sysmlModelTypes';
 export interface FetchModelParams {
     documentUri: string;
     fileUris: vscode.Uri[];
@@ -10,8 +10,7 @@ export interface FetchModelParams {
 }
 export interface UpdateMessage {
     command: 'update';
-    elements: unknown[];
-    relationships: unknown[];
+    graph?: SysMLGraphDTO;
     sequenceDiagrams: unknown[];
     activityDiagrams: unknown[];
     currentView: string;
@@ -23,14 +22,10 @@ export interface UpdateMessage {
  */
 export declare function hashContent(content: string): string;
 /**
- * Convert LSP DTO elements into the JSON shape the webview expects.
+ * Merge graphs from multiple files. Nodes with same id (qualified name) are merged;
+ * packages merge attributes and children; edges are deduplicated.
  */
-export declare function convertDTOElementsToJSON(elements: SysMLElementDTO[], parentName?: string): unknown[];
-/**
- * Merge same-named package DTOs so that packages declared across
- * multiple files appear as a single node with combined children.
- */
-export declare function mergeElementDTOs(elements: SysMLElementDTO[]): SysMLElementDTO[];
+export declare function mergeGraphs(graphs: SysMLGraphDTO[]): SysMLGraphDTO;
 /**
  * Fetch model data from the LSP provider and convert it to the webview update message format.
  */

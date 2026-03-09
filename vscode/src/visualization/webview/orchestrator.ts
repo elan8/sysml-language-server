@@ -4,7 +4,7 @@
 // Orchestrator: message handling, state, and dispatch to modular renderers.
 // Config (elkWorkerUrl) is set by a minimal inline script in HTML before this bundle loads.
 
-import { prepareDataForView } from '../prepareData';
+import { prepareDataForView, graphToElementTree } from '../prepareData';
 import {
     quickHash,
     buildElementDisplayLabel,
@@ -50,7 +50,7 @@ import { renderSequenceView as renderSequenceViewModule } from './renderers/sequ
 import { renderIbdView as renderIbdViewModule } from './renderers/ibd';
 import { renderActivityView as renderActivityViewModule } from './renderers/activity';
 import { renderStateView as renderStateViewModule } from './renderers/state';
-import { renderElkTreeView as renderElkTreeViewModule, renderSysMLView as renderSysMLViewModule } from './elk';
+import { renderElkTreeView as renderElkTreeViewModule, renderSysMLView as renderSysMLViewModule, renderGeneralViewCytoscape as renderGeneralViewCytoscapeModule } from './elk';
 import { createMinimapController } from './minimap';
 import { createExportHandler } from './export';
 
@@ -83,9 +83,19 @@ import { createExportHandler } from './export';
     let showMetadata = false;
     let showCategoryHeaders = true; // Show category headers in General View
     const sysmlElementLookup = new Map();
-    // Legacy pillar view variables (kept for compatibility with old functions)
-    const SYSML_PILLARS = [];
-    const PILLAR_COLOR_MAP = {};
+    // SysML v2 pillars for Pillar View (structure, behavior, requirements)
+    const SYSML_PILLARS = [
+        { id: 'structure', label: 'Structure', keywords: ['part', 'port', 'attribute', 'item', 'interface', 'package', 'allocation', 'constraint'] },
+        { id: 'behavior', label: 'Behavior', keywords: ['action', 'state', 'activity', 'calc', 'enumeration'] },
+        { id: 'requirement', label: 'Requirements', keywords: ['requirement', 'req'] },
+        { id: 'usecases', label: 'Use Cases', keywords: ['use case', 'usecase'] }
+    ];
+    const PILLAR_COLOR_MAP = {
+        structure: GENERAL_VIEW_PALETTE.structural.part,
+        behavior: GENERAL_VIEW_PALETTE.behavior.action,
+        requirement: GENERAL_VIEW_PALETTE.requirements.requirement,
+        usecases: GENERAL_VIEW_PALETTE.requirements.useCase
+    };
     const expandedPillars = new Set();
     let pillarOrientation = 'horizontal';
 let sysmlToolbarInitialized = false;
@@ -211,8 +221,7 @@ let lastPillarStats = {};
             case 'update':
                 // Quick hash check - skip render if data unchanged
                 const newHash = quickHash({
-                    elements: message.elements,
-                    relationships: message.relationships
+                    graph: message.graph
                 });
 
                 if (newHash === lastDataHash && currentData) {
@@ -785,21 +794,37 @@ let lastPillarStats = {};
         });
     }
 
-    // General View type filter state
+    // General View type filter state - def categories first for correct matching
     const GENERAL_VIEW_CATEGORIES = [
+        { id: 'partDefs', label: 'Part defs', keywords: ['part def', 'part definition'], color: GENERAL_VIEW_PALETTE.structural.part },
         { id: 'parts', label: 'Parts', keywords: ['part'], color: GENERAL_VIEW_PALETTE.structural.part },
-        { id: 'attributes', label: 'Attributes', keywords: ['attribute', 'attr'], color: GENERAL_VIEW_PALETTE.structural.attribute },
+        { id: 'portDefs', label: 'Port defs', keywords: ['port def', 'port definition'], color: GENERAL_VIEW_PALETTE.structural.port },
         { id: 'ports', label: 'Ports', keywords: ['port'], color: GENERAL_VIEW_PALETTE.structural.port },
-        { id: 'actions', label: 'Actions', keywords: ['action'], color: GENERAL_VIEW_PALETTE.behavior.action },
-        { id: 'states', label: 'States', keywords: ['state'], color: GENERAL_VIEW_PALETTE.behavior.state },
+        { id: 'attributeDefs', label: 'Attribute defs', keywords: ['attribute def', 'attribute definition'], color: GENERAL_VIEW_PALETTE.structural.attribute },
+        { id: 'attributes', label: 'Attributes', keywords: ['attribute'], color: GENERAL_VIEW_PALETTE.structural.attribute },
+        { id: 'reqDefs', label: 'Requirement defs', keywords: ['requirement def', 'requirement definition'], color: GENERAL_VIEW_PALETTE.requirements.requirement },
         { id: 'requirements', label: 'Requirements', keywords: ['requirement', 'req'], color: GENERAL_VIEW_PALETTE.requirements.requirement },
+        { id: 'actionDefs', label: 'Action defs', keywords: ['action def', 'action definition'], color: GENERAL_VIEW_PALETTE.behavior.action },
+        { id: 'actions', label: 'Actions', keywords: ['action'], color: GENERAL_VIEW_PALETTE.behavior.action },
+        { id: 'stateDefs', label: 'State defs', keywords: ['state def', 'state definition'], color: GENERAL_VIEW_PALETTE.behavior.state },
+        { id: 'states', label: 'States', keywords: ['state'], color: GENERAL_VIEW_PALETTE.behavior.state },
+        { id: 'interfaceDefs', label: 'Interface defs', keywords: ['interface def', 'interface definition'], color: GENERAL_VIEW_PALETTE.structural.interface },
         { id: 'interfaces', label: 'Interfaces', keywords: ['interface'], color: GENERAL_VIEW_PALETTE.structural.interface },
-        { id: 'usecases', label: 'Use Cases', keywords: ['use case', 'usecase'], color: GENERAL_VIEW_PALETTE.requirements.useCase },
+        { id: 'usecaseDefs', label: 'Use case defs', keywords: ['use case def', 'usecase def'], color: GENERAL_VIEW_PALETTE.requirements.useCase },
+        { id: 'usecases', label: 'Use cases', keywords: ['use case', 'usecase'], color: GENERAL_VIEW_PALETTE.requirements.useCase },
+        { id: 'allocationDefs', label: 'Allocation defs', keywords: ['allocation def', 'allocate def'], color: GENERAL_VIEW_PALETTE.other.allocation },
+        { id: 'allocations', label: 'Allocations', keywords: ['allocation', 'allocate'], color: GENERAL_VIEW_PALETTE.other.allocation },
+        { id: 'constraintDefs', label: 'Constraint defs', keywords: ['constraint def', 'constraint definition'], color: GENERAL_VIEW_PALETTE.other.constraint },
+        { id: 'constraints', label: 'Constraints', keywords: ['constraint'], color: GENERAL_VIEW_PALETTE.other.constraint },
+        { id: 'enumerations', label: 'Enumerations', keywords: ['enumeration', 'enum'], color: GENERAL_VIEW_PALETTE.behavior.calc },
+        { id: 'metadata', label: 'Metadata', keywords: ['metadata'], color: '#8B7355' },
+        { id: 'occurrences', label: 'Occurrences', keywords: ['occurrence'], color: GENERAL_VIEW_PALETTE.structural.item },
         { id: 'concerns', label: 'Concerns', keywords: ['concern', 'viewpoint', 'stakeholder', 'frame'], color: GENERAL_VIEW_PALETTE.other.allocation },
         { id: 'items', label: 'Items', keywords: ['item'], color: GENERAL_VIEW_PALETTE.structural.item },
+        { id: 'packages', label: 'Packages', keywords: ['package'], color: '#6B7280' },
         { id: 'other', label: 'Other', keywords: [], color: '#808080' }
     ];
-    const expandedGeneralCategories = new Set(GENERAL_VIEW_CATEGORIES.map(c => c.id));
+    const expandedGeneralCategories = new Set(['partDefs', 'parts']);
 
     function renderGeneralChips(typeStats) {
         const container = document.getElementById('general-chips');
@@ -860,7 +885,7 @@ let lastPillarStats = {};
     }
 
     function updatePillarVisibility() {
-        if (!cy) {
+        if (!cy || currentView === 'general-view') {
             return;
         }
         cy.batch(() => {
@@ -958,7 +983,12 @@ let lastPillarStats = {};
         return null;
     }
 
-    function buildSysMLGraph(elements, relationships = [], useHierarchicalNesting = false) {
+    function buildSysMLGraph(dataOrElements, relationships = [], useHierarchicalNesting = false) {
+        const graph = dataOrElements?.graph;
+        if (graph) {
+            return graphToCytoscapeElementsForSysML(graph, useHierarchicalNesting);
+        }
+        const elements = Array.isArray(dataOrElements) ? dataOrElements : (dataOrElements?.elements ?? []);
         sysmlElementLookup.clear();
         const cyElements = [];
         const stats = {};
@@ -1137,6 +1167,586 @@ let lastPillarStats = {};
         });
 
         return { elements: cyElements, stats: stats };
+    }
+
+    /**
+     * Convert graph (nodes + edges) to Cytoscape elements for General View.
+     * Filters nodes by expandedGeneralCategories, maps nodes to Cytoscape format, edges to hierarchy/relationship.
+     */
+    function graphToCytoscapeElementsForGeneralView(graph) {
+        if (!graph || (!graph.nodes?.length && !graph.edges?.length)) {
+            return { elements: [], typeStats: {} };
+        }
+        const nodes = graph.nodes || [];
+        const edges = graph.edges || [];
+        const cyElements = [];
+        const typeStats = {};
+        const PACKAGE_TYPES = new Set(['package', 'library package', 'standard library package']);
+        const idToCyId = new Map();
+        const filteredNodes = nodes.filter((node) => {
+            if (!node || isMetadataElement(node.type)) return false;
+            const typeLower = (node.type || '').toLowerCase().trim();
+            const isPackage = PACKAGE_TYPES.has(typeLower);
+            const category = getCategoryForType(typeLower);
+            const matchesCategory = isPackage ? expandedGeneralCategories.has('packages') : expandedGeneralCategories.has(category);
+            return matchesCategory;
+        });
+        const categoryOrder = new Map(GENERAL_VIEW_CATEGORIES.map((c, i) => [c.id, i]));
+        filteredNodes.sort((a, b) => {
+            const catA = getCategoryForType((a.type || '').toLowerCase());
+            const catB = getCategoryForType((b.type || '').toLowerCase());
+            const orderA = categoryOrder.get(catA) ?? 999;
+            const orderB = categoryOrder.get(catB) ?? 999;
+            if (orderA !== orderB) return orderA - orderB;
+            return String(a.name || '').localeCompare(String(b.name || ''));
+        });
+        filteredNodes.forEach((node, index) => {
+            const cyId = 'gv-' + slugify(node.id) + '-' + index;
+            idToCyId.set(node.id, cyId);
+            const category = getCategoryForType((node.type || '').toLowerCase());
+            typeStats[category] = (typeStats[category] || 0) + 1;
+            const baseLabel = buildElementDisplayLabel({ name: node.name, type: node.type });
+            const typeLower = (node.type || '').toLowerCase();
+            const isDefinition = typeLower.includes('def') || typeLower.includes('definition');
+            const color = getTypeColor(node.type);
+            const cat = GENERAL_VIEW_CATEGORIES.find((c) => c.id === category);
+            const borderColor = (cat && cat.color) || color;
+            const attrs = node.attributes || {};
+            const metadata = {
+                documentation: (typeof attrs.documentation !== 'undefined' ? attrs.documentation : null),
+                properties: attrs
+            };
+            cyElements.push({
+                group: 'nodes',
+                data: {
+                    id: cyId,
+                    label: baseLabel,
+                    baseLabel: baseLabel,
+                    type: 'element',
+                    sysmlType: node.type,
+                    elementName: node.name,
+                    color: borderColor,
+                    isDefinition,
+                    category,
+                    metadata
+                }
+            });
+        });
+        const validNodeIds = new Set(cyElements.filter((el) => el.group === 'nodes').map((el) => el.data.id));
+        const hierarchyEdgeIds = new Set();
+        const relationshipEdgeIds = new Set();
+        const resolveCyId = (backendId) => idToCyId.get(backendId) || null;
+        edges.forEach((edge) => {
+            const sourceCyId = resolveCyId(edge.source);
+            const targetCyId = resolveCyId(edge.target);
+            if (!sourceCyId || !targetCyId || sourceCyId === targetCyId || !validNodeIds.has(sourceCyId) || !validNodeIds.has(targetCyId)) return;
+            const isContains = (edge.type || '').toLowerCase() === 'contains';
+            if (isContains) {
+                const edgeId = 'hier-' + sourceCyId + '-' + targetCyId;
+                if (!hierarchyEdgeIds.has(edgeId)) {
+                    hierarchyEdgeIds.add(edgeId);
+                    cyElements.push({
+                        group: 'edges',
+                        data: { id: edgeId, source: sourceCyId, target: targetCyId, type: 'hierarchy', label: '' }
+                    });
+                }
+            } else {
+                const edgeId = 'rel-' + slugify(edge.type || 'rel') + '-' + sourceCyId + '-' + targetCyId;
+                if (!relationshipEdgeIds.has(edgeId)) {
+                    relationshipEdgeIds.add(edgeId);
+                    let edgeLabel = edge.name || '';
+                    if (!edgeLabel) {
+                        if (edge.type === 'typing') edgeLabel = ': ' + edge.target;
+                        else if (edge.type === 'specializes') edgeLabel = ':> ' + edge.target;
+                        else edgeLabel = edge.type || '';
+                    }
+                    cyElements.push({
+                        group: 'edges',
+                        data: {
+                            id: edgeId,
+                            source: sourceCyId,
+                            target: targetCyId,
+                            type: 'relationship',
+                            relType: edge.type || 'relationship',
+                            label: edgeLabel
+                        }
+                    });
+                }
+            }
+        });
+        return { elements: cyElements, typeStats };
+    }
+
+    /**
+     * Convert graph (nodes + edges) to Cytoscape elements for SysML Pillar View.
+     */
+    function graphToCytoscapeElementsForSysML(graph, useHierarchicalNesting = false) {
+        if (!graph || (!graph.nodes?.length && !graph.edges?.length)) {
+            const cyElements = [];
+            const stats = {};
+            SYSML_PILLARS.forEach((p) => {
+                stats[p.id] = 0;
+                cyElements.push({
+                    group: 'nodes',
+                    data: { id: 'pillar-' + p.id, label: p.label, type: 'pillar', pillar: p.id, color: PILLAR_COLOR_MAP[p.id] }
+                });
+            });
+            return { elements: cyElements, stats };
+        }
+        sysmlElementLookup.clear();
+        const nodes = graph.nodes || [];
+        const edges = graph.edges || [];
+        const cyElements = [];
+        const stats = {};
+        SYSML_PILLARS.forEach((p) => {
+            stats[p.id] = 0;
+            cyElements.push({
+                group: 'nodes',
+                data: { id: 'pillar-' + p.id, label: p.label, type: 'pillar', pillar: p.id, color: PILLAR_COLOR_MAP[p.id] }
+            });
+        });
+        const idToCyId = new Map();
+        const filteredNodes = nodes.filter((n) => n && !isMetadataElement(n.type));
+        filteredNodes.forEach((node, index) => {
+            const pillarId = getPillarForElement({ type: node.type });
+            stats[pillarId] = (stats[pillarId] || 0) + 1;
+            const cyId = 'element-' + pillarId + '-' + slugify(node.name || node.id) + '-' + stats[pillarId];
+            idToCyId.set(node.id, cyId);
+            const lookupKey = (node.name || '').toLowerCase() || cyId;
+            const existing = sysmlElementLookup.get(lookupKey) || [];
+            existing.push(cyId);
+            sysmlElementLookup.set(lookupKey, existing);
+            const baseLabel = buildElementDisplayLabel({ name: node.name, type: node.type });
+            const attrs = node.attributes || {};
+            const metadata = {
+                documentation: (typeof attrs.documentation !== 'undefined' ? attrs.documentation : null),
+                properties: attrs
+            };
+            cyElements.push({
+                group: 'nodes',
+                data: {
+                    id: cyId,
+                    label: baseLabel,
+                    baseLabel: baseLabel,
+                    type: 'element',
+                    pillar: pillarId,
+                    color: PILLAR_COLOR_MAP[pillarId] || GENERAL_VIEW_PALETTE.other.default,
+                    sysmlType: node.type,
+                    elementName: node.name,
+                    metadata
+                }
+            });
+        });
+        const validNodeIds = new Set(cyElements.filter((el) => el.group === 'nodes').map((el) => el.data.id));
+        const resolveCyId = (backendId) => idToCyId.get(backendId) || null;
+        const hierarchyEdgeIds = new Set();
+        const relationshipEdgeIds = new Set();
+        edges.forEach((edge) => {
+            const sourceCyId = resolveCyId(edge.source);
+            const targetCyId = resolveCyId(edge.target);
+            if (!sourceCyId || !targetCyId || sourceCyId === targetCyId || !validNodeIds.has(sourceCyId) || !validNodeIds.has(targetCyId)) return;
+            const isContains = (edge.type || '').toLowerCase() === 'contains';
+            if (isContains) {
+                const edgeId = 'hier-' + sourceCyId + '-' + targetCyId;
+                if (!hierarchyEdgeIds.has(edgeId)) {
+                    hierarchyEdgeIds.add(edgeId);
+                    cyElements.push({
+                        group: 'edges',
+                        data: { id: edgeId, source: sourceCyId, target: targetCyId, type: 'hierarchy', label: '' }
+                    });
+                }
+            } else {
+                const edgeId = 'rel-' + slugify(edge.type || 'rel') + '-' + sourceCyId + '-' + targetCyId;
+                if (!relationshipEdgeIds.has(edgeId)) {
+                    relationshipEdgeIds.add(edgeId);
+                    let edgeLabel = edge.name || (edge.type === 'typing' ? ': ' + edge.target : edge.type || '');
+                    cyElements.push({
+                        group: 'edges',
+                        data: {
+                            id: edgeId,
+                            source: sourceCyId,
+                            target: targetCyId,
+                            type: 'relationship',
+                            relType: edge.type || 'relationship',
+                            label: edgeLabel
+                        }
+                    });
+                }
+            }
+        });
+        return { elements: cyElements, stats };
+    }
+
+    function collectElementsWithDepth(els, depth, result) {
+        if (!els || !Array.isArray(els)) return;
+        const PACKAGE_TYPES = new Set(['package', 'library package', 'standard library package']);
+        for (const el of els) {
+            if (!el || isMetadataElement(el.type)) continue;
+            const typeLower = (el.type || '').toLowerCase().trim();
+            const isPackage = PACKAGE_TYPES.has(typeLower);
+            const category = getCategoryForType(typeLower);
+            const matchesCategory = isPackage ? expandedGeneralCategories.has('packages') : expandedGeneralCategories.has(category);
+            if (matchesCategory) {
+                result.push({ element: el, depth });
+            }
+            collectElementsWithDepth(el.children, depth + 1, result);
+        }
+    }
+
+    function collectRelationshipsFromElements(els, collected = []) {
+        if (!els || !Array.isArray(els)) return collected;
+        for (const el of els) {
+            const rels = el.relationships || [];
+            for (const r of rels) {
+                if (r && (r.source || r.sourceId) && (r.target || r.targetId)) {
+                    collected.push({
+                        source: r.source || r.sourceId,
+                        target: r.target || r.targetId,
+                        type: r.type || 'relationship',
+                        name: r.name,
+                        sourceElement: el
+                    });
+                }
+            }
+            collectRelationshipsFromElements(el.children, collected);
+        }
+        return collected;
+    }
+
+    function buildGeneralViewGraph(dataOrElements, relationships = []) {
+        const graph = dataOrElements?.graph;
+        if (graph) {
+            return graphToCytoscapeElementsForGeneralView(graph);
+        }
+        const elements = Array.isArray(dataOrElements) ? dataOrElements : (dataOrElements?.elements ?? []);
+        const cyElements = [];
+        const typeStats = {};
+        const withDepth = [];
+        collectElementsWithDepth(elements || [], 0, withDepth);
+        const hierarchyLinks = createLinksFromHierarchy(elements || []);
+
+        const flatRels = (relationships || []).filter(
+            (r) => (r.type || r.rel_type) !== 'typing' && (r.type || r.rel_type) !== 'instanceOf'
+        );
+        const allRelationships = [...flatRels];
+        collectRelationshipsFromElements(elements || [], allRelationships);
+
+        function deriveTypingFromElements(els, derivedList) {
+            if (!els || !Array.isArray(els)) return;
+            for (const el of els) {
+                const typingTargets = el.typings || (el.typing ? [el.typing] : []);
+                const attrType = el.attributes?.partType || el.attributes?.get?.('partType') ||
+                    el.attributes?.portType || el.attributes?.get?.('portType') ||
+                    el.attributes?.actorType || el.attributes?.get?.('actorType');
+                if (attrType) {
+                    const targets = (typeof attrType === 'string' ? attrType.split(',') : [String(attrType)]).map(s => s.trim()).filter(Boolean);
+                    targets.forEach((t) => derivedList.push({ sourceElement: el, target: t, type: 'typing' }));
+                }
+                typingTargets.forEach((t) => {
+                    const target = (t || '').replace(/^[:~]+/, '').trim();
+                    if (target) derivedList.push({ sourceElement: el, target, type: 'typing' });
+                });
+                deriveTypingFromElements(el.children, derivedList);
+            }
+        }
+        const derivedTypingList = [];
+        deriveTypingFromElements(elements || [], derivedTypingList);
+        derivedTypingList.forEach((rel) => {
+            if (rel.sourceElement?.name && rel.target && rel.sourceElement.name !== rel.target) {
+                allRelationships.push({
+                    source: rel.sourceElement.name,
+                    target: rel.target,
+                    type: 'typing',
+                    sourceElement: rel.sourceElement
+                });
+            }
+        });
+
+        const filtered = withDepth;
+
+        const categoryOrder = new Map(GENERAL_VIEW_CATEGORIES.map((c, i) => [c.id, i]));
+        filtered.sort((a, b) => {
+            const catA = getCategoryForType((a.element.type || '').toLowerCase());
+            const catB = getCategoryForType((b.element.type || '').toLowerCase());
+            const orderA = categoryOrder.get(catA) ?? 999;
+            const orderB = categoryOrder.get(catB) ?? 999;
+            if (orderA !== orderB) return orderA - orderB;
+            if (a.depth !== b.depth) return a.depth - b.depth;
+            return String(a.element.name || '').localeCompare(String(b.element.name || ''));
+        });
+
+        const nameToNodeId = new Map();
+        const elementToNodeId = new Map();
+        filtered.forEach(({ element }, index) => {
+            const nodeId = 'gv-' + slugify(element.name) + '-' + index;
+            elementToNodeId.set(element, nodeId);
+            const lookupKey = (element.name || '').toLowerCase();
+            if (!nameToNodeId.has(lookupKey)) {
+                nameToNodeId.set(lookupKey, []);
+            }
+            nameToNodeId.get(lookupKey).push(nodeId);
+
+            const category = getCategoryForType((element.type || '').toLowerCase());
+            typeStats[category] = (typeStats[category] || 0) + 1;
+
+            const baseLabel = buildEnhancedElementLabel(element);
+            const typeLower = (element.type || '').toLowerCase();
+            const isDefinition = typeLower.includes('def') || typeLower.includes('definition');
+            const color = getTypeColor(element.type);
+            const cat = GENERAL_VIEW_CATEGORIES.find((c) => c.id === category);
+            const borderColor = (cat && cat.color) || color;
+
+            const metadata = {
+                documentation: extractDocumentation(element),
+                properties: getElementProperties(element) || {}
+            };
+
+            cyElements.push({
+                group: 'nodes',
+                data: {
+                    id: nodeId,
+                    label: baseLabel,
+                    baseLabel: baseLabel,
+                    type: 'element',
+                    sysmlType: element.type,
+                    elementName: element.name,
+                    color: borderColor,
+                    isDefinition,
+                    category,
+                    metadata
+                }
+            });
+        });
+
+        const validNodeIds = new Set(cyElements.filter((el) => el.group === 'nodes').map((el) => el.data.id));
+
+        function resolveNodeId(name) {
+            let key = (name || '').toLowerCase();
+            let ids = nameToNodeId.get(key);
+            if (!ids || ids.length === 0) {
+                const lastSeg = key.includes('::') ? key.split('::').pop()?.trim() || key : null;
+                if (lastSeg && lastSeg !== key) {
+                    ids = nameToNodeId.get(lastSeg);
+                }
+            }
+            if (!ids || ids.length === 0) return null;
+            return ids.find((id) => validNodeIds.has(id)) || ids[0];
+        }
+
+        const hierarchyEdgeIds = new Set();
+        hierarchyLinks.forEach((link) => {
+            const sourceId = resolveNodeId(link.source);
+            const targetId = resolveNodeId(link.target);
+            if (sourceId && targetId && sourceId !== targetId && validNodeIds.has(sourceId) && validNodeIds.has(targetId)) {
+                const edgeId = 'hier-' + sourceId + '-' + targetId;
+                if (!hierarchyEdgeIds.has(edgeId)) {
+                    hierarchyEdgeIds.add(edgeId);
+                    cyElements.push({
+                        group: 'edges',
+                        data: {
+                            id: edgeId,
+                            source: sourceId,
+                            target: targetId,
+                            type: 'hierarchy',
+                            label: ''
+                        }
+                    });
+                }
+            }
+        });
+
+        const relationshipEdgeIds = new Set();
+        allRelationships.forEach((rel) => {
+            const isTyping = (rel.type === 'typing' || rel.relType === 'typing');
+            const isSpecializes = (rel.type === 'specializes' || rel.relType === 'specializes');
+            const isTypingOrSpecializes = isTyping || isSpecializes;
+            const useSourceElement = rel.sourceElement && elementToNodeId.has(rel.sourceElement);
+            let sourceId;
+            if (isTyping) {
+                if (!useSourceElement) return;
+                sourceId = elementToNodeId.get(rel.sourceElement);
+            } else if (useSourceElement && isSpecializes) {
+                sourceId = elementToNodeId.get(rel.sourceElement);
+            } else {
+                sourceId = resolveNodeId(rel.source);
+            }
+            const targetId = resolveNodeId(rel.target);
+            if (!sourceId || !targetId || sourceId === targetId || !validNodeIds.has(sourceId) || !validNodeIds.has(targetId)) {
+                return;
+            }
+            const edgeId = 'rel-' + slugify(rel.type || 'rel') + '-' + sourceId + '-' + targetId;
+            if (relationshipEdgeIds.has(edgeId)) return;
+            relationshipEdgeIds.add(edgeId);
+
+            let edgeLabel = rel.name || '';
+            if (!edgeLabel) {
+                if (rel.type === 'typing') edgeLabel = ': ' + rel.target;
+                else if (rel.type === 'specializes') edgeLabel = ':> ' + rel.target;
+                else edgeLabel = rel.type || '';
+            }
+
+            cyElements.push({
+                group: 'edges',
+                data: {
+                    id: edgeId,
+                    source: sourceId,
+                    target: targetId,
+                    type: 'relationship',
+                    relType: rel.type || 'relationship',
+                    label: edgeLabel
+                }
+            });
+        });
+
+        return { elements: cyElements, typeStats };
+    }
+
+    function getGeneralViewStyles() {
+        const editorFg = getCSSVariable('--vscode-editor-foreground');
+        const editorBg = getCSSVariable('--vscode-editor-background');
+        return [
+            {
+                selector: 'node',
+                style: {
+                    'label': 'data(label)',
+                    'color': editorFg,
+                    'text-valign': 'center',
+                    'text-halign': 'center',
+                    'font-size': 11,
+                    'font-weight': 600,
+                    'background-color': 'rgba(255,255,255,0.02)',
+                    'border-width': 2,
+                    'border-color': 'data(color)',
+                    'padding': '18px',
+                    'shape': 'round-rectangle',
+                    'text-wrap': 'wrap',
+                    'text-max-width': 200,
+                    'width': 'label',
+                    'height': 'label',
+                    'min-width': '100px',
+                    'min-height': '60px',
+                    'compound-sizing-wrt-labels': 'include',
+                    'text-margin-x': '5px',
+                    'text-margin-y': '5px',
+                    'line-height': 1.5
+                }
+            },
+            {
+                selector: 'node[type = "element"][isDefinition = true]',
+                style: {
+                    'shape': 'rectangle',
+                    'border-style': 'solid',
+                    'border-width': 3
+                }
+            },
+            {
+                selector: 'node[type = "element"][isDefinition = false]',
+                style: {
+                    'shape': 'round-rectangle',
+                    'border-style': 'dashed',
+                    'border-width': 2
+                }
+            },
+            {
+                selector: 'edge',
+                style: {
+                    'width': 2,
+                    'line-color': 'rgba(180,200,255,0.85)',
+                    'target-arrow-color': 'rgba(180,200,255,0.85)',
+                    'curve-style': 'bezier',
+                    'target-arrow-shape': 'triangle'
+                }
+            },
+            {
+                selector: 'edge[type = "hierarchy"]',
+                style: {
+                    'line-color': 'rgba(160,180,220,0.7)',
+                    'target-arrow-color': 'rgba(160,180,220,0.7)'
+                }
+            },
+            {
+                selector: 'edge[type = "relationship"]',
+                style: {
+                    'line-color': 'rgba(100,150,255,0.9)',
+                    'target-arrow-color': 'rgba(100,150,255,0.9)'
+                }
+            }
+        ];
+    }
+
+    function removeNodeOverlaps() {
+        if (!cy) return;
+        const nodes = cy.nodes();
+        const minGap = 20;
+        const maxIterations = 50;
+        let iter = 0;
+        let hadOverlap = true;
+        while (hadOverlap && iter < maxIterations) {
+            hadOverlap = false;
+            iter++;
+            for (let i = 0; i < nodes.length; i++) {
+                const a = nodes[i];
+                const ab = a.boundingBox();
+                const ax = ab.x1 + (ab.w / 2);
+                const ay = ab.y1 + (ab.h / 2);
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const b = nodes[j];
+                    const bb = b.boundingBox();
+                    const bx = bb.x1 + (bb.w / 2);
+                    const by = bb.y1 + (bb.h / 2);
+                    const overlapX = (ab.w / 2 + bb.w / 2 + minGap) - Math.abs(ax - bx);
+                    const overlapY = (ab.h / 2 + bb.h / 2 + minGap) - Math.abs(ay - by);
+                    if (overlapX > 0 && overlapY > 0) {
+                        hadOverlap = true;
+                        const dx = ax - bx;
+                        const dy = ay - by;
+                        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        const push = Math.max(overlapX, overlapY) * 0.55;
+                        a.position({ x: a.position('x') + nx * push, y: a.position('y') + ny * push });
+                        b.position({ x: b.position('x') - nx * push, y: b.position('y') - ny * push });
+                    }
+                }
+            }
+        }
+    }
+
+    function runGeneralViewLayout(fit = false) {
+        if (!cy) return;
+
+        const layoutOptions = {
+            name: 'elk',
+            nodeDimensionsIncludeLabels: true,
+            elk: {
+                algorithm: 'stress',
+                'elk.spacing.nodeNode': '180',
+                'elk.spacing.edgeNode': '80',
+                'elk.spacing.componentComponent': '150',
+                'elk.stress.desiredEdgeLength': '180',
+                'elk.separateConnectedComponents': 'true',
+                'elk.aspectRatio': '1.4',
+                'elk.padding': '[top=80,left=80,bottom=80,right=80]'
+            },
+            fit: fit,
+            padding: 80,
+            animate: true
+        };
+
+        const layout = cy.layout(layoutOptions);
+        if (fit) {
+            cy.one('layoutstop', () => {
+                removeNodeOverlaps();
+                cy.forceRender();
+                fitSysMLView(80);
+            });
+        } else {
+            cy.one('layoutstop', () => {
+                removeNodeOverlaps();
+                cy.forceRender();
+            });
+        }
+        layout.run();
     }
 
     // Helper function to get computed CSS variable values
@@ -2035,24 +2645,6 @@ let lastPillarStats = {};
             layoutDirBtn.style.display = showLayoutBtn ? 'inline-flex' : 'none';
         }
 
-        // Show/hide category headers button for General View only
-        const categoryHeadersBtn = document.getElementById('category-headers-btn');
-        if (categoryHeadersBtn) {
-            categoryHeadersBtn.style.display = activeView === 'general-view' ? 'inline-flex' : 'none';
-            categoryHeadersBtn.textContent = showCategoryHeaders ? '☰ Grouped' : '☷ Flat';
-            if (showCategoryHeaders) {
-                categoryHeadersBtn.classList.add('active');
-                categoryHeadersBtn.style.background = 'var(--vscode-button-background)';
-                categoryHeadersBtn.style.color = 'var(--vscode-button-foreground)';
-                categoryHeadersBtn.style.borderColor = 'var(--vscode-button-background)';
-            } else {
-                categoryHeadersBtn.classList.remove('active');
-                categoryHeadersBtn.style.background = '';
-                categoryHeadersBtn.style.color = '';
-                categoryHeadersBtn.style.borderColor = '';
-            }
-        }
-
         const dropdownButton = document.getElementById('view-dropdown-btn');
         const dropdownConfig = VIEW_OPTIONS[activeView];
         if (dropdownButton) {
@@ -2094,7 +2686,7 @@ let lastPillarStats = {};
 
         if (activeView === 'general-view') {
             // For General View, extract top-level packages
-            const elements = currentData?.elements || [];
+            const elements = currentData?.elements ?? (currentData?.graph ? graphToElementTree(currentData.graph) : []);
 
             const packagesArray = [];
             const seenPackages = new Set();
@@ -2180,7 +2772,7 @@ let lastPillarStats = {};
             labelText = 'Sequence';
         } else if (activeView === 'interconnection-view') {
             // For these views, extract top-level packages (same as elk/General View)
-            const elements = currentData?.elements || [];
+            const elements = currentData?.elements ?? (currentData?.graph ? graphToElementTree(currentData.graph) : []);
 
             const packagesArray = [];
             const seenPackages = new Set();
@@ -2319,30 +2911,6 @@ let lastPillarStats = {};
         renderVisualization(currentView);
     }
 
-    function toggleCategoryHeaders() {
-        showCategoryHeaders = !showCategoryHeaders;
-        // Update button text and active styling
-        const btn = document.getElementById('category-headers-btn');
-        if (btn) {
-            btn.textContent = showCategoryHeaders ? '☰ Grouped' : '☷ Flat';
-            if (showCategoryHeaders) {
-                btn.classList.add('active');
-                btn.style.background = 'var(--vscode-button-background)';
-                btn.style.color = 'var(--vscode-button-foreground)';
-                btn.style.borderColor = 'var(--vscode-button-background)';
-            } else {
-                btn.classList.remove('active');
-                btn.style.background = '';
-                btn.style.color = '';
-                btn.style.borderColor = '';
-            }
-        }
-        // Re-render the General view
-        if (currentView === 'general-view') {
-            renderVisualization('general-view');
-        }
-    }
-
     function updateStateLayoutButton(activeView) {
         // Legacy function - now handled by updateLayoutDirectionButton
     }
@@ -2403,13 +2971,13 @@ let lastPillarStats = {};
         if (selectedDiagramIndex > 0 &&
             (view === 'interconnection-view')) {
 
-            const elements = baseData?.elements || [];
+            const elements = baseData?.elements ?? (baseData?.graph ? graphToElementTree(baseData.graph) : []);
             const packagesArray = [];
             const seenPackages = new Set();
 
             // Find all packages recursively (SysML v2 spec allows nested packages up to depth 3)
             function findPackagesForRender(elementList, depth = 0) {
-                elementList.forEach(el => {
+                (elementList || []).forEach(el => {
                     const typeLower = (el.type || '').toLowerCase();
                     if (typeLower.includes('package') && depth <= 3 && !seenPackages.has(el.name)) {
                         seenPackages.add(el.name);
@@ -2488,6 +3056,9 @@ let lastPillarStats = {};
                 getSvg: () => svg,
                 getG: () => g,
                 buildSysMLGraph,
+                buildGeneralViewGraph,
+                getGeneralViewStyles,
+                runGeneralViewLayout,
                 setSysMLToolbarVisible,
                 renderPillarChips,
                 setLastPillarStats: (stats) => { lastPillarStats = stats; },
@@ -2519,7 +3090,7 @@ let lastPillarStats = {};
             };
         }
 
-        // SysML Pillar view uses Cytoscape - bypass SVG/D3 setup
+        // SysML Pillar view and General View use Cytoscape - bypass SVG/D3 setup
         if (view === 'sysml') {
             renderSysMLViewModule(buildElkContext(), width, height, dataToRender);
             lastView = view;
@@ -2527,6 +3098,16 @@ let lastPillarStats = {};
                 isRendering = false;
                 hideLoading();
             }, 100);
+            return;
+        }
+        if (view === 'general-view') {
+            renderGeneralViewCytoscapeModule(buildElkContext(), width, height, dataToRender);
+            lastView = view;
+            setTimeout(() => {
+                isRendering = false;
+                hideLoading();
+                updateMinimap();
+            }, 150);
             return;
         }
 
@@ -2561,7 +3142,7 @@ let lastPillarStats = {};
                 const currentTransform = d3.zoomTransform(this);
 
                 // Calculate zoom factor - larger values for faster zooming
-                const factor = event.deltaY > 0 ? 0.75 : 1.33;
+                const factor = event.deltaY > 0 ? 0.7 : 1.45;
                 const newScale = Math.min(
                     Math.max(currentTransform.k * factor, MIN_CANVAS_ZOOM),
                     MAX_CANVAS_ZOOM
@@ -2660,30 +3241,8 @@ let lastPillarStats = {};
             }
         });
 
-        // Handle async and sync rendering
-        if (view === 'general-view') {
-            renderElkTreeViewModule(buildElkContext(), width, height, dataToRender).then(() => {
-                // If zoom was previously modified, restore it; otherwise zoom to fit
-                if (shouldPreserveZoom) {
-                    restoreZoom();
-                } else {
-                    // Delay zoom to fit to ensure ELK layout is complete
-                    setTimeout(() => zoomToFit('auto'), 200);
-                }
-                setTimeout(() => {
-                    updateDimensionsDisplay();
-                    isRendering = false; // Reset rendering flag
-                    updateMinimap(); // Update minimap after rendering
-                    hideLoading(); // Hide loading indicator
-                }, 300);
-            }).catch((error) => {
-                console.error('[General View] Render error:', error);
-                isRendering = false; // Reset flag on error too
-                hideLoading(); // Hide loading indicator on error
-            });
-        } else {
-            // Synchronous rendering (SysML v2 frameless-view types)
-            if (view === 'sequence-view') {
+        // Synchronous rendering (SysML v2 frameless-view types)
+        if (view === 'sequence-view') {
                 renderSequenceViewModule(buildRenderContext(width, height), dataToRender);
             } else if (view === 'interconnection-view') {
                 renderIbdViewModule(buildRenderContext(width, height), dataToRender);
@@ -2710,7 +3269,6 @@ let lastPillarStats = {};
                 updateMinimap(); // Update minimap after rendering
                 hideLoading(); // Hide loading indicator
             }, 200);
-        }
 
         // Update lastView after successful render start
         lastView = view;
@@ -3192,12 +3750,15 @@ let lastPillarStats = {};
     }
 
     function renderRelationships() {
-        // Only render relationships in tree view and only if we have valid data
-        if (!currentData.relationships || currentData.relationships.length === 0) {
+        const relationships = currentData?.graph
+            ? (currentData.graph.edges || []).filter((e) => (e.type || '').toLowerCase() !== 'contains')
+                .map((e) => ({ source: e.source, target: e.target, type: e.type, name: e.name }))
+            : (currentData?.relationships || []);
+        if (!relationships.length) {
             return;
         }
 
-        // Get all tree nodes with their positions
+        // Get all tree nodes with their positions (match by name or id)
         const allNodes = [];
         g.selectAll('.node-group').each(function(d) {
             if (d && d.data) {
@@ -3206,20 +3767,22 @@ let lastPillarStats = {};
                 if (matches) {
                     allNodes.push({
                         name: d.data.name,
-                        x: parseFloat(matches[0]),
-                        y: parseFloat(matches[1]),
+                        id: d.data.id,
+                        x: parseFloat(matches[1]),
+                        y: parseFloat(matches[2]),
                         element: this
                     });
                 }
             }
         });
 
-        // Only draw relationships if we have valid node positions
-        currentData.relationships.forEach(rel => {
-            const sourceNode = allNodes.find(n => n.name === rel.source);
-            const targetNode = allNodes.find(n => n.name === rel.target);
+        const findNode = (key) => allNodes.find((n) => n.name === key || n.id === key);
 
-            if (sourceNode && targetNode && sourceNode.x && sourceNode.y && targetNode.x && targetNode.y) {
+        relationships.forEach((rel) => {
+            const sourceNode = findNode(rel.source);
+            const targetNode = findNode(rel.target);
+
+            if (sourceNode && targetNode && sourceNode.x != null && sourceNode.y != null && targetNode.x != null && targetNode.y != null) {
                 g.append('line')
                     .attr('class', 'relationship-link')
                     .attr('x1', sourceNode.x)
@@ -3306,36 +3869,58 @@ let lastPillarStats = {};
 
     // createLinksFromHierarchy imported from ./helpers
 
+    function filterNodesBySearch(nodes, searchTerm) {
+        if (!nodes || !searchTerm) return nodes || [];
+        return nodes.filter((node) => {
+            const nameMatch = (node.name || '').toLowerCase().includes(searchTerm);
+            const typeMatch = (node.type || '').toLowerCase().includes(searchTerm);
+            const idMatch = (node.id || '').toLowerCase().includes(searchTerm);
+            let attributeMatch = false;
+            if (node.attributes && typeof node.attributes === 'object') {
+                for (const [k, v] of Object.entries(node.attributes)) {
+                    if (String(k).toLowerCase().includes(searchTerm) || String(v).toLowerCase().includes(searchTerm)) {
+                        attributeMatch = true;
+                        break;
+                    }
+                }
+            }
+            return nameMatch || typeMatch || idMatch || attributeMatch;
+        });
+    }
+
     function filterElements(query) {
-        if (!currentData || (!currentData.elements && !currentData.pillarElements)) return;
+        const hasGraph = currentData?.graph?.nodes;
+        const hasElements = currentData?.elements;
+        if (!currentData || (!hasGraph && !hasElements && !currentData.pillarElements)) return;
 
         const searchTerm = query.toLowerCase().trim();
 
         if (searchTerm === '') {
-            // Reset to show all elements
             filteredData = null;
             document.getElementById('status-text').textContent = 'Ready • Use filter to search elements';
         } else {
-            // Filter elements based on name, type, or properties
-            const filteredDiagramElements = currentData.elements
-                ? filterElementsRecursive(cloneElements(currentData.elements), searchTerm)
-                : [];
-
-            filteredData = {
-                ...currentData,
-                elements: filteredDiagramElements
-            };
-
-            // Update status to show filter results
-            const activeSource = currentData.elements;
-            const activeFiltered = filteredDiagramElements;
-            const totalElements = countAllElements(activeSource || []);
-            const filteredCount = countAllElements(activeFiltered || []);
-            document.getElementById('status-text').textContent =
-                'Filtering: ' + filteredCount + ' of ' + totalElements + ' elements match "' + searchTerm + '"';
+            if (hasGraph) {
+                const filteredNodes = filterNodesBySearch(currentData.graph.nodes, searchTerm);
+                const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
+                const filteredEdges = (currentData.graph.edges || []).filter(
+                    (e) => filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
+                );
+                filteredData = {
+                    ...currentData,
+                    graph: { nodes: filteredNodes, edges: filteredEdges }
+                };
+                document.getElementById('status-text').textContent =
+                    'Filtering: ' + filteredNodes.length + ' of ' + (currentData.graph.nodes?.length || 0) + ' elements match "' + searchTerm + '"';
+            } else {
+                const filteredDiagramElements = filterElementsRecursive(cloneElements(currentData.elements || []), searchTerm);
+                filteredData = { ...currentData, elements: filteredDiagramElements };
+                const totalElements = countAllElements(currentData.elements || []);
+                const filteredCount = countAllElements(filteredDiagramElements || []);
+                document.getElementById('status-text').textContent =
+                    'Filtering: ' + filteredCount + ' of ' + totalElements + ' elements match "' + searchTerm + '"';
+            }
         }
 
-        // Re-render the current view with filtered/unfiltered data
         if (currentView) {
             renderVisualization(currentView);
         }
@@ -3390,18 +3975,20 @@ let lastPillarStats = {};
     }
 
     function resetZoom() {
-        if (currentView === 'sysml' && cy) {
+        const cytoscapeViews = ['sysml', 'general-view'];
+        if (cytoscapeViews.includes(currentView) && cy) {
             cy.reset();
             fitSysMLView(80, { preferSelection: false });
             return;
         }
         window.userHasManuallyZoomed = true; // Mark as manual interaction
-        svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
+        if (svg) svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
     }
 
     function zoomToFit(trigger = 'user') {
         const isAuto = trigger === 'auto';
-        if (currentView === 'sysml' && cy) {
+        const cytoscapeViews = ['sysml', 'general-view'];
+        if (cytoscapeViews.includes(currentView) && cy) {
             fitSysMLView(80, { preferSelection: true });
             return;
         }
@@ -3508,7 +4095,7 @@ let lastPillarStats = {};
         const maxCharsPerLine = 38;
         const wrappedLines = [];
         rawLines.forEach(l => wrappedLines.push.apply(wrappedLines, wrapTextToFit(l, maxCharsPerLine)));
-        const hasFooter = data && data.elements && data.elements.length > 0;
+        const hasFooter = data && ((data.elements && data.elements.length > 0) || (data.graph?.nodes && data.graph.nodes.length > 0));
 
         // Subtle card background - height adapts to content
         const cardWidth = 320;
@@ -3547,12 +4134,13 @@ let lastPillarStats = {};
         });
 
         // Optional footer when model has elements
-        if (data && data.elements && data.elements.length > 0) {
+        const elementCount = (data?.elements?.length ?? 0) || (data?.graph?.nodes?.length ?? 0);
+        if (data && elementCount > 0) {
             messageGroup.append('text')
                 .attr('x', 0)
                 .attr('y', cardHeight / 2 - 20)
                 .attr('text-anchor', 'middle')
-                .text(data.elements.length + ' element(s) in model')
+                .text(elementCount + ' element(s) in model')
                 .style('font-size', '11px')
                 .style('fill', 'var(--vscode-descriptionForeground)')
                 .style('opacity', '0.8');
@@ -3594,7 +4182,6 @@ let lastPillarStats = {};
     document.getElementById('fit-btn').addEventListener('click', zoomToFit);
     document.getElementById('reset-btn').addEventListener('click', resetZoom);
     document.getElementById('layout-direction-btn').addEventListener('click', toggleLayoutDirection);
-    document.getElementById('category-headers-btn').addEventListener('click', toggleCategoryHeaders);
     document.getElementById('clear-filter-btn').addEventListener('click', clearSelection);
 
     // Legend popup toggle

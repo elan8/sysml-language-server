@@ -9,6 +9,7 @@ declare const d3: any;
 
 import { MIN_SYSML_ZOOM, MAX_SYSML_ZOOM, GENERAL_VIEW_PALETTE } from './constants';
 import { getTypeColor } from './shared';
+import { graphToElementTree } from '../prepareData';
 
 export interface ElkContext {
     elkWorkerUrl: string;
@@ -16,7 +17,7 @@ export interface ElkContext {
     setCy: (cy: any) => void;
     getSvg: () => any;
     getG: () => any;
-    buildSysMLGraph: (elements: any[], relationships?: any[], useHierarchicalNesting?: boolean) => { elements: any[]; stats: Record<string, number> };
+    buildSysMLGraph: (dataOrElements: any, relationships?: any[], useHierarchicalNesting?: boolean) => { elements: any[]; stats: Record<string, number> };
     setSysMLToolbarVisible: (visible: boolean) => void;
     renderPillarChips: (stats?: Record<string, number>) => void;
     setLastPillarStats: (stats: Record<string, number>) => void;
@@ -45,6 +46,123 @@ export interface ElkContext {
     getLibraryKind: (element: any) => string | null;
     getLibraryChain: (element: any) => string | null;
     onStartInlineEdit: (nodeG: any, elementName: string, x: number, y: number, width: number) => void;
+    buildGeneralViewGraph: (dataOrElements: any, relationships?: any[]) => { elements: any[]; typeStats: Record<string, number> };
+    getGeneralViewStyles: () => any[];
+    runGeneralViewLayout: (fit?: boolean) => void;
+}
+
+export function renderGeneralViewCytoscape(ctx: ElkContext, width: number, height: number, data: any): void {
+    ctx.setSysMLToolbarVisible(true);
+    const container = document.getElementById('visualization');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+
+    const dataGraph = data?.graph;
+    const hasElements = dataGraph?.nodes?.length > 0 || dataGraph?.edges?.length > 0;
+    if (!hasElements) {
+        const msg = document.createElement('div');
+        msg.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--vscode-descriptionForeground);text-align:center;padding:2rem;';
+        msg.innerHTML = '<strong style="color:var(--vscode-editor-foreground);font-size:1.1rem;">General View</strong><p style="margin:1rem 0;">No elements to display.</p><p>The parser did not return any elements.</p>';
+        container.appendChild(msg);
+        return;
+    }
+
+    const cyContainer = document.createElement('div');
+    cyContainer.id = 'sysml-cytoscape';
+    cyContainer.style.width = '100%';
+    cyContainer.style.height = '100%';
+    cyContainer.style.position = 'absolute';
+    cyContainer.style.top = '0';
+    cyContainer.style.left = '0';
+    container.appendChild(cyContainer);
+
+    const builtGraph = ctx.buildGeneralViewGraph(data);
+    ctx.renderGeneralChips(builtGraph.typeStats);
+
+    const nodeCount = builtGraph.elements.filter((el: any) => el.group === 'nodes').length;
+    if (nodeCount === 0) {
+        const msg = document.createElement('div');
+        msg.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--vscode-descriptionForeground);text-align:center;padding:2rem;';
+        msg.innerHTML = '<strong style="color:var(--vscode-editor-foreground);font-size:1.1rem;">General View</strong><p style="margin:1rem 0;">No matching elements to display.</p><p>Try enabling more categories using the filter chips above.</p>';
+        container.appendChild(msg);
+        return;
+    }
+
+    const existingCy = ctx.getCy();
+    if (existingCy) {
+        existingCy.destroy();
+    }
+
+    const cy = cytoscape({
+        container: cyContainer,
+        elements: builtGraph.elements,
+        style: ctx.getGeneralViewStyles(),
+        minZoom: MIN_SYSML_ZOOM,
+        maxZoom: MAX_SYSML_ZOOM,
+        wheelSensitivity: 1,
+        boxSelectionEnabled: false,
+        autounselectify: true
+    });
+
+    ctx.setCy(cy);
+
+    cy.on('zoom', () => {
+        (window as any).userHasManuallyZoomed = true;
+        ctx.updateMinimap();
+    });
+
+    cy.on('pan', () => {
+        ctx.updateMinimap();
+    });
+
+    cy.on('tap', (event: any) => {
+        if (event.target === cy) {
+            cy.elements().removeClass('highlighted-sysml');
+            ctx.clearVisualHighlights();
+        }
+    });
+
+    let tapTimeout: ReturnType<typeof setTimeout> | null = null;
+    let lastTapped: string | null = null;
+
+    cy.on('tap', 'node[type = "element"]', (event: any) => {
+        const node = event.target;
+        cy.elements().removeClass('highlighted-sysml');
+        node.addClass('highlighted-sysml');
+
+        const statusEl = document.getElementById('status-text');
+        if (statusEl) statusEl.textContent = node.data('label') + ' [' + node.data('sysmlType') + ']';
+
+        ctx.centerOnNode(node);
+
+        if (tapTimeout && lastTapped === node.id()) {
+            clearTimeout(tapTimeout);
+            tapTimeout = null;
+            lastTapped = null;
+            const elementNameToJump = node.data('elementName');
+            ctx.postMessage({
+                command: 'jumpToElement',
+                elementName: elementNameToJump
+            });
+        } else {
+            lastTapped = node.id();
+            tapTimeout = setTimeout(() => {
+                tapTimeout = null;
+                lastTapped = null;
+            }, 250);
+        }
+    });
+
+    cy.resize();
+    cy.forceRender();
+
+    setTimeout(() => {
+        ctx.runGeneralViewLayout(true);
+        const statusEl = document.getElementById('status-text');
+        if (statusEl) statusEl.textContent = 'General View • Tap element to highlight, double-tap to jump';
+    }, 100);
 }
 
 export function renderSysMLView(ctx: ElkContext, width: number, height: number, data: any): void {
@@ -64,7 +182,7 @@ export function renderSysMLView(ctx: ElkContext, width: number, height: number, 
     container.appendChild(cyContainer);
 
     const useHierarchicalNesting = ctx.sysmlMode === 'hierarchy';
-    const graph = ctx.buildSysMLGraph(data.elements || [], data.relationships || [], useHierarchicalNesting);
+    const graph = ctx.buildSysMLGraph(data, undefined, useHierarchicalNesting);
 
     ctx.setLastPillarStats(graph.stats);
     ctx.renderPillarChips(graph.stats);
@@ -80,7 +198,7 @@ export function renderSysMLView(ctx: ElkContext, width: number, height: number, 
         style: ctx.getSysMLStyles(),
         minZoom: MIN_SYSML_ZOOM,
         maxZoom: MAX_SYSML_ZOOM,
-        wheelSensitivity: 0.2,
+        wheelSensitivity: 1,
         boxSelectionEnabled: false,
         autounselectify: true
     });
@@ -165,7 +283,11 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
     if (!svg || !g) return;
 
     try {
-        let elementsData = (data && data.elements) ? data.elements : (ctx.currentData ? ctx.currentData.elements : null);
+        const rawData = data || ctx.currentData;
+        const hasGraph = rawData?.graph?.nodes;
+        let elementsData = (data && data.elements) ? data.elements
+            : hasGraph ? graphToElementTree(rawData.graph)
+            : (ctx.currentData ? ctx.currentData.elements : null);
 
         if (ctx.selectedDiagramIndex > 0 && elementsData) {
             const packagesArray: Array<{ name: string; element: any }> = [];
@@ -344,8 +466,8 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
         const lineHeight = 13;
         const sectionGap = 5;
         const padding = 24;
-        const hSpacing = elementCount > 25 ? 40 : 34;
-        const vSpacing = elementCount > 25 ? 36 : 32;
+        const hSpacing = elementCount > 25 ? 48 : 42;
+        const vSpacing = elementCount > 25 ? 44 : 40;
 
         function truncateText(text: string, maxChars: number) {
             if (!text) return '';
@@ -531,7 +653,7 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
 
         const categoryStartPositions = new Map<string, { y: number; count: number }>();
         let currentY = padding;
-        const groupSpacing = ctx.showCategoryHeaders ? 65 : 45;
+        const groupSpacing = ctx.showCategoryHeaders ? 75 : 55;
         const categoryLabelHeight = ctx.showCategoryHeaders ? 28 : 0;
 
         categoryOrder.forEach((catId: string) => {
@@ -596,12 +718,78 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 headerG.append('text').attr('x', 0).attr('y', 16)
                     .style('font-size', '14px').style('font-weight', '600').style('fill', category.color)
                     .text(category.label + ' (' + info.count + ')');
-                headerG.append('line').attr('x1', 0).attr('y1', 24).attr('x2', availableWidth).attr('y2', 24)
-                    .style('stroke', category.color).style('stroke-width', '2px').style('opacity', 0.35);
+                headerG.append('rect').attr('x', 0).attr('y', 22).attr('width', availableWidth).attr('height', 4)
+                    .style('fill', category.color).style('opacity', 0.2);
+                headerG.append('line').attr('x1', 0).attr('y1', 26).attr('x2', availableWidth).attr('y2', 26)
+                    .style('stroke', category.color).style('stroke-width', '2px').style('opacity', 0.4);
             });
         }
 
         const nodeGroup = g.append('g').attr('class', 'general-nodes');
+
+        const EDGE_OFFSET_STEP = 26;
+        const EDGE_WAYPOINT_OFFSET = 18;
+
+        /**
+         * Computes an orthogonal path with edge-side attach and two waypoints to reduce
+         * crossings. Uses exit/entry sides derived from source/target positions.
+         */
+        function computeOrthogonalPath(
+            x1: number, y1: number, x2: number, y2: number,
+            options: { offset?: number; srcRect?: any; tgtRect?: any } = {}
+        ): { pathD: string; labelX: number; labelY: number } {
+            const offset = options.offset ?? 0;
+            const srcRect = options.srcRect;
+            const tgtRect = options.tgtRect;
+
+            const srcCx = srcRect ? srcRect.x + srcRect.width / 2 : x1;
+            const srcCy = srcRect ? srcRect.y + srcRect.height / 2 : y1;
+            const tgtCx = tgtRect ? tgtRect.x + tgtRect.width / 2 : x2;
+            const tgtCy = tgtRect ? tgtRect.y + tgtRect.height / 2 : y2;
+
+            const dx = tgtCx - srcCx;
+            const dy = tgtCy - srcCy;
+
+            let ox1 = x1, oy1 = y1, ox2 = x2, oy2 = y2;
+            if (srcRect) {
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    ox1 = dx > 0 ? srcRect.x + srcRect.width : srcRect.x;
+                    oy1 = srcCy + offset;
+                } else {
+                    ox1 = srcCx + offset;
+                    oy1 = dy > 0 ? srcRect.y + srcRect.height : srcRect.y;
+                }
+            }
+            if (tgtRect) {
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    ox2 = dx > 0 ? tgtRect.x : tgtRect.x + tgtRect.width;
+                    oy2 = tgtCy + offset;
+                } else {
+                    ox2 = tgtCx + offset;
+                    oy2 = dy > 0 ? tgtRect.y : tgtRect.y + tgtRect.height;
+                }
+            }
+
+            const distX = Math.abs(ox2 - ox1);
+            const distY = Math.abs(oy2 - oy1);
+            const wpSpread = offset * 0.4;
+
+            let pathD: string;
+            let labelX: number, labelY: number;
+
+            if (distX > distY) {
+                const midX = (ox1 + ox2) / 2 + wpSpread;
+                pathD = 'M' + ox1 + ',' + oy1 + ' L' + midX + ',' + oy1 + ' L' + midX + ',' + oy2 + ' L' + ox2 + ',' + oy2;
+                labelX = midX;
+                labelY = (oy1 + oy2) / 2 - 8 + offset * 0.5;
+            } else {
+                const midY = (oy1 + oy2) / 2 + wpSpread;
+                pathD = 'M' + ox1 + ',' + oy1 + ' L' + ox1 + ',' + midY + ' L' + ox2 + ',' + midY + ' L' + ox2 + ',' + oy2;
+                labelX = (ox1 + ox2) / 2 + offset * 0.5;
+                labelY = midY - 8;
+            }
+            return { pathD, labelX, labelY };
+        }
 
         function drawGeneralEdges() {
             g.selectAll('.general-edges').remove();
@@ -709,37 +897,14 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 const pairKey = [conn.source, conn.target].sort().join('--');
                 const pairCount = (edgeOffsets[pairKey] || 0) + 1;
                 edgeOffsets[pairKey] = pairCount;
-                const offsetStep = 22;
                 const isReverse = conn.source > conn.target;
-                const offset = (pairCount - 1) * offsetStep * (isReverse && pairCount > 1 ? -1 : 1);
+                const offset = (pairCount - 1) * EDGE_OFFSET_STEP * (isReverse && pairCount > 1 ? -1 : 1);
 
-                const srcCx = srcPos.x + srcPos.width / 2;
-                const srcCy = srcPos.y + srcPos.height / 2;
-                const tgtCx = tgtPos.x + tgtPos.width / 2;
-                const tgtCy = tgtPos.y + tgtPos.height / 2;
-                const dx = tgtCx - srcCx;
-                const dy = tgtCy - srcCy;
-
-                let x1: number, y1: number, x2: number, y2: number;
-                if (Math.abs(dx) > Math.abs(dy)) {
-                    x1 = dx > 0 ? srcPos.x + srcPos.width : srcPos.x;
-                    y1 = srcCy + offset;
-                    x2 = dx > 0 ? tgtPos.x : tgtPos.x + tgtPos.width;
-                    y2 = tgtCy + offset;
-                } else {
-                    x1 = srcCx + offset;
-                    y1 = dy > 0 ? srcPos.y + srcPos.height : srcPos.y;
-                    x2 = tgtCx + offset;
-                    y2 = dy > 0 ? tgtPos.y : tgtPos.y + tgtPos.height;
-                }
-                const midX = (x1 + x2) / 2;
-                const midY = (y1 + y2) / 2;
-                let pathD: string;
-                if (Math.abs(dx) > Math.abs(dy)) {
-                    pathD = 'M' + x1 + ',' + y1 + ' L' + midX + ',' + y1 + ' L' + midX + ',' + y2 + ' L' + x2 + ',' + y2;
-                } else {
-                    pathD = 'M' + x1 + ',' + y1 + ' L' + x1 + ',' + midY + ' L' + x2 + ',' + midY + ' L' + x2 + ',' + y2;
-                }
+                const { pathD, labelX, labelY } = computeOrthogonalPath(0, 0, 0, 0, {
+                    offset,
+                    srcRect: srcPos,
+                    tgtRect: tgtPos
+                });
 
                 let strokeColor: string, strokeDash: string, markerEnd: string, strokeWidth: string;
                 if (conn.isSpecialization || conn.type === 'specializes') {
@@ -801,8 +966,6 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 });
 
                 if (conn.type) {
-                    const labelX = Math.abs(dx) > Math.abs(dy) ? midX : (x1 + x2) / 2;
-                    const labelY = Math.abs(dx) > Math.abs(dy) ? (y1 + y2) / 2 - 6 : midY - 6;
                     let labelText = conn.type;
                     if (conn.isSpecialization || conn.type === 'specializes') labelText = ':>';
                     else if (conn.isTypedBy || conn.type === 'typed by') labelText = ':';
@@ -813,7 +976,7 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                     edgeGroup.append('rect').attr('x', labelX - 22).attr('y', labelY - 9).attr('width', 44).attr('height', 14).attr('rx', 7)
                         .style('fill', 'var(--vscode-editor-background)').style('opacity', 0.92);
                     edgeGroup.append('text').attr('x', labelX).attr('y', labelY).attr('text-anchor', 'middle')
-                        .text(labelText).style('font-size', '9px').style('font-weight', 'bold').style('fill', strokeColor);
+                        .text(labelText).style('font-size', '10px').style('font-weight', 'bold').style('fill', strokeColor);
                 }
             });
 
@@ -854,6 +1017,7 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
             }
             collectPortConnections(elementsData);
 
+            const portEdgeOffsets: Record<string, number> = {};
             portConnections.forEach((pConn: any) => {
                 const fromPos = portPositions.get(pConn.fromPort);
                 const toPos = portPositions.get(pConn.toPort);
@@ -863,14 +1027,15 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 else if (fromPos.side === 'right') x1 += 5;
                 if (toPos.side === 'left') x2 -= 5;
                 else if (toPos.side === 'right') x2 += 5;
-                const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
-                const dx = x2 - x1, dy = y2 - y1;
-                let pathD: string;
-                if (Math.abs(dx) > Math.abs(dy)) {
-                    pathD = 'M' + x1 + ',' + y1 + ' L' + midX + ',' + y1 + ' L' + midX + ',' + y2 + ' L' + x2 + ',' + y2;
-                } else {
-                    pathD = 'M' + x1 + ',' + y1 + ' L' + x1 + ',' + midY + ' L' + x2 + ',' + midY + ' L' + x2 + ',' + y2;
-                }
+
+                const portPairKey = [pConn.fromPort, pConn.toPort].sort().join('--');
+                const portCount = (portEdgeOffsets[portPairKey] || 0) + 1;
+                portEdgeOffsets[portPairKey] = portCount;
+                const portOffset = (portCount - 1) * (EDGE_OFFSET_STEP * 0.5) * (portCount > 1 && pConn.fromPort > pConn.toPort ? -1 : 1);
+
+                const { pathD } = computeOrthogonalPath(x1, y1, x2, y2, { offset: portOffset });
+                const midX = (x1 + x2) / 2;
+                const midY = (y1 + y2) / 2;
                 const isBind = pConn.type === 'bind';
                 const strokeColor = isBind ? GENERAL_VIEW_PALETTE.requirements.requirement : GENERAL_VIEW_PALETTE.structural.interface;
                 const strokeDash = isBind ? '4,2' : 'none';
@@ -960,7 +1125,7 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
             const _nodeStroke = isLibValidated ? GENERAL_VIEW_PALETTE.structural.part : typeColor;
             const _nodeStrokeW = isUsage ? '3px' : '2px';
             nodeG.append('rect').attr('class', 'node-background')
-                .attr('width', pos.width).attr('height', pos.height).attr('rx', isDefinition ? 5 : 10)
+                .attr('width', pos.width).attr('height', pos.height).attr('rx', isDefinition ? 4 : 14)
                 .attr('data-original-stroke', _nodeStroke).attr('data-original-width', _nodeStrokeW)
                 .style('fill', 'var(--vscode-editor-background)').style('stroke', _nodeStroke)
                 .style('stroke-width', _nodeStrokeW).style('stroke-dasharray', isDefinition ? '6,3' : 'none')

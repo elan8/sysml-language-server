@@ -243,7 +243,7 @@ pub fn source_range_to_range(r: &SourceRange) -> Range {
 
 /// Ensures selection_range is contained in full range (LSP requirement).
 /// If selection is outside or partially outside full_range, returns a clamped selection or full_range.
-fn selection_contained_in(mut selection: Range, full: Range) -> Range {
+pub(crate) fn selection_contained_in(mut selection: Range, full: Range) -> Range {
     fn pos_lt(a: &Position, b: &Position) -> bool {
         a.line < b.line || (a.line == b.line && a.character < b.character)
     }
@@ -532,7 +532,7 @@ fn relationships_from_member(
                     None => name.to_string(),
                 };
                 out.push(ModelRelationship {
-                    rel_type: "instanceOf".to_string(),
+                    rel_type: "typing".to_string(),
                     source: src,
                     target: t.clone(),
                     name: None,
@@ -563,7 +563,7 @@ fn relationships_from_member(
                     None => name.to_string(),
                 };
                 out.push(ModelRelationship {
-                    rel_type: "instanceOf".to_string(),
+                    rel_type: "typing".to_string(),
                     source: src,
                     target: t.clone(),
                     name: None,
@@ -997,7 +997,7 @@ pub fn document_symbols_to_workspace_symbols(
 }
 
 /// Formats multiplicity for display (e.g. "[1..*]", "[*]", "[3]").
-fn format_multiplicity(m: &Multiplicity) -> String {
+pub(crate) fn format_multiplicity(m: &Multiplicity) -> String {
     match m {
         Multiplicity::Fixed(n) => format!("[{}]", n),
         Multiplicity::Unbounded => "[*]".to_string(),

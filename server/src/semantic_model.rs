@@ -1,0 +1,849 @@
+//! Semantic graph model for SysML v2 documents.
+//!
+//! Builds a petgraph-based graph from parsed ASTs. Nodes represent model elements
+//! (packages, parts, ports, etc.); edges represent SysML relationships
+//! (typing, specializes, connection, bind, allocate, transition).
+
+use kerml_parser::ast::{Member, SourcePosition, SourceRange, SysMLDocument};
+use petgraph::stable_graph::{NodeIndex, StableGraph};
+use petgraph::visit::{EdgeRef, IntoEdgeReferences};
+use petgraph::Directed;
+use std::collections::HashMap;
+use tower_lsp::lsp_types::{Position, Range, Url};
+
+use crate::language::{format_multiplicity, selection_contained_in, source_position_to_range, source_range_to_range};
+
+/// Unique identifier for a node in the semantic graph.
+/// Combines document URI and qualified name for workspace-wide uniqueness.
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+pub struct NodeId {
+    pub uri: Url,
+    pub qualified_name: String,
+}
+
+impl NodeId {
+    fn new(uri: &Url, qualified_name: impl Into<String>) -> Self {
+        Self {
+            uri: uri.clone(),
+            qualified_name: qualified_name.into(),
+        }
+    }
+}
+
+/// SysML v2 relationship kinds (edges in the graph).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RelationshipKind {
+    Typing,
+    Specializes,
+    Connection,
+    Bind,
+    Allocate,
+    Transition,
+}
+
+impl RelationshipKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RelationshipKind::Typing => "typing",
+            RelationshipKind::Specializes => "specializes",
+            RelationshipKind::Connection => "connection",
+            RelationshipKind::Bind => "bind",
+            RelationshipKind::Allocate => "allocate",
+            RelationshipKind::Transition => "transition",
+        }
+    }
+}
+
+/// A node in the semantic graph representing a model element.
+#[derive(Debug, Clone)]
+pub struct SemanticNode {
+    pub id: NodeId,
+    pub element_kind: String,
+    pub name: String,
+    pub range: Range,
+    pub attributes: HashMap<String, serde_json::Value>,
+    pub parent_id: Option<NodeId>,
+}
+
+/// Semantic graph: nodes (model elements) and edges (relationships).
+/// Uses petgraph StableGraph for efficient add/remove and future algorithm support.
+#[derive(Debug, Default)]
+pub struct SemanticGraph {
+    graph: StableGraph<SemanticNode, RelationshipKind, Directed>,
+    node_index_by_id: HashMap<NodeId, NodeIndex>,
+    nodes_by_uri: HashMap<Url, Vec<NodeId>>,
+}
+
+impl SemanticGraph {
+    pub fn new() -> Self {
+        Self {
+            graph: StableGraph::new(),
+            node_index_by_id: HashMap::new(),
+            nodes_by_uri: HashMap::new(),
+        }
+    }
+
+    /// Removes all nodes (and their incident edges) for the given URI.
+    pub fn remove_nodes_for_uri(&mut self, uri: &Url) {
+        let Some(node_ids) = self.nodes_by_uri.remove(uri) else {
+            return;
+        };
+        for id in node_ids {
+            if let Some(idx) = self.node_index_by_id.remove(&id) {
+                self.graph.remove_node(idx);
+            }
+        }
+    }
+
+    /// Merges nodes and edges from another graph (built from a single document).
+    pub fn merge(&mut self, other: SemanticGraph) {
+        for (id, node) in other.iter_nodes() {
+            let idx = self.graph.add_node(node.clone());
+            self.node_index_by_id.insert(id.clone(), idx);
+            self.nodes_by_uri
+                .entry(id.uri.clone())
+                .or_default()
+                .push(id);
+        }
+        for (src_id, tgt_id, kind) in other.iter_edges() {
+            if let (Some(&src_idx), Some(&tgt_idx)) = (
+                self.node_index_by_id.get(&src_id),
+                self.node_index_by_id.get(&tgt_id),
+            ) {
+                self.graph.add_edge(src_idx, tgt_idx, kind.clone());
+            }
+        }
+    }
+
+    fn iter_nodes(&self) -> impl Iterator<Item = (NodeId, &SemanticNode)> {
+        self.nodes_by_uri.values().flatten().filter_map(|id| {
+            self.node_index_by_id
+                .get(id)
+                .and_then(|&idx| self.graph.node_weight(idx))
+                .map(|n| (id.clone(), n))
+        })
+    }
+
+    fn iter_edges(&self) -> impl Iterator<Item = (NodeId, NodeId, RelationshipKind)> + '_ {
+        let node_ids: Vec<_> = self.node_index_by_id.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let id_by_idx: HashMap<NodeIndex, NodeId> = node_ids.into_iter().map(|(k, v)| (v, k)).collect();
+        self.graph.edge_references().filter_map(move |e| {
+            let src_id = id_by_idx.get(&e.source())?.clone();
+            let tgt_id = id_by_idx.get(&e.target())?.clone();
+            let kind = e.weight().clone();
+            Some((src_id, tgt_id, kind))
+        })
+    }
+
+    /// Returns URIs that have nodes in the graph (for debugging).
+    pub fn uris_with_nodes(&self) -> Vec<String> {
+        self.nodes_by_uri
+            .keys()
+            .take(5)
+            .map(|u| u.as_str().to_string())
+            .collect()
+    }
+
+    /// Returns all nodes that belong to the given URI (document).
+    pub fn nodes_for_uri(&self, uri: &Url) -> Vec<&SemanticNode> {
+        let Some(ids) = self.nodes_by_uri.get(uri) else {
+            return Vec::new();
+        };
+        ids.iter()
+            .filter_map(|id| {
+                self.node_index_by_id
+                    .get(id)
+                    .and_then(|&idx| self.graph.node_weight(idx))
+            })
+            .collect()
+    }
+
+    /// Returns root nodes (no parent) for the given URI. Typically top-level packages.
+    pub fn root_nodes_for_uri(&self, uri: &Url) -> Vec<&SemanticNode> {
+        self.nodes_for_uri(uri)
+            .into_iter()
+            .filter(|n| n.parent_id.is_none())
+            .collect()
+    }
+
+    /// Returns child nodes of the given node (by matching parent_id).
+    pub fn children_of(&self, parent: &SemanticNode) -> Vec<&SemanticNode> {
+        self.nodes_by_uri
+            .get(&parent.id.uri)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| {
+                self.node_index_by_id
+                    .get(id)
+                    .and_then(|&idx| self.graph.node_weight(idx))
+            })
+            .filter(|n| n.parent_id.as_ref() == Some(&parent.id))
+            .collect()
+    }
+
+    /// Returns edges incident to nodes in the given URI as (source, target, kind, optional edge name).
+    /// Used for sysml/model relationships.
+    pub fn edges_for_uri_as_strings(
+        &self,
+        uri: &Url,
+    ) -> Vec<(String, String, RelationshipKind, Option<String>)> {
+        let ids: std::collections::HashSet<_> = self
+            .nodes_by_uri
+            .get(uri)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let id_by_idx: HashMap<NodeIndex, NodeId> = self
+            .node_index_by_id
+            .iter()
+            .map(|(k, v)| (*v, k.clone()))
+            .collect();
+        let mut out = Vec::new();
+        for e in self.graph.edge_references() {
+            let src_id = match id_by_idx.get(&e.source()) {
+                Some(id) => id.clone(),
+                None => continue,
+            };
+            let tgt_id = match id_by_idx.get(&e.target()) {
+                Some(id) => id.clone(),
+                None => continue,
+            };
+            if ids.contains(&src_id) || ids.contains(&tgt_id) {
+                out.push((
+                    src_id.qualified_name,
+                    tgt_id.qualified_name,
+                    e.weight().clone(),
+                    None::<String>, // edge name for connection
+                ));
+            }
+        }
+        out
+    }
+}
+
+/// Builds a semantic graph from a parsed SysML document.
+pub fn build_graph_from_doc(doc: &SysMLDocument, uri: &Url) -> SemanticGraph {
+    let mut g = SemanticGraph::new();
+    for pkg in &doc.packages {
+        build_from_package(pkg, uri, None, &mut g);
+    }
+    g
+}
+
+fn build_from_package(
+    pkg: &kerml_parser::ast::Package,
+    uri: &Url,
+    container_prefix: Option<&str>,
+    g: &mut SemanticGraph,
+) {
+    let name = if pkg.name.is_empty() {
+        "(top level)"
+    } else {
+        pkg.name.as_str()
+    };
+    let qualified = match container_prefix {
+        Some(p) => format!("{}::{}", p, name),
+        None => name.to_string(),
+    };
+    let node_id = NodeId::new(uri, &qualified);
+    let selection_range = pkg
+        .name_position
+        .as_ref()
+        .map(source_position_to_range)
+        .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+    let range = pkg
+        .range
+        .as_ref()
+        .map(source_range_to_range)
+        .unwrap_or(selection_range);
+
+    let node = SemanticNode {
+        id: node_id.clone(),
+        element_kind: "package".to_string(),
+        name: name.to_string(),
+        range,
+        attributes: HashMap::new(),
+        parent_id: container_prefix.map(|p| NodeId::new(uri, p)),
+    };
+
+    let idx = g.graph.add_node(node);
+    g.node_index_by_id.insert(node_id.clone(), idx);
+    g.nodes_by_uri.entry(uri.clone()).or_default().push(node_id.clone());
+
+    let prefix = if pkg.name.is_empty() {
+        container_prefix.map(String::from)
+    } else {
+        Some(match container_prefix {
+            Some(p) => format!("{}::{}", p, name),
+            None => name.to_string(),
+        })
+    };
+
+    for m in &pkg.members {
+        build_from_member(m, uri, prefix.as_deref(), &node_id, g);
+    }
+}
+
+fn member_range(
+    range: Option<&SourceRange>,
+    name_position: Option<&SourcePosition>,
+) -> Range {
+    let sel = name_position
+        .map(source_position_to_range)
+        .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+    let r = range
+        .map(source_range_to_range)
+        .unwrap_or(sel);
+    selection_contained_in(sel, r)
+}
+
+fn build_from_member(
+    member: &Member,
+    uri: &Url,
+    container_prefix: Option<&str>,
+    parent_id: &NodeId,
+    g: &mut SemanticGraph,
+) {
+    use kerml_parser::ast::Member as M;
+    match member {
+        M::PartDef(p) => {
+            let range = member_range(p.range.as_ref(), p.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &p.name);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = p.type_ref {
+                attrs.insert("partType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref s) = p.specializes {
+                attrs.insert("specializes".to_string(), serde_json::json!(s));
+            }
+            if let Some(ref m) = p.multiplicity {
+                attrs.insert(
+                    "multiplicity".to_string(),
+                    serde_json::json!(format_multiplicity(m)),
+                );
+            }
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "part def",
+                p.name.clone(),
+                range,
+                attrs,
+                parent_id,
+            );
+            let node_id = NodeId::new(uri, &qualified);
+            relationships_from_member(member, uri, container_prefix, g);
+            recurse_members(&p.members, uri, Some(&qualified), g, &node_id);
+        }
+        M::PartUsage(p) => {
+            let name = p.name.as_deref().unwrap_or("(anonymous)");
+            let range = member_range(p.range.as_ref(), p.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, name);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = p.type_ref {
+                attrs.insert("partType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref s) = p.specializes {
+                attrs.insert("specializes".to_string(), serde_json::json!(s));
+            }
+            if let Some(ref m) = p.multiplicity {
+                attrs.insert(
+                    "multiplicity".to_string(),
+                    serde_json::json!(format_multiplicity(m)),
+                );
+            }
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "part",
+                name.to_string(),
+                range,
+                attrs,
+                parent_id,
+            );
+            let node_id = NodeId::new(uri, &qualified);
+            relationships_from_member(member, uri, container_prefix, g);
+            recurse_members(&p.members, uri, Some(&qualified), g, &node_id);
+        }
+        M::AttributeDef(a) => {
+            let range = member_range(a.range.as_ref(), a.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &a.name);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = a.type_ref {
+                attrs.insert("attributeType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref m) = a.multiplicity {
+                attrs.insert(
+                    "multiplicity".to_string(),
+                    serde_json::json!(format_multiplicity(m)),
+                );
+            }
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "attribute def",
+                a.name.clone(),
+                range,
+                attrs,
+                parent_id,
+            );
+            recurse_members(&a.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+        }
+        M::AttributeUsage(a) => {
+            let range = member_range(a.range.as_ref(), a.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &a.name);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = a.type_ref {
+                attrs.insert("attributeType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref m) = a.multiplicity {
+                attrs.insert(
+                    "multiplicity".to_string(),
+                    serde_json::json!(format_multiplicity(m)),
+                );
+            }
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "attribute",
+                a.name.clone(),
+                range,
+                attrs,
+                parent_id,
+            );
+        }
+        M::PortDef(p) => {
+            let range = member_range(p.range.as_ref(), p.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &p.name);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = p.type_ref {
+                attrs.insert("portType".to_string(), serde_json::json!(t));
+            }
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "port def",
+                p.name.clone(),
+                range,
+                attrs,
+                parent_id,
+            );
+            let node_id = NodeId::new(uri, &qualified);
+            relationships_from_member(member, uri, container_prefix, g);
+            recurse_members(&p.members, uri, Some(&qualified), g, &node_id);
+        }
+        M::PortUsage(p) => {
+            let name = p.name.as_deref().unwrap_or("(anonymous)");
+            let range = member_range(p.range.as_ref(), p.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, name);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = p.type_ref {
+                attrs.insert("portType".to_string(), serde_json::json!(t));
+            }
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "port",
+                name.to_string(),
+                range,
+                attrs,
+                parent_id,
+            );
+            let node_id = NodeId::new(uri, &qualified);
+            relationships_from_member(member, uri, container_prefix, g);
+            recurse_members(&p.members, uri, Some(&qualified), g, &node_id);
+        }
+        M::InterfaceDef(i) => {
+            let range = member_range(i.range.as_ref(), i.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &i.name);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "interface",
+                i.name.clone(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+            recurse_members(&i.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+        }
+        M::ConnectionUsage(c) => {
+            let name = c.name.as_deref().unwrap_or("(connection)");
+            let range = member_range(c.range.as_ref(), c.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, name);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "connection",
+                name.to_string(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+            relationships_from_member(member, uri, container_prefix, g);
+        }
+        M::ItemDef(i) => {
+            let range = member_range(i.range.as_ref(), i.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &i.name);
+            let mut attrs = HashMap::new();
+            if let Some(ref s) = i.specializes {
+                attrs.insert("specializes".to_string(), serde_json::json!(s));
+            }
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "item def",
+                i.name.clone(),
+                range,
+                attrs,
+                parent_id,
+            );
+            recurse_members(&i.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+        }
+        M::ItemUsage(i) => {
+            let range = member_range(i.range.as_ref(), i.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &i.name);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = i.type_ref {
+                attrs.insert("itemType".to_string(), serde_json::json!(t));
+            }
+            if let Some(ref m) = i.multiplicity {
+                attrs.insert(
+                    "multiplicity".to_string(),
+                    serde_json::json!(format_multiplicity(m)),
+                );
+            }
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "item",
+                i.name.clone(),
+                range,
+                attrs,
+                parent_id,
+            );
+        }
+        M::RequirementDef(r) => {
+            let range = member_range(r.range.as_ref(), r.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &r.name);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "requirement def",
+                r.name.clone(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+            recurse_members(&r.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+        }
+        M::RequirementUsage(r) => {
+            let range = member_range(r.range.as_ref(), r.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &r.name);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "requirement",
+                r.name.clone(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+            recurse_members(&r.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+        }
+        M::ActionDef(a) => {
+            let range = member_range(a.range.as_ref(), a.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &a.name);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "action def",
+                a.name.clone(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+        }
+        M::StateDef(s) => {
+            let range = member_range(s.range.as_ref(), s.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &s.name);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "state def",
+                s.name.clone(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+            recurse_members(&s.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+        }
+        M::ExhibitState(s) => {
+            let range = member_range(s.range.as_ref(), s.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &s.name);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "state",
+                s.name.clone(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+            recurse_members(&s.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+        }
+        M::UseCase(u) => {
+            let range = member_range(u.range.as_ref(), u.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &u.name);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "use case def",
+                u.name.clone(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+            recurse_members(&u.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+        }
+        M::ActorDef(a) => {
+            let range = member_range(a.range.as_ref(), a.name_position.as_ref());
+            let qualified = qualified_name(container_prefix, &a.name);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = a.type_ref {
+                attrs.insert("actorType".to_string(), serde_json::json!(t));
+            }
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "actor def",
+                a.name.clone(),
+                range,
+                attrs,
+                parent_id,
+            );
+            recurse_members(&a.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+        }
+        M::Package(p) => {
+            build_from_package(p, uri, container_prefix, g);
+        }
+        M::BindStatement(_) | M::AllocateStatement(_) | M::TransitionStatement(_) => {
+            relationships_from_member(member, uri, container_prefix, g);
+        }
+        _ => {}
+    }
+}
+
+fn qualified_name(container_prefix: Option<&str>, name: &str) -> String {
+    match container_prefix {
+        Some(p) if !p.is_empty() => format!("{}::{}", p, name),
+        _ => name.to_string(),
+    }
+}
+
+fn add_node_and_recurse(
+    g: &mut SemanticGraph,
+    uri: &Url,
+    qualified: &str,
+    kind: &str,
+    name: String,
+    range: Range,
+    attrs: HashMap<String, serde_json::Value>,
+    parent_id: &NodeId,
+) {
+    let node_id = NodeId::new(uri, qualified);
+    let node = SemanticNode {
+        id: node_id.clone(),
+        element_kind: kind.to_string(),
+        name,
+        range,
+        attributes: attrs,
+        parent_id: Some(parent_id.clone()),
+    };
+    let idx = g.graph.add_node(node);
+    g.node_index_by_id.insert(node_id.clone(), idx);
+    g.nodes_by_uri
+        .entry(uri.clone())
+        .or_default()
+        .push(node_id);
+}
+
+fn recurse_members(
+    members: &[Member],
+    uri: &Url,
+    prefix: Option<&str>,
+    g: &mut SemanticGraph,
+    parent_id: &NodeId,
+) {
+    for m in members {
+        build_from_member(m, uri, prefix, parent_id, g);
+    }
+}
+
+fn relationships_from_member(
+    member: &Member,
+    uri: &Url,
+    container_prefix: Option<&str>,
+    g: &mut SemanticGraph,
+) {
+    use kerml_parser::ast::Member as M;
+    match member {
+        M::ConnectionUsage(c) => {
+            let (src, tgt) = if let Some(p) = container_prefix {
+                (
+                    format!("{}::{}", p, c.source),
+                    format!("{}::{}", p, c.target),
+                )
+            } else {
+                (c.source.clone(), c.target.clone())
+            };
+            add_edge_if_both_exist(g, uri, &src, &tgt, RelationshipKind::Connection);
+        }
+        M::BindStatement(b) => {
+            add_edge_if_both_exist(g, uri, &b.logical, &b.physical, RelationshipKind::Bind);
+        }
+        M::AllocateStatement(a) => {
+            add_edge_if_both_exist(g, uri, &a.source, &a.target, RelationshipKind::Allocate);
+        }
+        M::PartDef(p) => {
+            if let Some(ref s) = p.specializes {
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, p.name),
+                    None => p.name.clone(),
+                };
+                add_edge_if_both_exist(g, uri, &src, s, RelationshipKind::Specializes);
+            }
+        }
+        M::PartUsage(p) => {
+            if let Some(ref s) = p.specializes {
+                let name = p.name.as_deref().unwrap_or("(anonymous)");
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, name),
+                    None => name.to_string(),
+                };
+                add_edge_if_both_exist(g, uri, &src, s, RelationshipKind::Specializes);
+            }
+            if let Some(ref t) = p.type_ref {
+                let name = p.name.as_deref().unwrap_or("(anonymous)");
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, name),
+                    None => name.to_string(),
+                };
+                add_typing_edge_if_exists(g, uri, &src, t, container_prefix);
+            }
+        }
+        M::PortDef(p) => {
+            if let Some(ref s) = p.specializes {
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, p.name),
+                    None => p.name.clone(),
+                };
+                add_edge_if_both_exist(g, uri, &src, s, RelationshipKind::Specializes);
+            }
+        }
+        M::PortUsage(p) => {
+            if let Some(ref t) = p.type_ref {
+                let name = p.name.as_deref().unwrap_or("(anonymous)");
+                let src = match container_prefix {
+                    Some(pfx) => format!("{}::{}", pfx, name),
+                    None => name.to_string(),
+                };
+                add_typing_edge_if_exists(g, uri, &src, t, container_prefix);
+            }
+        }
+        M::TransitionStatement(t) => {
+            if let Some(ref target) = t.target {
+                let source = t
+                    .source
+                    .as_ref()
+                    .map(String::from)
+                    .or_else(|| container_prefix.map(str::to_string))
+                    .unwrap_or_default();
+                add_edge_if_both_exist(g, uri, &source, target, RelationshipKind::Transition);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Normalizes "a.b.c" to "a::b::c" for node lookup (SysML uses dot for feature access).
+fn normalize_for_lookup(s: &str) -> String {
+    s.replace('.', "::")
+}
+
+/// Returns candidate qualified names for resolving an unqualified type reference.
+/// If type_ref already contains "::", returns it as-is. Otherwise tries package prefixes
+/// from container_prefix (e.g. "SurveillanceDrone::Propulsion" -> "SurveillanceDrone::PropulsionUnit").
+fn type_ref_candidates(container_prefix: Option<&str>, type_ref: &str) -> Vec<String> {
+    if type_ref.contains("::") {
+        return vec![type_ref.to_string()];
+    }
+    let mut candidates = vec![type_ref.to_string()];
+    if let Some(prefix) = container_prefix {
+        let segments: Vec<&str> = prefix.split("::").filter(|s| !s.is_empty()).collect();
+        for i in 1..=segments.len() {
+            let pkg_prefix = segments[..i].join("::");
+            candidates.push(format!("{}::{}", pkg_prefix, type_ref));
+        }
+    }
+    candidates
+}
+
+/// Adds a typing edge if source exists and target can be resolved. Tries type_ref as-is,
+/// then qualified with package prefixes from container_prefix.
+fn add_typing_edge_if_exists(
+    g: &mut SemanticGraph,
+    uri: &Url,
+    source_qualified: &str,
+    type_ref: &str,
+    container_prefix: Option<&str>,
+) {
+    for tgt in type_ref_candidates(container_prefix, type_ref) {
+        if add_edge_if_both_exist(g, uri, source_qualified, &tgt, RelationshipKind::Typing) {
+            break;
+        }
+    }
+}
+
+/// Returns true if the edge was added.
+fn add_edge_if_both_exist(
+    g: &mut SemanticGraph,
+    uri: &Url,
+    source_qualified: &str,
+    target_qualified: &str,
+    kind: RelationshipKind,
+) -> bool {
+    let src_key = normalize_for_lookup(source_qualified);
+    let tgt_key = normalize_for_lookup(target_qualified);
+    let src_id = NodeId::new(uri, &src_key);
+    let tgt_id = NodeId::new(uri, &tgt_key);
+    let (Some(&src_idx), Some(&tgt_idx)) = (
+        g.node_index_by_id.get(&src_id),
+        g.node_index_by_id.get(&tgt_id),
+    ) else {
+        return false;
+    };
+    g.graph.add_edge(src_idx, tgt_idx, kind);
+    true
+}

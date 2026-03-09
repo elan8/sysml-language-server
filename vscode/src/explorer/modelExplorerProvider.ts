@@ -6,6 +6,7 @@ import type {
   RelationshipDTO,
   RangeDTO,
 } from "../providers/sysmlModelTypes";
+import { graphToElementTree } from "../visualization/prepareData";
 
 /** Helper to convert RangeDTO to vscode.Range for openLocation. */
 export function toVscodeRange(dto: RangeDTO): vscode.Range {
@@ -199,14 +200,15 @@ export class ModelExplorerProvider
         try {
           const result = await this.modelProvider.getModel(
             uri.toString(),
-            ["elements", "relationships", "stats"],
+            ["graph", "stats"],
             token
           );
-          if (result.elements?.length) {
-            log("loadWorkspaceModel: loaded", uri.toString().slice(-50), "->", result.elements.length, "elements");
+          const elements = result.graph ? (graphToElementTree(result.graph) as SysMLElementDTO[]) : [];
+          if (elements.length) {
+            log("loadWorkspaceModel: loaded", uri.toString().slice(-50), "->", elements.length, "elements");
             this.workspaceFileData.set(uri.toString(), {
               uri,
-              elements: result.elements,
+              elements,
             });
           }
         } catch (e) {
@@ -232,10 +234,12 @@ export class ModelExplorerProvider
     try {
       const result = await this.modelProvider.getModel(
         document.uri.toString(),
-        ["elements", "relationships", "stats"],
+        ["graph", "stats"],
         token
       );
-      this.lastElements = result.elements ?? [];
+      this.lastElements = result.graph
+        ? (graphToElementTree(result.graph) as SysMLElementDTO[])
+        : [];
       log("loadDocument: done,", this.lastElements.length, "elements");
     } finally {
       this._onDidChangeTreeData.fire();
@@ -309,10 +313,12 @@ export class ModelExplorerProvider
         ) {
           const result = await this.modelProvider.getModel(
             active.uri.toString(),
-            ["elements", "stats"]
+            ["graph", "stats"]
           );
           this.lastUri = active.uri;
-          this.lastElements = result.elements ?? [];
+          this.lastElements = result.graph
+            ? (graphToElementTree(result.graph) as SysMLElementDTO[])
+            : [];
         } else {
           return [];
         }

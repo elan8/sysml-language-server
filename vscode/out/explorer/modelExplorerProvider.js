@@ -27,6 +27,7 @@ exports.ModelExplorerProvider = exports.ModelTreeItem = exports.FileTreeItem = v
 exports.toVscodeRange = toVscodeRange;
 const vscode = __importStar(require("vscode"));
 const logger_1 = require("../logger");
+const prepareData_1 = require("../visualization/prepareData");
 /** Helper to convert RangeDTO to vscode.Range for openLocation. */
 function toVscodeRange(dto) {
     return new vscode.Range(new vscode.Position(dto.start.line, dto.start.character), new vscode.Position(dto.end.line, dto.end.character));
@@ -176,12 +177,13 @@ class ModelExplorerProvider {
                 if (token?.isCancellationRequested)
                     break;
                 try {
-                    const result = await this.modelProvider.getModel(uri.toString(), ["elements", "relationships", "stats"], token);
-                    if (result.elements?.length) {
-                        (0, logger_1.log)("loadWorkspaceModel: loaded", uri.toString().slice(-50), "->", result.elements.length, "elements");
+                    const result = await this.modelProvider.getModel(uri.toString(), ["graph", "stats"], token);
+                    const elements = result.graph ? (0, prepareData_1.graphToElementTree)(result.graph) : [];
+                    if (elements.length) {
+                        (0, logger_1.log)("loadWorkspaceModel: loaded", uri.toString().slice(-50), "->", elements.length, "elements");
                         this.workspaceFileData.set(uri.toString(), {
                             uri,
-                            elements: result.elements,
+                            elements,
                         });
                     }
                 }
@@ -202,8 +204,10 @@ class ModelExplorerProvider {
         this.workspaceFileUris = [];
         this.lastUri = document.uri;
         try {
-            const result = await this.modelProvider.getModel(document.uri.toString(), ["elements", "relationships", "stats"], token);
-            this.lastElements = result.elements ?? [];
+            const result = await this.modelProvider.getModel(document.uri.toString(), ["graph", "stats"], token);
+            this.lastElements = result.graph
+                ? (0, prepareData_1.graphToElementTree)(result.graph)
+                : [];
             (0, logger_1.log)("loadDocument: done,", this.lastElements.length, "elements");
         }
         finally {
@@ -266,9 +270,11 @@ class ModelExplorerProvider {
                 const active = vscode.window.activeTextEditor?.document;
                 if (active &&
                     (active.languageId === "sysml" || active.languageId === "kerml")) {
-                    const result = await this.modelProvider.getModel(active.uri.toString(), ["elements", "stats"]);
+                    const result = await this.modelProvider.getModel(active.uri.toString(), ["graph", "stats"]);
                     this.lastUri = active.uri;
-                    this.lastElements = result.elements ?? [];
+                    this.lastElements = result.graph
+                        ? (0, prepareData_1.graphToElementTree)(result.graph)
+                        : [];
                 }
                 else {
                     return [];

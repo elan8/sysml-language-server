@@ -24,15 +24,18 @@ export interface SysMLClearCacheResult {
 }
 export declare class LspModelProvider {
     private readonly client;
-    constructor(client: LanguageClient);
+    /** Resolves when the LSP client is ready. Prevents getModel before didOpen is processed. */
+    private readonly whenReady;
+    constructor(client: LanguageClient, 
+    /** Resolves when the LSP client is ready. Prevents getModel before didOpen is processed. */
+    whenReady?: Promise<void>);
     getModel(uri: string, scopes?: SysMLModelParams["scope"], token?: vscode.CancellationToken): Promise<SysMLModelResult>;
     getServerStats(): Promise<SysMLServerStats | undefined>;
     clearCache(): Promise<SysMLClearCacheResult | undefined>;
     /**
-     * Find an element by name in the model. Performs a depth-first search
-     * over elements returned by getModel.
+     * Find an element by name in the model. Searches graph.nodes and optionally
+     * scopes by parentContext (qualified name or name of parent).
      */
     findElement(uri: string, elementName: string, parentContext?: string, token?: vscode.CancellationToken): Promise<SysMLElementDTO | undefined>;
-    private findRecursive;
 }
 //# sourceMappingURL=lspModelProvider.d.ts.map

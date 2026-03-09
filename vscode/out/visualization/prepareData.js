@@ -5,14 +5,67 @@
  * are used internally. For browser/webview context.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.graphToElementTree = graphToElementTree;
 exports.prepareDataForView = prepareDataForView;
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * Build a tree of elements from graph (nodes + edges).
+ * Used when data has graph instead of elements for views that need tree structure.
+ */
+function graphToElementTree(graph) {
+    if (!graph?.nodes?.length)
+        return [];
+    const nodes = graph.nodes;
+    const edges = graph.edges || [];
+    const nodeMap = new Map();
+    nodes.forEach((n) => {
+        nodeMap.set(n.id, {
+            id: n.id,
+            name: n.name,
+            type: n.type,
+            range: n.range,
+            attributes: n.attributes || {},
+            relationships: [],
+            children: []
+        });
+    });
+    edges.forEach((e) => {
+        if ((e.type || '').toLowerCase() === 'contains' && e.source && e.target) {
+            const parent = nodeMap.get(e.source);
+            const child = nodeMap.get(e.target);
+            if (parent && child) {
+                parent.children.push(child);
+            }
+        }
+        const relTypes = ['typing', 'specializes', 'connection', 'bind', 'allocate', 'transition', 'satisfy', 'verify'];
+        if (relTypes.includes((e.type || '').toLowerCase())) {
+            const src = nodeMap.get(e.source);
+            if (src) {
+                src.relationships.push({ source: e.source, target: e.target, type: e.type, name: e.name });
+            }
+        }
+    });
+    const targetsOfContains = new Set(edges.filter((e) => (e.type || '').toLowerCase() === 'contains').map((e) => e.target));
+    const roots = nodes
+        .filter((n) => !targetsOfContains.has(n.id))
+        .map((n) => nodeMap.get(n.id))
+        .filter(Boolean);
+    return roots;
+}
 function prepareDataForView(data, view) {
     if (!data) {
         return data;
     }
-    const elements = data.elements || [];
-    const relationships = data.relationships || [];
+    const hasGraph = data.graph?.nodes;
+    const elements = hasGraph ? graphToElementTree(data.graph) : (data.elements || []);
+    const relationships = hasGraph
+        ? (data.graph.edges || []).filter((e) => (e.type || '') !== 'contains').map((e) => ({
+            source: e.source,
+            target: e.target,
+            type: e.type,
+            name: e.name
+        }))
+        : (data.relationships || []);
     function collectAllElements(elementList, collected = [], parentElement = null) {
         elementList.forEach((el) => {
             if (parentElement && !el.parent) {

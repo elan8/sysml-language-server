@@ -66,14 +66,10 @@ export function normalizeTypeForDisplay(type: string | null | undefined): string
     if (!normalized) {
         return '';
     }
-    const suffixReplacements = [' def', ' definition'];
-    for (const suffix of suffixReplacements) {
-        if (normalized.endsWith(suffix)) {
-            const stripped = normalized.slice(0, -suffix.length).trim();
-            if (stripped.length > 0) {
-                return stripped;
-            }
-        }
+    // Strip " definition" (long form) to "def" for display, but keep " def" (standard SysML)
+    if (normalized.endsWith(' definition')) {
+        const stripped = normalized.slice(0, -11).trim() + ' def';
+        if (stripped.length > 0) return stripped;
     }
     return normalized;
 }

@@ -2,11 +2,33 @@ import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
 import { log, logError } from "../logger";
 import type {
+  GraphNodeDTO,
+  SysMLGraphDTO,
   PositionDTO,
   SysMLElementDTO,
   SysMLModelParams,
   SysMLModelResult,
 } from "./sysmlModelTypes";
+
+/** Convert GraphNodeDTO to SysMLElementDTO for findElement compatibility. */
+function graphNodeToElementDTO(
+  node: GraphNodeDTO,
+  graph: SysMLGraphDTO
+): SysMLElementDTO {
+  const children = (graph.nodes || []).filter((n) => n.parentId === node.id);
+  const childDTOs = children.map((c) => graphNodeToElementDTO(c, graph));
+  const relationships = (graph.edges || [])
+    .filter((e) => e.source === node.id && (e.type || "").toLowerCase() !== "contains")
+    .map((e) => ({ source: e.source, target: e.target, type: e.type, name: e.name }));
+  return {
+    type: node.type,
+    name: node.name,
+    range: node.range,
+    children: childDTOs,
+    attributes: node.attributes || {},
+    relationships,
+  };
+}
 
 /** Convert LSP PositionDTO to vscode.Position. */
 function toVscodePosition(p: PositionDTO): vscode.Position {
@@ -31,7 +53,11 @@ export interface SysMLClearCacheResult {
 }
 
 export class LspModelProvider {
-  constructor(private readonly client: LanguageClient) {}
+  constructor(
+    private readonly client: LanguageClient,
+    /** Resolves when the LSP client is ready. Prevents getModel before didOpen is processed. */
+    private readonly whenReady: Promise<void> = Promise.resolve()
+  ) {}
 
   async getModel(
     uri: string,
@@ -43,18 +69,37 @@ export class LspModelProvider {
       log("getModel: empty URI, returning empty model");
       return {
         version: 0,
-        elements: [],
-        relationships: [],
+        graph: { nodes: [], edges: [] },
       };
     }
     log("getModel:", trimmed.slice(-60), "scopes:", scopes);
+    await this.whenReady;
     const params: SysMLModelParams = {
       textDocument: { uri: trimmed },
       scope: scopes,
     };
+    const doRequest = () =>
+      this.client.sendRequest<SysMLModelResult>("sysml/model", params, token);
+
     try {
-      const result = await this.client.sendRequest<SysMLModelResult>("sysml/model", params, token);
-      log("getModel result:", result.elements?.length ?? 0, "elements,", result.relationships?.length ?? 0, "relationships");
+      let result = await doRequest();
+      const nodeCount = result.graph?.nodes?.length ?? 0;
+      const edgeCount = result.graph?.edges?.length ?? 0;
+
+      // Retry once if empty: server may not have processed didOpen yet
+      if (nodeCount === 0 && edgeCount === 0 && scopes?.includes("graph")) {
+        log("getModel: 0 nodes/edges, retrying after 300ms (didOpen may not be processed yet)");
+        await new Promise((r) => setTimeout(r, 300));
+        result = await doRequest();
+      }
+
+      log(
+        "getModel result:",
+        result.graph?.nodes?.length ?? 0,
+        "nodes,",
+        result.graph?.edges?.length ?? 0,
+        "edges"
+      );
       return result;
     } catch (e) {
       logError("getModel failed", e);
@@ -81,8 +126,8 @@ export class LspModelProvider {
   }
 
   /**
-   * Find an element by name in the model. Performs a depth-first search
-   * over elements returned by getModel.
+   * Find an element by name in the model. Searches graph.nodes and optionally
+   * scopes by parentContext (qualified name or name of parent).
    */
   async findElement(
     uri: string,
@@ -90,27 +135,28 @@ export class LspModelProvider {
     parentContext?: string,
     token?: vscode.CancellationToken
   ): Promise<SysMLElementDTO | undefined> {
-    const result = await this.getModel(uri, ["elements"], token);
-    if (!result.elements) {
+    const result = await this.getModel(uri, ["graph"], token);
+    if (!result.graph?.nodes?.length) {
       return undefined;
     }
+    const nodes = result.graph.nodes;
+    const byName = new Map<string, typeof nodes>();
+    for (const n of nodes) {
+      const key = (n.name || "").toLowerCase();
+      if (!byName.has(key)) byName.set(key, []);
+      byName.get(key)!.push(n);
+    }
+    const candidates = byName.get(elementName.toLowerCase()) ?? [];
     if (parentContext) {
-      const parent = this.findRecursive(parentContext, result.elements);
-      if (parent?.children?.length) {
-        const found = this.findRecursive(elementName, parent.children);
-        if (found) return found;
+      const parentKey = parentContext.toLowerCase();
+      const parentIds = new Set(nodes.filter((n) => (n.name || "").toLowerCase() === parentKey || (n.id || "").toLowerCase() === parentKey).map((n) => n.id));
+      const scoped = candidates.filter((c) => c.parentId && parentIds.has(c.parentId));
+      if (scoped.length > 0) {
+        return graphNodeToElementDTO(scoped[0], result.graph);
       }
     }
-    return this.findRecursive(elementName, result.elements);
-  }
-
-  private findRecursive(name: string, elements: SysMLElementDTO[]): SysMLElementDTO | undefined {
-    for (const el of elements) {
-      if (el.name === name) return el;
-      if (el.children?.length) {
-        const found = this.findRecursive(name, el.children);
-        if (found) return found;
-      }
+    if (candidates.length > 0) {
+      return graphNodeToElementDTO(candidates[0], result.graph);
     }
     return undefined;
   }

@@ -164,16 +164,18 @@ export function activate(context: vscode.ExtensionContext): void {
     clientOptions
   );
 
-  client.start().then(() => {
-    log("Language client ready, refreshing Model Explorer");
-    modelExplorerProvider?.refresh();
-  }).catch(() => {
-    // Intentionally swallow; tests already handle missing server gracefully.
-  });
+  const clientReadyPromise = client.start()
+    .then(() => {
+      log("Language client ready, refreshing Model Explorer");
+      modelExplorerProvider?.refresh();
+    })
+    .catch(() => {
+      // Intentionally swallow; tests already handle missing server gracefully.
+    });
   log("Language client started");
 
-  // Model Explorer (phase 3)
-  const lspModelProvider = new LspModelProvider(client);
+  // Model Explorer (phase 3). getModel awaits whenReady so the server has received didOpen.
+  const lspModelProvider = new LspModelProvider(client, clientReadyPromise);
   lspModelProviderForStatus = lspModelProvider;
   modelExplorerProvider = new ModelExplorerProvider(lspModelProvider);
 
