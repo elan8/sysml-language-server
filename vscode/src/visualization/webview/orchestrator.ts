@@ -40,7 +40,6 @@ import {
     wrapTextToLines,
     truncateLabel,
     countAllElements,
-    filterElementsRecursive,
     createLinksFromHierarchy,
     buildEnhancedElementLabel,
     getLibraryChain,
@@ -52,7 +51,6 @@ import { renderIbdView as renderIbdViewModule } from './renderers/ibd';
 import { renderActivityView as renderActivityViewModule } from './renderers/activity';
 import { renderStateView as renderStateViewModule } from './renderers/state';
 import { renderElkTreeView as renderElkTreeViewModule, renderSysMLView as renderSysMLViewModule, renderGeneralViewCytoscape as renderGeneralViewCytoscapeModule } from './elk';
-import { createMinimapController } from './minimap';
 import { createExportHandler } from './export';
 
     let vscode: { postMessage: (msg: unknown) => void };
@@ -102,15 +100,6 @@ import { createExportHandler } from './export';
 let sysmlToolbarInitialized = false;
 let lastPillarStats = {};
 
-    // Minimap controller - getState provided lazily (svg, g, zoom, cy, currentView updated during render)
-    const minimapController = createMinimapController(() => ({
-        svg,
-        g,
-        zoom,
-        cy,
-        currentView
-    }));
-
     // Export handler - uses getCurrentData/getViewState for lazy evaluation
     const exportHandler = createExportHandler({
         getCurrentData: () => currentData,
@@ -138,9 +127,6 @@ let lastPillarStats = {};
         // Reset cursor to default
         document.body.style.cursor = '';
     }
-
-    // ============== MINIMAP (delegated to minimap.ts) ==============
-    const updateMinimap = () => minimapController.updateMinimap();
 
     // Activity Debug Labels toggle
     function setupActivityDebugToggle() {
@@ -191,12 +177,8 @@ let lastPillarStats = {};
         }
     }
 
-    // Initialize minimap on load
-    document.addEventListener('DOMContentLoaded', () => minimapController.initMinimap());
     // Initialize activity debug toggle
     document.addEventListener('DOMContentLoaded', setupActivityDebugToggle);
-    // ============== END MINIMAP ==============
-
     // buildEnhancedElementLabel, getLibraryChain, getLibraryKind imported from ./helpers
 
     // Track manual zoom interactions to preserve user's zoom state
@@ -2597,24 +2579,6 @@ let lastPillarStats = {};
         }
     }
 
-    function clearSelection() {
-        // Clear the filter input
-        const filterInput = document.getElementById('element-filter');
-        if (filterInput) {
-            filterInput.value = '';
-        }
-
-        // Clear filtered data and re-render with all elements
-        filteredData = null;
-        const st = document.getElementById('status-text');
-        if (st) st.textContent = 'Ready';
-
-        // Re-render the current view with all data (no filter)
-        if (currentView) {
-            renderVisualization(currentView);
-        }
-    }
-
     function changeView(view) {
         // Clear any existing resize timeout to avoid conflicts
         clearTimeout(resizeTimeout);
@@ -2714,10 +2678,10 @@ let lastPillarStats = {};
         if (dropdownButton) {
             if (dropdownConfig) {
                 dropdownButton.classList.add('view-btn-active');
-                dropdownButton.innerHTML = '<span style="font-size: 9px; margin-right: 2px;">▼</span><span>' + dropdownConfig.label + '</span>';
+                dropdownButton.innerHTML = '<span class="codicon codicon-chevron-down" style="margin-right: 2px;"></span><span>' + dropdownConfig.label + '</span>';
             } else {
                 dropdownButton.classList.remove('view-btn-active');
-                dropdownButton.innerHTML = '<span style="font-size: 9px; margin-right: 2px;">▼</span><span>Views</span>';
+                dropdownButton.innerHTML = '<span class="codicon codicon-chevron-down" style="margin-right: 2px;"></span><span>Views</span>';
             }
         }
 
@@ -2933,9 +2897,9 @@ let lastPillarStats = {};
         'auto': 'Auto Layout'
     };
     const LAYOUT_DIRECTION_ICONS = {
-        'horizontal': '→',
-        'vertical': '↓',
-        'auto': '◎'
+        'horizontal': 'codicon-arrow-right',
+        'vertical': 'codicon-arrow-down',
+        'auto': 'codicon-editor-layout'
     };
 
     function updateLayoutDirectionButton(activeView) {
@@ -2943,9 +2907,9 @@ let lastPillarStats = {};
         if (layoutBtn) {
             // Use activity-specific direction for activity view
             const effectiveDirection = activeView === 'action-flow-view' ? activityLayoutDirection : layoutDirection;
-            const icon = LAYOUT_DIRECTION_ICONS[effectiveDirection] || '→';
+            const iconClass = LAYOUT_DIRECTION_ICONS[effectiveDirection] || 'codicon-arrow-right';
             const label = LAYOUT_DIRECTION_LABELS[effectiveDirection] || 'Left → Right';
-            layoutBtn.textContent = icon + ' ' + label;
+            layoutBtn.innerHTML = '<span class="codicon ' + iconClass + '"></span> ' + label;
 
             // Update tooltip to show next option
             const nextMode = getNextLayoutDirection(effectiveDirection);
@@ -3132,7 +3096,6 @@ let lastPillarStats = {};
                 togglePillarExpansion,
                 centerOnNode,
                 isSequentialBehaviorContext,
-                updateMinimap,
                 postMessage: (msg) => vscode.postMessage(msg),
                 SYSML_PILLARS,
                 PILLAR_COLOR_MAP,
@@ -3170,7 +3133,6 @@ let lastPillarStats = {};
             setTimeout(() => {
                 isRendering = false;
                 hideLoading();
-                updateMinimap();
             }, 150);
             return;
         }
@@ -3184,8 +3146,6 @@ let lastPillarStats = {};
             .scaleExtent([MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM])
             .on('zoom', (event) => {
                 g.attr('transform', event.transform);
-                // Update minimap viewport when zooming/panning
-                updateMinimap();
                 // Mark as manual interaction if triggered by user (not programmatic)
                 if (event.sourceEvent) {
                     window.userHasManuallyZoomed = true;
@@ -3330,7 +3290,6 @@ let lastPillarStats = {};
             setTimeout(() => {
                 updateDimensionsDisplay();
                 isRendering = false; // Reset rendering flag
-                updateMinimap(); // Update minimap after rendering
                 hideLoading(); // Hide loading indicator
             }, 200);
 
@@ -3933,66 +3892,6 @@ let lastPillarStats = {};
 
     // createLinksFromHierarchy imported from ./helpers
 
-    function filterNodesBySearch(nodes, searchTerm) {
-        if (!nodes || !searchTerm) return nodes || [];
-        return nodes.filter((node) => {
-            const nameMatch = (node.name || '').toLowerCase().includes(searchTerm);
-            const typeMatch = (node.type || '').toLowerCase().includes(searchTerm);
-            const idMatch = (node.id || '').toLowerCase().includes(searchTerm);
-            let attributeMatch = false;
-            if (node.attributes && typeof node.attributes === 'object') {
-                for (const [k, v] of Object.entries(node.attributes)) {
-                    if (String(k).toLowerCase().includes(searchTerm) || String(v).toLowerCase().includes(searchTerm)) {
-                        attributeMatch = true;
-                        break;
-                    }
-                }
-            }
-            return nameMatch || typeMatch || idMatch || attributeMatch;
-        });
-    }
-
-    function filterElements(query) {
-        const hasGraph = currentData?.graph?.nodes;
-        const hasElements = currentData?.elements;
-        if (!currentData || (!hasGraph && !hasElements && !currentData.pillarElements)) return;
-
-        const searchTerm = query.toLowerCase().trim();
-
-        const statusText = document.getElementById('status-text');
-        if (searchTerm === '') {
-            filteredData = null;
-            if (statusText) statusText.textContent = 'Ready';
-        } else {
-            if (hasGraph) {
-                const filteredNodes = filterNodesBySearch(currentData.graph.nodes, searchTerm);
-                const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
-                const filteredEdges = (currentData.graph.edges || []).filter(
-                    (e) => filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
-                );
-                filteredData = {
-                    ...currentData,
-                    graph: { nodes: filteredNodes, edges: filteredEdges }
-                };
-                if (statusText) statusText.textContent =
-                    'Filtering: ' + filteredNodes.length + ' of ' + (currentData.graph.nodes?.length || 0) + ' elements match "' + searchTerm + '"';
-            } else {
-                const filteredDiagramElements = filterElementsRecursive(cloneElements(currentData.elements || []), searchTerm);
-                filteredData = { ...currentData, elements: filteredDiagramElements };
-                const totalElements = countAllElements(currentData.elements || []);
-                const filteredCount = countAllElements(filteredDiagramElements || []);
-                if (statusText) statusText.textContent =
-                    'Filtering: ' + filteredCount + ' of ' + totalElements + ' elements match "' + searchTerm + '"';
-            }
-        }
-
-        if (currentView) {
-            renderVisualization(currentView);
-        }
-    }
-
-    // countAllElements, filterElementsRecursive imported from ./helpers
-
     function getHighlightedSvgBounds() {
         if (!g) {
             return null;
@@ -4109,8 +4008,6 @@ let lastPillarStats = {};
     window.exportJSON = () => exportHandler.exportJSON();
     window.resetZoom = resetZoom;
     window.zoomToFit = zoomToFit;
-    window.clearSelection = clearSelection;
-    window.filterElements = filterElements;
 
     // IBD/Interconnection View Renderer - implemented in renderers/ibd.ts
 
@@ -4244,10 +4141,8 @@ let lastPillarStats = {};
     updateActiveViewButton(currentView);
 
     // Add event listeners for action buttons
-    document.getElementById('fit-btn').addEventListener('click', zoomToFit);
     document.getElementById('reset-btn').addEventListener('click', resetZoom);
     document.getElementById('layout-direction-btn').addEventListener('click', toggleLayoutDirection);
-    document.getElementById('clear-filter-btn').addEventListener('click', clearSelection);
 
     // Legend popup toggle
     (function setupLegend() {
@@ -4336,45 +4231,6 @@ let lastPillarStats = {};
                 legendHeader.style.cursor = 'grab';
             }
         });
-    })();
-
-    // About popup modal
-    (function setupAboutPopup() {
-        const aboutBtn = document.getElementById('about-btn');
-        const aboutBackdrop = document.getElementById('about-backdrop');
-        const aboutCloseBtn = document.getElementById('about-close-btn');
-        const aboutRateLink = document.getElementById('about-rate-link');
-        const aboutRepoLink = document.getElementById('about-repo-link');
-        if (!aboutBtn || !aboutBackdrop) return;
-
-        aboutBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            aboutBackdrop.classList.toggle('show');
-        });
-
-        if (aboutCloseBtn) {
-            aboutCloseBtn.addEventListener('click', () => {
-                aboutBackdrop.classList.remove('show');
-            });
-        }
-
-        aboutBackdrop.addEventListener('click', (e) => {
-            if (e.target === aboutBackdrop) {
-                aboutBackdrop.classList.remove('show');
-            }
-        });
-
-        if (aboutRateLink) {
-            aboutRateLink.addEventListener('click', () => {
-                vscode.postMessage({ command: 'openExternal', url: 'https://marketplace.visualstudio.com/items?itemName=Elan8.sysml-language-server' });
-            });
-        }
-
-        if (aboutRepoLink) {
-            aboutRepoLink.addEventListener('click', () => {
-                vscode.postMessage({ command: 'openExternal', url: 'https://github.com/elan8/sysml-language-server' });
-            });
-        }
     })();
 
     // Package dropdown toggle handler
@@ -4471,42 +4327,5 @@ const exportMenu = document.getElementById('export-menu');
             }
         });
     });
-
-    // ── Easter egg ─────────────────────────────────────────────
-    (function initEasterEgg() {
-        var egg = document.getElementById('ee-egg');
-        var trigger = document.getElementById('legend-btn');
-        if (!egg || !trigger) return;
-
-        var hoverTimer = null;
-        var HOLD_MS = 3000; // hold 3 seconds to reveal
-        var revealed = false;
-
-        trigger.addEventListener('mouseenter', function () {
-            if (revealed) return;
-            hoverTimer = setTimeout(function () {
-                revealed = true;
-                egg.classList.add('revealed');
-                // little wobble on first appearance
-                egg.classList.add('hatch');
-                egg.addEventListener('animationend', function () {
-                    egg.classList.remove('hatch');
-                }, { once: true });
-            }, HOLD_MS);
-        });
-
-        trigger.addEventListener('mouseleave', function () {
-            if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
-        });
-
-        egg.addEventListener('click', function () {
-            egg.textContent = '🐣';
-            egg.classList.add('hatch');
-            egg.addEventListener('animationend', function () {
-                egg.classList.remove('hatch');
-            }, { once: true });
-            vscode.postMessage({ command: 'executeCommand', args: ['sysml.showSysRunner'] });
-        });
-    })();
 
     // webviewReady is sent from initializeLegacyBundle after vscode is set

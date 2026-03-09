@@ -27,6 +27,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
         CYTOSCAPE_ELK_URI: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'vendor', 'cytoscape-elk.js')).toString(),
         CYTOSCAPE_SVG_URI: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'vendor', 'cytoscape-svg.js')).toString(),
         VISUALIZER_JS_URI: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'webview', 'visualizer.js')).toString(),
+        CODICONS_CSS_URI: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'codicons', 'codicon.css')).toString(),
         STYLES: getVisualizerStyles(),
         EXTENSION_VERSION: extensionVersion ?? '0.0.0',
     };

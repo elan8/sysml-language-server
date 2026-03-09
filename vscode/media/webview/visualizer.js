@@ -575,19 +575,6 @@
 
   // src/visualization/webview/shared.ts
   var DANGEROUS_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
-  function cloneElements(elements) {
-    if (!elements) {
-      return [];
-    }
-    try {
-      return JSON.parse(JSON.stringify(elements));
-    } catch (error) {
-      if (typeof console !== "undefined" && console.warn) {
-        console.warn("Failed to clone elements, falling back to reference copy", error);
-      }
-      return elements;
-    }
-  }
   function normalizeAttributes(attributes) {
     const properties = {};
     if (!attributes) {
@@ -738,40 +725,6 @@
       }
     });
     return result;
-  }
-  function countAllElements(elements) {
-    if (!elements) return 0;
-    let count = elements.length;
-    elements.forEach((element) => {
-      if (element.children && element.children.length > 0) {
-        count += countAllElements(element.children);
-      }
-    });
-    return count;
-  }
-  function filterElementsRecursive(elements, searchTerm) {
-    return elements.filter((element) => {
-      const nameMatch = (element.name || "").toLowerCase().includes(searchTerm);
-      const typeMatch = (element.type || "").toLowerCase().includes(searchTerm);
-      let propertyMatch = false;
-      if (element.properties) {
-        for (const [key, value] of Object.entries(element.properties)) {
-          if (String(key).toLowerCase().includes(searchTerm) || String(value).toLowerCase().includes(searchTerm)) {
-            propertyMatch = true;
-            break;
-          }
-        }
-      }
-      let hasMatchingChildren = false;
-      if (element.children && element.children.length > 0) {
-        const filteredChildren = filterElementsRecursive(element.children, searchTerm);
-        if (filteredChildren.length > 0) {
-          element.children = filteredChildren;
-          hasMatchingChildren = true;
-        }
-      }
-      return nameMatch || typeMatch || propertyMatch || hasMatchingChildren;
-    });
   }
   function createLinksFromHierarchy(elements, parent = null, links = []) {
     (elements || []).forEach((el) => {
@@ -2405,10 +2358,6 @@
     ctx.setCy(cy2);
     cy2.on("zoom", () => {
       window.userHasManuallyZoomed = true;
-      ctx.updateMinimap();
-    });
-    cy2.on("pan", () => {
-      ctx.updateMinimap();
     });
     cy2.on("tap", (event) => {
       if (event.target === cy2) {
@@ -2486,10 +2435,6 @@
     ctx.setCy(cy2);
     cy2.on("zoom", () => {
       window.userHasManuallyZoomed = true;
-      ctx.updateMinimap();
-    });
-    cy2.on("pan", () => {
-      ctx.updateMinimap();
     });
     let tapTimeout = null;
     let lastTapped = null;
@@ -2532,253 +2477,6 @@
         if (statusEl) statusEl.textContent = "SysML Pillar View \u2022 Tap a pillar to expand/collapse";
       }
     }, 100);
-  }
-
-  // src/visualization/webview/minimap.ts
-  function createMinimapController(getState) {
-    let minimapVisible = true;
-    let minimapDragging = false;
-    function navigateFromMinimap(event) {
-      const { svg: svg2, g: g2, zoom: zoom2 } = getState();
-      const canvas = document.getElementById("minimap-canvas");
-      if (!canvas || !svg2 || !g2 || !zoom2) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const gNode = g2.node();
-      if (!gNode) return;
-      const bounds = gNode.getBBox();
-      if (!bounds || bounds.width === 0 || bounds.height === 0) return;
-      const padding = 10;
-      const canvasWidth = canvas.width;
-      const canvasHeight = canvas.height;
-      const scaleX = (canvasWidth - 2 * padding) / bounds.width;
-      const scaleY = (canvasHeight - 2 * padding) / bounds.height;
-      const scale = Math.min(scaleX, scaleY);
-      const offsetX = padding + (canvasWidth - 2 * padding - bounds.width * scale) / 2;
-      const offsetY = padding + (canvasHeight - 2 * padding - bounds.height * scale) / 2;
-      const contentX = bounds.x + (x - offsetX) / scale;
-      const contentY = bounds.y + (y - offsetY) / scale;
-      const d32 = window.d3;
-      const currentTransform = d32.zoomTransform(svg2.node());
-      const svgWidth = +svg2.attr("width");
-      const svgHeight = +svg2.attr("height");
-      const translateX = svgWidth / 2 - contentX * currentTransform.k;
-      const translateY = svgHeight / 2 - contentY * currentTransform.k;
-      svg2.transition().duration(300).call(zoom2.transform, d32.zoomIdentity.translate(translateX, translateY).scale(currentTransform.k));
-    }
-    function updateMinimapCytoscape(canvas, viewport, container, cy2) {
-      if (!cy2) return;
-      const containerRect = container.getBoundingClientRect();
-      canvas.width = containerRect.width;
-      canvas.height = containerRect.height - 22;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const bb = cy2.elements().boundingBox();
-      if (bb.w === 0 || bb.h === 0) return;
-      const padding = 10;
-      const scaleX = (canvas.width - 2 * padding) / bb.w;
-      const scaleY = (canvas.height - 2 * padding) / bb.h;
-      const scale = Math.min(scaleX, scaleY);
-      const offsetX = padding + (canvas.width - 2 * padding - bb.w * scale) / 2;
-      const offsetY = padding + (canvas.height - 2 * padding - bb.h * scale) / 2;
-      ctx.fillStyle = "rgba(100, 150, 200, 0.6)";
-      cy2.nodes().forEach((node) => {
-        const pos = node.position();
-        const w = node.width() * scale;
-        const h = node.height() * scale;
-        const x = offsetX + (pos.x - bb.x1 - node.width() / 2) * scale;
-        const y = offsetY + (pos.y - bb.y1 - node.height() / 2) * scale;
-        ctx.fillRect(x, y, Math.max(w, 2), Math.max(h, 2));
-      });
-      ctx.strokeStyle = "rgba(150, 150, 150, 0.5)";
-      ctx.lineWidth = 0.5;
-      cy2.edges().forEach((edge) => {
-        const source = edge.source().position();
-        const target = edge.target().position();
-        const x1 = offsetX + (source.x - bb.x1) * scale;
-        const y1 = offsetY + (source.y - bb.y1) * scale;
-        const x2 = offsetX + (target.x - bb.x1) * scale;
-        const y2 = offsetY + (target.y - bb.y1) * scale;
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.stroke();
-      });
-      const cyExtent = cy2.extent();
-      const viewWidth = (cyExtent.x2 - cyExtent.x1) * scale;
-      const viewHeight = (cyExtent.y2 - cyExtent.y1) * scale;
-      const viewX = offsetX + (cyExtent.x1 - bb.x1) * scale;
-      const viewY = offsetY + (cyExtent.y1 - bb.y1) * scale;
-      viewport.style.left = viewX + container.offsetLeft + "px";
-      viewport.style.top = viewY + 22 + "px";
-      viewport.style.width = Math.max(viewWidth, 10) + "px";
-      viewport.style.height = Math.max(viewHeight, 10) + "px";
-      viewport.style.display = "block";
-    }
-    function updateMinimapViewport(canvas, viewport, bounds, scale, offsetX, offsetY, svg2, zoom2) {
-      if (!svg2 || !zoom2) return;
-      try {
-        const d32 = window.d3;
-        const transform = d32.zoomTransform(svg2.node());
-        const svgWidth = +svg2.attr("width");
-        const svgHeight = +svg2.attr("height");
-        const visibleX = -transform.x / transform.k;
-        const visibleY = -transform.y / transform.k;
-        const visibleWidth = svgWidth / transform.k;
-        const visibleHeight = svgHeight / transform.k;
-        const vpX = offsetX + (visibleX - bounds.x) * scale;
-        const vpY = offsetY + (visibleY - bounds.y) * scale;
-        const vpWidth = visibleWidth * scale;
-        const vpHeight = visibleHeight * scale;
-        viewport.style.left = Math.max(0, vpX) + "px";
-        viewport.style.top = Math.max(0, vpY) + 22 + "px";
-        viewport.style.width = Math.min(vpWidth, canvas.width) + "px";
-        viewport.style.height = Math.min(vpHeight, canvas.height) + "px";
-        viewport.style.display = "block";
-      } catch (e) {
-        viewport.style.display = "none";
-      }
-    }
-    function updateMinimap2() {
-      if (!minimapVisible) return;
-      const { svg: svg2, g: g2, zoom: zoom2, cy: cy2, currentView: currentView2 } = getState();
-      const container = document.getElementById("minimap-container");
-      const canvas = document.getElementById("minimap-canvas");
-      const viewport = document.getElementById("minimap-viewport");
-      if (!container || !canvas || !viewport) return;
-      if (currentView2 === "sysml" && cy2) {
-        updateMinimapCytoscape(canvas, viewport, container, cy2);
-        container.style.display = "block";
-        return;
-      }
-      if (!svg2 || !g2) {
-        container.style.display = "none";
-        return;
-      }
-      container.style.display = "block";
-      const gNode = g2.node();
-      if (!gNode) return;
-      const bounds = gNode.getBBox();
-      if (!bounds || bounds.width === 0 || bounds.height === 0) return;
-      const containerRect = container.getBoundingClientRect();
-      canvas.width = containerRect.width;
-      canvas.height = containerRect.height - 22;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const padding = 10;
-      const scaleX = (canvas.width - 2 * padding) / bounds.width;
-      const scaleY = (canvas.height - 2 * padding) / bounds.height;
-      const scale = Math.min(scaleX, scaleY);
-      const offsetX = padding + (canvas.width - 2 * padding - bounds.width * scale) / 2;
-      const offsetY = padding + (canvas.height - 2 * padding - bounds.height * scale) / 2;
-      ctx.fillStyle = "rgba(100, 150, 200, 0.6)";
-      ctx.strokeStyle = "rgba(100, 150, 200, 0.8)";
-      ctx.lineWidth = 1;
-      const nodes = g2.selectAll("rect, circle, ellipse, polygon").nodes();
-      nodes.forEach((node) => {
-        try {
-          const bbox = node.getBBox();
-          if (bbox.width > 5 && bbox.height > 5) {
-            const x = offsetX + (bbox.x - bounds.x) * scale;
-            const y = offsetY + (bbox.y - bounds.y) * scale;
-            const w = bbox.width * scale;
-            const h = bbox.height * scale;
-            if (w > 1 && h > 1) {
-              ctx.fillRect(x, y, Math.max(w, 2), Math.max(h, 2));
-              ctx.strokeRect(x, y, Math.max(w, 2), Math.max(h, 2));
-            }
-          }
-        } catch (e) {
-        }
-      });
-      ctx.strokeStyle = "rgba(150, 150, 150, 0.5)";
-      ctx.lineWidth = 0.5;
-      const paths = g2.selectAll("path, line").nodes();
-      paths.forEach((path) => {
-        try {
-          const bbox = path.getBBox();
-          if (bbox.width > 0 || bbox.height > 0) {
-            const x1 = offsetX + (bbox.x - bounds.x) * scale;
-            const y1 = offsetY + (bbox.y - bounds.y) * scale;
-            const x2 = x1 + bbox.width * scale;
-            const y2 = y1 + bbox.height * scale;
-            ctx.beginPath();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-            ctx.stroke();
-          }
-        } catch (e) {
-        }
-      });
-      updateMinimapViewport(canvas, viewport, bounds, scale, offsetX, offsetY, svg2, zoom2);
-    }
-    function initMinimap() {
-      const container = document.getElementById("minimap-container");
-      const canvas = document.getElementById("minimap-canvas");
-      const toggle = document.getElementById("minimap-toggle");
-      const toolbarBtn = document.getElementById("minimap-toolbar-btn");
-      if (!container || !canvas || !toggle) return;
-      function toggleMinimapVisibility() {
-        minimapVisible = !minimapVisible;
-        if (minimapVisible) {
-          container.style.display = "block";
-          toggle.textContent = "\u2212";
-          toggle.title = "Hide minimap";
-          if (toolbarBtn) {
-            toolbarBtn.classList.add("active");
-            toolbarBtn.style.background = "var(--vscode-button-background)";
-            toolbarBtn.style.color = "var(--vscode-button-foreground)";
-          }
-          updateMinimap2();
-        } else {
-          container.style.display = "none";
-          toggle.textContent = "+";
-          toggle.title = "Show minimap";
-          if (toolbarBtn) {
-            toolbarBtn.classList.remove("active");
-            toolbarBtn.style.background = "";
-            toolbarBtn.style.color = "";
-          }
-        }
-      }
-      toggle.addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleMinimapVisibility();
-      });
-      if (toolbarBtn) {
-        toolbarBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          toggleMinimapVisibility();
-        });
-        toolbarBtn.classList.add("active");
-        toolbarBtn.style.background = "var(--vscode-button-background)";
-        toolbarBtn.style.color = "var(--vscode-button-foreground)";
-      }
-      function handleMinimapClick(event) {
-        minimapDragging = true;
-        navigateFromMinimap(event);
-      }
-      function handleMinimapDrag(event) {
-        if (minimapDragging) {
-          navigateFromMinimap(event);
-        }
-      }
-      canvas.addEventListener("mousedown", handleMinimapClick);
-      canvas.addEventListener("mousemove", handleMinimapDrag);
-      canvas.addEventListener("mouseup", () => {
-        minimapDragging = false;
-      });
-      canvas.addEventListener("mouseleave", () => {
-        minimapDragging = false;
-      });
-    }
-    return {
-      initMinimap,
-      updateMinimap: updateMinimap2
-    };
   }
 
   // src/visualization/webview/export.ts
@@ -3081,13 +2779,6 @@
   var pillarOrientation = "horizontal";
   var sysmlToolbarInitialized = false;
   var lastPillarStats = {};
-  var minimapController = createMinimapController(() => ({
-    svg,
-    g,
-    zoom,
-    cy,
-    currentView
-  }));
   var exportHandler = createExportHandler({
     getCurrentData: () => currentData,
     getViewState: () => ({ currentView, cy }),
@@ -3109,7 +2800,6 @@
     }
     document.body.style.cursor = "";
   }
-  var updateMinimap = () => minimapController.updateMinimap();
   function setupActivityDebugToggle() {
     const debugBtn = document.getElementById("activity-debug-btn");
     if (!debugBtn) return;
@@ -3148,7 +2838,6 @@
       }
     }
   }
-  document.addEventListener("DOMContentLoaded", () => minimapController.initMinimap());
   document.addEventListener("DOMContentLoaded", setupActivityDebugToggle);
   window.userHasManuallyZoomed = false;
   window.addEventListener("error", (e) => {
@@ -5172,18 +4861,6 @@
       }
     }
   }
-  function clearSelection() {
-    const filterInput = document.getElementById("element-filter");
-    if (filterInput) {
-      filterInput.value = "";
-    }
-    filteredData = null;
-    const st = document.getElementById("status-text");
-    if (st) st.textContent = "Ready";
-    if (currentView) {
-      renderVisualization(currentView);
-    }
-  }
   function changeView(view) {
     clearTimeout(resizeTimeout);
     window.userHasManuallyZoomed = false;
@@ -5251,10 +4928,10 @@
     if (dropdownButton) {
       if (dropdownConfig) {
         dropdownButton.classList.add("view-btn-active");
-        dropdownButton.innerHTML = '<span style="font-size: 9px; margin-right: 2px;">\u25BC</span><span>' + dropdownConfig.label + "</span>";
+        dropdownButton.innerHTML = '<span class="codicon codicon-chevron-down" style="margin-right: 2px;"></span><span>' + dropdownConfig.label + "</span>";
       } else {
         dropdownButton.classList.remove("view-btn-active");
-        dropdownButton.innerHTML = '<span style="font-size: 9px; margin-right: 2px;">\u25BC</span><span>Views</span>';
+        dropdownButton.innerHTML = '<span class="codicon codicon-chevron-down" style="margin-right: 2px;"></span><span>Views</span>';
       }
     }
     document.querySelectorAll(".view-dropdown-item").forEach((item) => {
@@ -5403,17 +5080,17 @@
     "auto": "Auto Layout"
   };
   var LAYOUT_DIRECTION_ICONS = {
-    "horizontal": "\u2192",
-    "vertical": "\u2193",
-    "auto": "\u25CE"
+    "horizontal": "codicon-arrow-right",
+    "vertical": "codicon-arrow-down",
+    "auto": "codicon-editor-layout"
   };
   function updateLayoutDirectionButton(activeView) {
     const layoutBtn = document.getElementById("layout-direction-btn");
     if (layoutBtn) {
       const effectiveDirection = activeView === "action-flow-view" ? activityLayoutDirection : layoutDirection;
-      const icon = LAYOUT_DIRECTION_ICONS[effectiveDirection] || "\u2192";
+      const iconClass = LAYOUT_DIRECTION_ICONS[effectiveDirection] || "codicon-arrow-right";
       const label = LAYOUT_DIRECTION_LABELS[effectiveDirection] || "Left \u2192 Right";
-      layoutBtn.textContent = icon + " " + label;
+      layoutBtn.innerHTML = '<span class="codicon ' + iconClass + '"></span> ' + label;
       const nextMode = getNextLayoutDirection(effectiveDirection);
       const nextLabel = LAYOUT_DIRECTION_LABELS[nextMode];
       layoutBtn.title = "Switch to " + nextLabel;
@@ -5510,7 +5187,6 @@
           togglePillarExpansion,
           centerOnNode,
           isSequentialBehaviorContext,
-          updateMinimap,
           postMessage: (msg) => vscode.postMessage(msg),
           SYSML_PILLARS,
           PILLAR_COLOR_MAP,
@@ -5579,14 +5255,12 @@
         setTimeout(() => {
           isRendering = false;
           hideLoading();
-          updateMinimap();
         }, 150);
         return;
       }
       svg = d3.select("#visualization").append("svg").attr("width", width).attr("height", height);
       zoom = d3.zoom().scaleExtent([MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM]).on("zoom", (event) => {
         g.attr("transform", event.transform);
-        updateMinimap();
         if (event.sourceEvent) {
           window.userHasManuallyZoomed = true;
         }
@@ -5665,7 +5339,6 @@
       setTimeout(() => {
         updateDimensionsDisplay();
         isRendering = false;
-        updateMinimap();
         hideLoading();
       }, 200);
       lastView = view;
@@ -5733,57 +5406,6 @@
       }
     });
     return cyElements;
-  }
-  function filterNodesBySearch(nodes, searchTerm) {
-    if (!nodes || !searchTerm) return nodes || [];
-    return nodes.filter((node) => {
-      const nameMatch = (node.name || "").toLowerCase().includes(searchTerm);
-      const typeMatch = (node.type || "").toLowerCase().includes(searchTerm);
-      const idMatch = (node.id || "").toLowerCase().includes(searchTerm);
-      let attributeMatch = false;
-      if (node.attributes && typeof node.attributes === "object") {
-        for (const [k, v] of Object.entries(node.attributes)) {
-          if (String(k).toLowerCase().includes(searchTerm) || String(v).toLowerCase().includes(searchTerm)) {
-            attributeMatch = true;
-            break;
-          }
-        }
-      }
-      return nameMatch || typeMatch || idMatch || attributeMatch;
-    });
-  }
-  function filterElements(query) {
-    const hasGraph = currentData?.graph?.nodes;
-    const hasElements = currentData?.elements;
-    if (!currentData || !hasGraph && !hasElements && !currentData.pillarElements) return;
-    const searchTerm = query.toLowerCase().trim();
-    const statusText = document.getElementById("status-text");
-    if (searchTerm === "") {
-      filteredData = null;
-      if (statusText) statusText.textContent = "Ready";
-    } else {
-      if (hasGraph) {
-        const filteredNodes = filterNodesBySearch(currentData.graph.nodes, searchTerm);
-        const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
-        const filteredEdges = (currentData.graph.edges || []).filter(
-          (e) => filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
-        );
-        filteredData = {
-          ...currentData,
-          graph: { nodes: filteredNodes, edges: filteredEdges }
-        };
-        if (statusText) statusText.textContent = "Filtering: " + filteredNodes.length + " of " + (currentData.graph.nodes?.length || 0) + ' elements match "' + searchTerm + '"';
-      } else {
-        const filteredDiagramElements = filterElementsRecursive(cloneElements(currentData.elements || []), searchTerm);
-        filteredData = { ...currentData, elements: filteredDiagramElements };
-        const totalElements = countAllElements(currentData.elements || []);
-        const filteredCount = countAllElements(filteredDiagramElements || []);
-        if (statusText) statusText.textContent = "Filtering: " + filteredCount + " of " + totalElements + ' elements match "' + searchTerm + '"';
-      }
-    }
-    if (currentView) {
-      renderVisualization(currentView);
-    }
   }
   function getHighlightedSvgBounds() {
     if (!g) {
@@ -5875,8 +5497,6 @@
   window.exportJSON = () => exportHandler.exportJSON();
   window.resetZoom = resetZoom;
   window.zoomToFit = zoomToFit;
-  window.clearSelection = clearSelection;
-  window.filterElements = filterElements;
   function wrapTextToFit(line, maxCharsPerLine) {
     if (!line || line.length <= maxCharsPerLine) return [line];
     const words = line.split(/\s+/);
@@ -5947,10 +5567,8 @@
     });
   });
   updateActiveViewButton(currentView);
-  document.getElementById("fit-btn").addEventListener("click", zoomToFit);
   document.getElementById("reset-btn").addEventListener("click", resetZoom);
   document.getElementById("layout-direction-btn").addEventListener("click", toggleLayoutDirection);
-  document.getElementById("clear-filter-btn").addEventListener("click", clearSelection);
   (function setupLegend() {
     const legendBtn = document.getElementById("legend-btn");
     const legendPopup = document.getElementById("legend-popup");
@@ -6030,38 +5648,6 @@
       }
     });
   })();
-  (function setupAboutPopup() {
-    const aboutBtn = document.getElementById("about-btn");
-    const aboutBackdrop = document.getElementById("about-backdrop");
-    const aboutCloseBtn = document.getElementById("about-close-btn");
-    const aboutRateLink = document.getElementById("about-rate-link");
-    const aboutRepoLink = document.getElementById("about-repo-link");
-    if (!aboutBtn || !aboutBackdrop) return;
-    aboutBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      aboutBackdrop.classList.toggle("show");
-    });
-    if (aboutCloseBtn) {
-      aboutCloseBtn.addEventListener("click", () => {
-        aboutBackdrop.classList.remove("show");
-      });
-    }
-    aboutBackdrop.addEventListener("click", (e) => {
-      if (e.target === aboutBackdrop) {
-        aboutBackdrop.classList.remove("show");
-      }
-    });
-    if (aboutRateLink) {
-      aboutRateLink.addEventListener("click", () => {
-        vscode.postMessage({ command: "openExternal", url: "https://marketplace.visualstudio.com/items?itemName=Elan8.sysml-language-server" });
-      });
-    }
-    if (aboutRepoLink) {
-      aboutRepoLink.addEventListener("click", () => {
-        vscode.postMessage({ command: "openExternal", url: "https://github.com/elan8/sysml-language-server" });
-      });
-    }
-  })();
   (function setupPkgDropdown() {
     const pkgBtn = document.getElementById("pkg-dropdown-btn");
     const pkgMenu = document.getElementById("pkg-dropdown-menu");
@@ -6131,39 +5717,6 @@
       }
     });
   });
-  (function initEasterEgg() {
-    var egg = document.getElementById("ee-egg");
-    var trigger = document.getElementById("legend-btn");
-    if (!egg || !trigger) return;
-    var hoverTimer = null;
-    var HOLD_MS = 3e3;
-    var revealed = false;
-    trigger.addEventListener("mouseenter", function() {
-      if (revealed) return;
-      hoverTimer = setTimeout(function() {
-        revealed = true;
-        egg.classList.add("revealed");
-        egg.classList.add("hatch");
-        egg.addEventListener("animationend", function() {
-          egg.classList.remove("hatch");
-        }, { once: true });
-      }, HOLD_MS);
-    });
-    trigger.addEventListener("mouseleave", function() {
-      if (hoverTimer) {
-        clearTimeout(hoverTimer);
-        hoverTimer = null;
-      }
-    });
-    egg.addEventListener("click", function() {
-      egg.textContent = "\u{1F423}";
-      egg.classList.add("hatch");
-      egg.addEventListener("animationend", function() {
-        egg.classList.remove("hatch");
-      }, { once: true });
-      vscode.postMessage({ command: "executeCommand", args: ["sysml.showSysRunner"] });
-    });
-  })();
 
   // src/visualization/webview/index.ts
   var vscode2 = acquireVsCodeApi();

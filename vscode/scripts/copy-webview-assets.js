@@ -45,6 +45,18 @@ function resolvePackageFile(packageName, relativePath) {
 }
 
 function run() {
+    const codiconsDir = path.join(__dirname, '..', 'media', 'codicons');
+    ensureDir(codiconsDir);
+    const codiconsPkg = path.join(__dirname, '..', 'node_modules', '@vscode', 'codicons');
+    const codiconsDist = path.join(codiconsPkg, 'dist');
+    if (fs.existsSync(path.join(codiconsDist, 'codicon.css'))) {
+        fs.copyFileSync(path.join(codiconsDist, 'codicon.css'), path.join(codiconsDir, 'codicon.css'));
+        fs.copyFileSync(path.join(codiconsDist, 'codicon.ttf'), path.join(codiconsDir, 'codicon.ttf'));
+        console.log('Copied @vscode/codicons to media/codicons/');
+    } else {
+        console.warn('@vscode/codicons dist not found - codicons will not be available in webview');
+    }
+
     const assets = [
         { packageName: 'd3', relativePath: 'dist/d3.min.js', filename: 'd3.min.js', subdir: 'vendor' },
         { packageName: 'elkjs', relativePath: 'lib/elk.bundled.js', filename: 'elk.bundled.js', subdir: 'vendor' },

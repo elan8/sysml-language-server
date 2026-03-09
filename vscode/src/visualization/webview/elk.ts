@@ -27,7 +27,6 @@ export interface ElkContext {
     togglePillarExpansion: (pillarId: string) => void;
     centerOnNode: (node: any, padding?: number) => void;
     isSequentialBehaviorContext: () => boolean;
-    updateMinimap: () => void;
     postMessage: (msg: unknown) => void;
     SYSML_PILLARS: Array<{ id: string; label: string }>;
     PILLAR_COLOR_MAP: Record<string, string>;
@@ -110,11 +109,6 @@ export function renderGeneralViewCytoscape(ctx: ElkContext, width: number, heigh
 
     cy.on('zoom', () => {
         (window as any).userHasManuallyZoomed = true;
-        ctx.updateMinimap();
-    });
-
-    cy.on('pan', () => {
-        ctx.updateMinimap();
     });
 
     cy.on('tap', (event: any) => {
@@ -207,11 +201,6 @@ export function renderSysMLView(ctx: ElkContext, width: number, height: number, 
 
     cy.on('zoom', () => {
         (window as any).userHasManuallyZoomed = true;
-        ctx.updateMinimap();
-    });
-
-    cy.on('pan', () => {
-        ctx.updateMinimap();
     });
 
     let tapTimeout: ReturnType<typeof setTimeout> | null = null;

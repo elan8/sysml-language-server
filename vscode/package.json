@@ -128,7 +128,7 @@
       {
         "command": "sysml.showVisualizer",
         "title": "Show SysML Visualizer",
-        "icon": "$(preview)",
+        "icon": "$(eye)",
         "category": "SysML"
       },
       {
@@ -345,6 +345,7 @@
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
+    "@vscode/codicons": "0.0.44",
     "esbuild": "^0.24.0",
     "@types/mocha": "^10.0.0",
     "@types/node": "^22.0.0",

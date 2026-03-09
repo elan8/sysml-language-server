@@ -122,11 +122,15 @@ function getVisualizerStyles() {
         text-align: left;
         transition: background 0.1s ease;
     }
-    .view-dropdown-item .icon {
+    .view-dropdown-item .icon,
+    .view-dropdown-item .codicon {
         display: inline-block;
         width: 14px;
         text-align: center;
         flex-shrink: 0;
+    }
+    #controls .codicon {
+        font-size: 14px;
     }
     .view-dropdown-item:hover {
         background-color: var(--vscode-list-hoverBackground);
@@ -283,37 +287,6 @@ function getVisualizerStyles() {
         max-width: 320px;
         font-size: 12px;
         color: var(--vscode-editor-foreground);
-    }
-    #about-backdrop {
-        display: none;
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0,0,0,0.45);
-        z-index: 2000;
-        justify-content: center;
-        align-items: center;
-    }
-    #about-backdrop.show {
-        display: flex;
-    }
-    #about-popup {
-        background: var(--vscode-editor-background);
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 8px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-        padding: 18px 22px;
-        min-width: 300px;
-        max-width: 400px;
-        font-size: 12px;
-        color: var(--vscode-editor-foreground);
-        animation: aboutFadeIn 0.15s ease;
-    }
-    @keyframes aboutFadeIn {
-        from { opacity: 0; transform: scale(0.95); }
-        to   { opacity: 1; transform: scale(1); }
     }
     /* Loading overlay styles */
     #loading-overlay {
@@ -548,121 +521,9 @@ function getVisualizerStyles() {
         opacity: 0.5;
     }
 
-    .filter-input {
-        padding: 5px 8px;
-        background-color: var(--vscode-input-background);
-        color: var(--vscode-input-foreground);
-        border: 1px solid var(--vscode-input-border);
-        border-radius: 3px;
-        font-size: 11px;
-        font-weight: 400;
-        line-height: 1.2;
-        width: 150px;
-        transition: border-color 0.1s ease;
-    }
-    .filter-input:hover {
-        border-color: var(--vscode-focusBorder);
-    }
-    .filter-input:focus {
-        outline: none;
-        border-color: var(--vscode-focusBorder);
-    }
     #sysml-cytoscape {
         width: 100%;
         height: 100%;
-    }
-    /* Minimap styles */
-    #minimap-container {
-        position: absolute;
-        bottom: 12px;
-        right: 12px;
-        width: 150px;
-        height: 100px;
-        background: var(--vscode-editor-background);
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 4px;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-        overflow: hidden;
-        z-index: 1000;
-        opacity: 0.85;
-        transition: opacity 0.15s ease;
-    }
-    #minimap-container:hover {
-        opacity: 1;
-    }
-    #minimap-container.hidden {
-        display: none;
-    }
-    #minimap-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 3px 6px;
-        background: var(--vscode-titleBar-activeBackground);
-        border-bottom: 1px solid var(--vscode-panel-border);
-        font-size: 9px;
-        color: var(--vscode-titleBar-activeForeground);
-        cursor: move;
-    }
-    #minimap-toggle {
-        background: none;
-        border: none;
-        color: var(--vscode-titleBar-activeForeground);
-        cursor: pointer;
-        font-size: 10px;
-        padding: 0 2px;
-        opacity: 0.7;
-        margin: 0;
-    }
-    #minimap-toggle:hover {
-        opacity: 1;
-    }
-    #minimap-canvas {
-        width: 100%;
-        height: calc(100% - 18px);
-        cursor: pointer;
-    }
-    #minimap-viewport {
-        position: absolute;
-        border: 1px solid var(--vscode-button-background);
-        background: rgba(30, 136, 229, 0.1);
-        pointer-events: none;
-        border-radius: 2px;
-    }
-
-    /* ── Easter egg ──────────────────────────────────────── */
-    #ee-egg {
-        display: none;
-        cursor: pointer;
-        font-size: 14px;
-        line-height: 1;
-        padding: 3px 5px;
-        border-radius: 4px;
-        background: transparent;
-        border: none;
-        color: var(--vscode-descriptionForeground);
-        opacity: 0;
-        transition: opacity 0.6s ease-in;
-        user-select: none;
-    }
-    #ee-egg.revealed {
-        display: inline-block;
-        opacity: 1;
-    }
-    #ee-egg:hover {
-        background: var(--vscode-button-hoverBackground);
-        transform: scale(1.3);
-        transition: transform 0.15s ease, background 0.15s ease;
-    }
-    @keyframes ee-wobble {
-        0%,100% { transform: rotate(0deg); }
-        20%  { transform: rotate(-8deg); }
-        40%  { transform: rotate(10deg); }
-        60%  { transform: rotate(-6deg); }
-        80%  { transform: rotate(4deg); }
-    }
-    #ee-egg.hatch {
-        animation: ee-wobble 0.5s ease;
     }
 `;
 }
