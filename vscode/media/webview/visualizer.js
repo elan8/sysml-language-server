@@ -3234,13 +3234,16 @@
       const width = Math.round(vizElement.clientWidth);
       const height = Math.round(vizElement.clientHeight);
       const statusText = document.getElementById("status-text");
-      statusText.innerHTML = "Panel: " + width + " x " + height + "px - Resize via VS Code panel";
-      document.getElementById("status-bar").style.display = "flex";
-      setTimeout(() => {
-        if (statusText.innerHTML.includes("Panel:")) {
-          statusText.textContent = "Ready \u2022 Use filter to search elements";
-        }
-      }, 3e3);
+      if (statusText) {
+        statusText.innerHTML = "Panel: " + width + " x " + height + "px - Resize via VS Code panel";
+        const statusBar = document.getElementById("status-bar");
+        if (statusBar) statusBar.style.display = "flex";
+        setTimeout(() => {
+          if (statusText.innerHTML?.includes("Panel:")) {
+            statusText.textContent = "Ready";
+          }
+        }, 3e3);
+      }
     }
   }
   var resizeTimeout;
@@ -3469,10 +3472,9 @@
     pillarOrientation = pillarOrientation === "horizontal" ? "linear" : "horizontal";
     updateOrientationButton();
     if (currentView === "sysml") {
-      if (pillarOrientation === "horizontal") {
-        document.getElementById("status-text").textContent = "SysML Pillar View \u2022 Horizontal layout";
-      } else {
-        document.getElementById("status-text").textContent = "SysML Pillar View \u2022 Linear top-down layout";
+      const st = document.getElementById("status-text");
+      if (st) {
+        st.textContent = pillarOrientation === "horizontal" ? "SysML Pillar View \u2022 Horizontal layout" : "SysML Pillar View \u2022 Linear top-down layout";
       }
       runSysMLLayout(true);
     }
@@ -5143,8 +5145,8 @@
       sysmlTarget.addClass("highlighted-sysml");
       const statusBar = document.getElementById("status-bar");
       const statusText = document.getElementById("status-text");
-      statusText.textContent = "Selected: " + elementData.name + " [" + elementData.type + "]";
-      statusBar.style.display = "flex";
+      if (statusText) statusText.textContent = "Selected: " + elementData.name + " [" + elementData.type + "]";
+      if (statusBar) statusBar.style.display = "flex";
       if (!skipCentering) {
         centerOnNode(sysmlTarget, 80);
       }
@@ -5156,8 +5158,8 @@
       targetElement.select("rect").style("stroke", "#FFD700").style("stroke-width", "3px");
       const statusBar = document.getElementById("status-bar");
       const statusText = document.getElementById("status-text");
-      statusText.textContent = "Selected: " + elementData.name + " [" + elementData.type + "]";
-      statusBar.style.display = "flex";
+      if (statusText) statusText.textContent = "Selected: " + elementData.name + " [" + elementData.type + "]";
+      if (statusBar) statusBar.style.display = "flex";
       if (!skipCentering) {
         const bbox = targetElement.node().getBBox();
         const centerX = bbox.x + bbox.width / 2;
@@ -5176,7 +5178,8 @@
       filterInput.value = "";
     }
     filteredData = null;
-    document.getElementById("status-text").textContent = "Ready \u2022 Use filter to search elements";
+    const st = document.getElementById("status-text");
+    if (st) st.textContent = "Ready";
     if (currentView) {
       renderVisualization(currentView);
     }
@@ -5754,9 +5757,10 @@
     const hasElements = currentData?.elements;
     if (!currentData || !hasGraph && !hasElements && !currentData.pillarElements) return;
     const searchTerm = query.toLowerCase().trim();
+    const statusText = document.getElementById("status-text");
     if (searchTerm === "") {
       filteredData = null;
-      document.getElementById("status-text").textContent = "Ready \u2022 Use filter to search elements";
+      if (statusText) statusText.textContent = "Ready";
     } else {
       if (hasGraph) {
         const filteredNodes = filterNodesBySearch(currentData.graph.nodes, searchTerm);
@@ -5768,13 +5772,13 @@
           ...currentData,
           graph: { nodes: filteredNodes, edges: filteredEdges }
         };
-        document.getElementById("status-text").textContent = "Filtering: " + filteredNodes.length + " of " + (currentData.graph.nodes?.length || 0) + ' elements match "' + searchTerm + '"';
+        if (statusText) statusText.textContent = "Filtering: " + filteredNodes.length + " of " + (currentData.graph.nodes?.length || 0) + ' elements match "' + searchTerm + '"';
       } else {
         const filteredDiagramElements = filterElementsRecursive(cloneElements(currentData.elements || []), searchTerm);
         filteredData = { ...currentData, elements: filteredDiagramElements };
         const totalElements = countAllElements(currentData.elements || []);
         const filteredCount = countAllElements(filteredDiagramElements || []);
-        document.getElementById("status-text").textContent = "Filtering: " + filteredCount + " of " + totalElements + ' elements match "' + searchTerm + '"';
+        if (statusText) statusText.textContent = "Filtering: " + filteredCount + " of " + totalElements + ' elements match "' + searchTerm + '"';
       }
     }
     if (currentView) {

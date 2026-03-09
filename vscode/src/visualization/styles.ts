@@ -35,25 +35,6 @@ export function getVisualizerStyles(): string {
         border: 1px solid var(--vscode-panel-border);
         border-radius: 4px;
     }
-    #status-bar {
-        flex-shrink: 0;
-        margin-bottom: 8px;
-        padding: 6px 12px;
-        background-color: var(--vscode-statusBar-background);
-        color: var(--vscode-statusBar-foreground);
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 4px;
-        font-size: 11px;
-        font-weight: 400;
-        line-height: 1.3;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-    }
-    #status-text {
-        flex-grow: 1;
-    }
     button {
         margin-right: 4px;
         padding: 5px 10px;
@@ -583,67 +564,6 @@ export function getVisualizerStyles(): string {
     .filter-input:focus {
         outline: none;
         border-color: var(--vscode-focusBorder);
-    }
-    #sysml-toolbar {
-        flex-shrink: 0;
-        display: none;
-        flex-direction: column;
-        gap: 6px;
-        padding: 6px 10px;
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 4px;
-        background-color: var(--vscode-editor-background);
-        margin-bottom: 8px;
-    }
-    #sysml-toolbar.visible {
-        display: flex;
-    }
-    .sysml-layout-toggle {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 11px;
-        font-weight: 400;
-        line-height: 1.2;
-        color: var(--vscode-descriptionForeground);
-        flex-wrap: wrap;
-    }
-    .sysml-layout-btn {
-        padding: 4px 8px;
-        border-radius: 3px;
-        border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
-        background: var(--vscode-input-background);
-        color: var(--vscode-foreground);
-        cursor: pointer;
-        font-size: 10px;
-        font-weight: 500;
-        line-height: 1.2;
-        transition: all 0.1s ease;
-    }
-    .sysml-layout-btn.active {
-        background-color: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        border-color: var(--vscode-button-background);
-    }
-    .metadata-toggle {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 8px;
-        background: var(--vscode-input-background);
-        border: 1px solid var(--vscode-input-border);
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 10px;
-        color: var(--vscode-foreground);
-        user-select: none;
-    }
-    .metadata-toggle:hover {
-        background: var(--vscode-list-hoverBackground);
-    }
-    .metadata-toggle input[type="checkbox"] {
-        cursor: pointer;
-        margin: 0;
     }
     #sysml-cytoscape {
         width: 100%;

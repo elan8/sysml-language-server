@@ -310,15 +310,16 @@ let lastPillarStats = {};
             const width = Math.round(vizElement.clientWidth);
             const height = Math.round(vizElement.clientHeight);
             const statusText = document.getElementById('status-text');
-            statusText.innerHTML = 'Panel: ' + width + ' x ' + height + 'px - Resize via VS Code panel';
-            document.getElementById('status-bar').style.display = 'flex';
-
-            // Auto-reset status text after 3 seconds (but keep bar visible for filter)
-            setTimeout(() => {
-                if (statusText.innerHTML.includes('Panel:')) {
-                    statusText.textContent = 'Ready • Use filter to search elements';
-                }
-            }, 3000);
+            if (statusText) {
+                statusText.innerHTML = 'Panel: ' + width + ' x ' + height + 'px - Resize via VS Code panel';
+                const statusBar = document.getElementById('status-bar');
+                if (statusBar) statusBar.style.display = 'flex';
+                setTimeout(() => {
+                    if (statusText.innerHTML?.includes('Panel:')) {
+                        statusText.textContent = 'Ready';
+                    }
+                }, 3000);
+            }
         }
     }
 
@@ -650,10 +651,11 @@ let lastPillarStats = {};
         pillarOrientation = pillarOrientation === 'horizontal' ? 'linear' : 'horizontal';
         updateOrientationButton();
         if (currentView === 'sysml') {
-            if (pillarOrientation === 'horizontal') {
-                document.getElementById('status-text').textContent = 'SysML Pillar View • Horizontal layout';
-            } else {
-                document.getElementById('status-text').textContent = 'SysML Pillar View • Linear top-down layout';
+            const st = document.getElementById('status-text');
+            if (st) {
+                st.textContent = pillarOrientation === 'horizontal'
+                    ? 'SysML Pillar View • Horizontal layout'
+                    : 'SysML Pillar View • Linear top-down layout';
             }
             runSysMLLayout(true);
         }
@@ -2547,8 +2549,8 @@ let lastPillarStats = {};
 
             const statusBar = document.getElementById('status-bar');
             const statusText = document.getElementById('status-text');
-            statusText.textContent = 'Selected: ' + elementData.name + ' [' + elementData.type + ']';
-            statusBar.style.display = 'flex';
+            if (statusText) statusText.textContent = 'Selected: ' + elementData.name + ' [' + elementData.type + ']';
+            if (statusBar) statusBar.style.display = 'flex';
 
             // Only center if not skipping (i.e., click came from text editor, not diagram)
             if (!skipCentering) {
@@ -2574,8 +2576,8 @@ let lastPillarStats = {};
             // Update status bar
             const statusBar = document.getElementById('status-bar');
             const statusText = document.getElementById('status-text');
-            statusText.textContent = 'Selected: ' + elementData.name + ' [' + elementData.type + ']';
-            statusBar.style.display = 'flex';
+            if (statusText) statusText.textContent = 'Selected: ' + elementData.name + ' [' + elementData.type + ']';
+            if (statusBar) statusBar.style.display = 'flex';
 
             // Only center the view if not skipping (i.e., click came from text editor, not diagram)
             if (!skipCentering) {
@@ -2604,7 +2606,8 @@ let lastPillarStats = {};
 
         // Clear filtered data and re-render with all elements
         filteredData = null;
-        document.getElementById('status-text').textContent = 'Ready • Use filter to search elements';
+        const st = document.getElementById('status-text');
+        if (st) st.textContent = 'Ready';
 
         // Re-render the current view with all data (no filter)
         if (currentView) {
@@ -3956,9 +3959,10 @@ let lastPillarStats = {};
 
         const searchTerm = query.toLowerCase().trim();
 
+        const statusText = document.getElementById('status-text');
         if (searchTerm === '') {
             filteredData = null;
-            document.getElementById('status-text').textContent = 'Ready • Use filter to search elements';
+            if (statusText) statusText.textContent = 'Ready';
         } else {
             if (hasGraph) {
                 const filteredNodes = filterNodesBySearch(currentData.graph.nodes, searchTerm);
@@ -3970,14 +3974,14 @@ let lastPillarStats = {};
                     ...currentData,
                     graph: { nodes: filteredNodes, edges: filteredEdges }
                 };
-                document.getElementById('status-text').textContent =
+                if (statusText) statusText.textContent =
                     'Filtering: ' + filteredNodes.length + ' of ' + (currentData.graph.nodes?.length || 0) + ' elements match "' + searchTerm + '"';
             } else {
                 const filteredDiagramElements = filterElementsRecursive(cloneElements(currentData.elements || []), searchTerm);
                 filteredData = { ...currentData, elements: filteredDiagramElements };
                 const totalElements = countAllElements(currentData.elements || []);
                 const filteredCount = countAllElements(filteredDiagramElements || []);
-                document.getElementById('status-text').textContent =
+                if (statusText) statusText.textContent =
                     'Filtering: ' + filteredCount + ' of ' + totalElements + ' elements match "' + searchTerm + '"';
             }
         }
