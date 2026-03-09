@@ -13,7 +13,12 @@ import {
   ModelTreeItem,
 } from "./explorer/modelExplorerProvider";
 import { log, logError, showChannel } from "./logger";
-import { VisualizationPanel } from "./visualization/visualizationPanel";
+import {
+  RESTORE_STATE_KEY,
+  VisualizationPanel,
+  VisualizerRestoreState,
+} from "./visualization/visualizationPanel";
+import { getWebviewHtml } from "./visualization/htmlBuilder";
 
 let client: LanguageClient | undefined;
 let statusItem: vscode.StatusBarItem | undefined;
@@ -171,6 +176,46 @@ export function activate(context: vscode.ExtensionContext): void {
   const lspModelProvider = new LspModelProvider(client);
   lspModelProviderForStatus = lspModelProvider;
   modelExplorerProvider = new ModelExplorerProvider(lspModelProvider);
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewPanelSerializer("sysmlVisualizer", {
+      async deserializeWebviewPanel(
+        panel: vscode.WebviewPanel,
+        _state: unknown
+      ) {
+        const saved = context.workspaceState.get<VisualizerRestoreState>(
+          RESTORE_STATE_KEY
+        );
+        const extVersion =
+          vscode.extensions.getExtension("Elan8.sysml-language-server")
+            ?.packageJSON?.version ?? "0.0.0";
+        if (!saved?.documentUri) {
+          panel.webview.html = getWebviewHtml(
+            panel.webview,
+            context.extensionUri,
+            extVersion
+          );
+          return;
+        }
+        try {
+          await VisualizationPanel.restore(
+            panel,
+            context,
+            lspModelProvider,
+            saved
+          );
+        } catch (err) {
+          logError("Failed to restore visualization panel", err);
+          panel.webview.html = getWebviewHtml(
+            panel.webview,
+            context.extensionUri,
+            extVersion
+          );
+        }
+      },
+    })
+  );
+
   const treeView = vscode.window.createTreeView("sysmlModelExplorer", {
     treeDataProvider: modelExplorerProvider,
   });
@@ -352,7 +397,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.showWarningMessage("No SysML/KerML document is open. Open a .sysml or .kerml file first.");
         return;
       }
-      VisualizationPanel.createOrShow(context.extensionUri, editor.document, undefined, lspModelProvider);
+      VisualizationPanel.createOrShow(context, editor.document, undefined, lspModelProvider);
     })
   );
 
@@ -460,7 +505,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           VisualizationPanel.createOrShow(
-            context.extensionUri,
+            context,
             combinedDocumentProxy,
             title,
             lspModelProvider,
@@ -572,7 +617,7 @@ export function activate(context: vscode.ExtensionContext): void {
             } as unknown as vscode.TextDocument;
             const title = `SysML Visualization - ${fileNames.length} file(s)`;
             VisualizationPanel.createOrShow(
-              context.extensionUri,
+              context,
               combinedDocumentProxy,
               title,
               lspModelProvider,
@@ -586,7 +631,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         VisualizationPanel.createOrShow(
-          context.extensionUri,
+          context,
           document,
           undefined,
           lspModelProvider
@@ -670,7 +715,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const doc = VisualizationPanel.currentPanel.getDocument();
       VisualizationPanel.currentPanel.dispose();
-      VisualizationPanel.createOrShow(context.extensionUri, doc, undefined, lspModelProvider);
+      VisualizationPanel.createOrShow(context, doc, undefined, lspModelProvider);
     })
   );
 

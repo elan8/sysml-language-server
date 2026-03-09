@@ -31,6 +31,9 @@
   "activationEvents": [
     "onLanguage:sysml",
     "onLanguage:kerml",
+    "workspaceContains:**/*.sysml",
+    "workspaceContains:**/*.kerml",
+    "onWebviewPanel:sysmlVisualizer",
     "onCommand:sysml.showModelExplorer",
     "onCommand:sysml.showVisualizer",
     "onCommand:sysml.formatDocument",

@@ -33,6 +33,7 @@ const lspModelProvider_1 = require("./providers/lspModelProvider");
 const modelExplorerProvider_1 = require("./explorer/modelExplorerProvider");
 const logger_1 = require("./logger");
 const visualizationPanel_1 = require("./visualization/visualizationPanel");
+const htmlBuilder_1 = require("./visualization/htmlBuilder");
 let client;
 let statusItem;
 let modelExplorerProvider;
@@ -153,6 +154,24 @@ function activate(context) {
     const lspModelProvider = new lspModelProvider_1.LspModelProvider(client);
     lspModelProviderForStatus = lspModelProvider;
     modelExplorerProvider = new modelExplorerProvider_1.ModelExplorerProvider(lspModelProvider);
+    context.subscriptions.push(vscode.window.registerWebviewPanelSerializer("sysmlVisualizer", {
+        async deserializeWebviewPanel(panel, _state) {
+            const saved = context.workspaceState.get(visualizationPanel_1.RESTORE_STATE_KEY);
+            const extVersion = vscode.extensions.getExtension("Elan8.sysml-language-server")
+                ?.packageJSON?.version ?? "0.0.0";
+            if (!saved?.documentUri) {
+                panel.webview.html = (0, htmlBuilder_1.getWebviewHtml)(panel.webview, context.extensionUri, extVersion);
+                return;
+            }
+            try {
+                await visualizationPanel_1.VisualizationPanel.restore(panel, context, lspModelProvider, saved);
+            }
+            catch (err) {
+                (0, logger_1.logError)("Failed to restore visualization panel", err);
+                panel.webview.html = (0, htmlBuilder_1.getWebviewHtml)(panel.webview, context.extensionUri, extVersion);
+            }
+        },
+    }));
     const treeView = vscode.window.createTreeView("sysmlModelExplorer", {
         treeDataProvider: modelExplorerProvider,
     });
@@ -283,7 +302,7 @@ function activate(context) {
             vscode.window.showWarningMessage("No SysML/KerML document is open. Open a .sysml or .kerml file first.");
             return;
         }
-        visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, editor.document, undefined, lspModelProvider);
+        visualizationPanel_1.VisualizationPanel.createOrShow(context, editor.document, undefined, lspModelProvider);
     }));
     context.subscriptions.push(vscode.commands.registerCommand("sysml.visualizeFolder", async (uri, selectedUris) => {
         if (!client) {
@@ -375,7 +394,7 @@ function activate(context) {
             else {
                 title = `SysML Visualization - ${fileNames.length} file(s)`;
             }
-            visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, combinedDocumentProxy, title, lspModelProvider, uniqueFiles);
+            visualizationPanel_1.VisualizationPanel.createOrShow(context, combinedDocumentProxy, title, lspModelProvider, uniqueFiles);
             if (modelExplorerProvider) {
                 await modelExplorerProvider.loadWorkspaceModel(uniqueFiles);
             }
@@ -459,14 +478,14 @@ function activate(context) {
                     save: () => Promise.resolve(false),
                 };
                 const title = `SysML Visualization - ${fileNames.length} file(s)`;
-                visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, combinedDocumentProxy, title, lspModelProvider, workspaceUris);
+                visualizationPanel_1.VisualizationPanel.createOrShow(context, combinedDocumentProxy, title, lspModelProvider, workspaceUris);
                 setTimeout(() => {
                     visualizationPanel_1.VisualizationPanel.currentPanel?.selectPackage(packageName);
                 }, 500);
                 return;
             }
         }
-        visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, document, undefined, lspModelProvider);
+        visualizationPanel_1.VisualizationPanel.createOrShow(context, document, undefined, lspModelProvider);
         setTimeout(() => {
             visualizationPanel_1.VisualizationPanel.currentPanel?.selectPackage(packageName);
         }, 500);
@@ -524,7 +543,7 @@ function activate(context) {
         }
         const doc = visualizationPanel_1.VisualizationPanel.currentPanel.getDocument();
         visualizationPanel_1.VisualizationPanel.currentPanel.dispose();
-        visualizationPanel_1.VisualizationPanel.createOrShow(context.extensionUri, doc, undefined, lspModelProvider);
+        visualizationPanel_1.VisualizationPanel.createOrShow(context, doc, undefined, lspModelProvider);
     }));
     // Status bar + context for contributed view
     const refreshContext = () => {

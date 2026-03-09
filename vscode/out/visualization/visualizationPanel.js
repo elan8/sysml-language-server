@@ -23,15 +23,57 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.VisualizationPanel = void 0;
+exports.VisualizationPanel = exports.RESTORE_STATE_KEY = void 0;
 const vscode = __importStar(require("vscode"));
 const messageHandlers_1 = require("./messageHandlers");
 const updateFlow_1 = require("./updateFlow");
 const htmlBuilder_1 = require("./htmlBuilder");
+exports.RESTORE_STATE_KEY = 'sysmlVisualizerRestoreState';
+async function createCombinedDocumentProxy(fileUris) {
+    const openDocs = [];
+    let combinedContent = '';
+    for (const fileUri of fileUris) {
+        try {
+            const doc = await vscode.workspace.openTextDocument(fileUri);
+            openDocs.push(doc);
+            const fileName = fileUri.fsPath.split(/[/\\]/).pop() ?? '';
+            combinedContent += `// === ${fileName} ===\n`;
+            combinedContent += doc.getText();
+            combinedContent += '\n\n';
+        }
+        catch {
+            // skip
+        }
+    }
+    if (openDocs.length === 0) {
+        throw new Error('No documents could be opened');
+    }
+    const firstDoc = openDocs[0];
+    return {
+        getText: () => combinedContent,
+        uri: firstDoc.uri,
+        languageId: 'sysml',
+        version: firstDoc.version,
+        lineCount: combinedContent.split('\n').length,
+        lineAt: (line) => firstDoc.lineAt(Math.min(line, firstDoc.lineCount - 1)),
+        offsetAt: (position) => firstDoc.offsetAt(position),
+        positionAt: (offset) => firstDoc.positionAt(offset),
+        getWordRangeAtPosition: (position) => firstDoc.getWordRangeAtPosition(position),
+        validateRange: (range) => firstDoc.validateRange(range),
+        validatePosition: (position) => firstDoc.validatePosition(position),
+        fileName: firstDoc.fileName,
+        isUntitled: false,
+        isDirty: false,
+        isClosed: false,
+        eol: firstDoc.eol,
+        save: () => Promise.resolve(false),
+    };
+}
 class VisualizationPanel {
-    constructor(panel, extensionUri, _document, _lspModelProvider, fileUris) {
+    constructor(panel, extensionUri, _document, _lspModelProvider, fileUris, _context, initialCurrentView) {
         this._document = _document;
         this._lspModelProvider = _lspModelProvider;
+        this._context = _context;
         this._disposables = [];
         this._currentView = 'general-view'; // Store current view state - SysML v2 general-view
         this._isNavigating = false; // Flag to prevent view reset during navigation
@@ -40,6 +82,9 @@ class VisualizationPanel {
         this._fileUris = []; // All source file URIs (for folder-level visualization)
         this._extensionVersion = '';
         this._fileUris = fileUris ?? [];
+        if (initialCurrentView) {
+            this._currentView = initialCurrentView;
+        }
         this._extensionVersion = vscode.extensions.getExtension('Elan8.sysml-language-server')?.packageJSON?.version ?? '0.0.0';
         this._panel = panel;
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
@@ -83,13 +128,29 @@ class VisualizationPanel {
             fileUris: this._fileUris,
             updateVisualization: (force) => this.updateVisualization(force),
             setNavigating: (v) => { this._isNavigating = v; },
-            setCurrentView: (v) => { this._currentView = v; },
+            setCurrentView: (v) => {
+                this._currentView = v;
+                this.persistRestoreState();
+            },
             setLastContentHash: (h) => { this._lastContentHash = h; },
         });
         this._panel.webview.onDidReceiveMessage(dispatch, null, this._disposables);
         this.updateVisualization();
+        this.persistRestoreState();
     }
-    static createOrShow(extensionUri, document, customTitle, lspModelProvider, fileUris) {
+    persistRestoreState() {
+        if (!this._context)
+            return;
+        const state = {
+            documentUri: this._document.uri.toString(),
+            fileUris: this._fileUris.map(u => u.toString()),
+            currentView: this._currentView,
+            title: this._panel.title !== 'SysML Model Visualizer' ? this._panel.title : undefined,
+        };
+        this._context.workspaceState.update(exports.RESTORE_STATE_KEY, state);
+    }
+    static createOrShow(context, document, customTitle, lspModelProvider, fileUris) {
+        const extensionUri = context.extensionUri;
         // Determine the best column layout for side-by-side viewing
         const activeColumn = vscode.window.activeTextEditor?.viewColumn;
         let visualizerColumn;
@@ -126,6 +187,7 @@ class VisualizationPanel {
                 VisualizationPanel.currentPanel._lastContentHash = ''; // force re-parse
                 VisualizationPanel.currentPanel.updateVisualization(true);
             }
+            VisualizationPanel.currentPanel.persistRestoreState();
             return;
         }
         if (!lspModelProvider) {
@@ -138,7 +200,27 @@ class VisualizationPanel {
                 vscode.Uri.joinPath(extensionUri, 'media')
             ]
         });
-        VisualizationPanel.currentPanel = new VisualizationPanel(panel, extensionUri, document, lspModelProvider, fileUris);
+        VisualizationPanel.currentPanel = new VisualizationPanel(panel, extensionUri, document, lspModelProvider, fileUris, context);
+    }
+    /** Restore a webview panel from persisted state (e.g. after VS Code restart). */
+    static async restore(panel, context, lspModelProvider, savedState) {
+        const extensionUri = context.extensionUri;
+        let document;
+        let fileUris;
+        if (savedState.fileUris.length > 1) {
+            fileUris = savedState.fileUris.map((u) => vscode.Uri.parse(u));
+            document = await createCombinedDocumentProxy(fileUris);
+        }
+        else {
+            document = await vscode.workspace.openTextDocument(vscode.Uri.parse(savedState.documentUri));
+            fileUris = savedState.fileUris.length === 1
+                ? [vscode.Uri.parse(savedState.fileUris[0])]
+                : [];
+        }
+        if (savedState.title) {
+            panel.title = savedState.title;
+        }
+        VisualizationPanel.currentPanel = new VisualizationPanel(panel, extensionUri, document, lspModelProvider, fileUris, context, savedState.currentView);
     }
     exportVisualization(format, scale = 2) {
         this._panel.webview.postMessage({ command: 'export', format: format.toLowerCase(), scale });
@@ -201,6 +283,7 @@ class VisualizationPanel {
     }
     dispose() {
         VisualizationPanel.currentPanel = undefined;
+        this._context?.workspaceState.update(exports.RESTORE_STATE_KEY, undefined);
         this._panel.dispose();
         while (this._disposables.length) {
             const disposable = this._disposables.pop();

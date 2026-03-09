@@ -7,9 +7,17 @@ export function getVisualizerStyles(): string {
     return `
 * {
         font-family: var(--vscode-font-family), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        box-sizing: border-box;
+    }
+    html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
     }
     body {
-        margin: 0;
+        display: flex;
+        flex-direction: column;
         padding: 20px;
         font-size: 13px;
         font-weight: 400;
@@ -20,6 +28,7 @@ export function getVisualizerStyles(): string {
         -moz-osx-font-smoothing: grayscale;
     }
     #controls {
+        flex-shrink: 0;
         margin-bottom: 8px;
         padding: 8px 12px;
         background: var(--vscode-editor-background);
@@ -27,6 +36,7 @@ export function getVisualizerStyles(): string {
         border-radius: 4px;
     }
     #status-bar {
+        flex-shrink: 0;
         margin-bottom: 8px;
         padding: 6px 12px;
         background-color: var(--vscode-statusBar-background);
@@ -248,9 +258,9 @@ export function getVisualizerStyles(): string {
     }
     #visualization-wrapper {
         position: relative;
+        flex: 1;
+        min-height: 0;
         width: 100%;
-        height: calc(100vh - 100px);
-        min-height: 400px;
         overflow: hidden;
     }
     #pkg-dropdown {
@@ -575,6 +585,7 @@ export function getVisualizerStyles(): string {
         border-color: var(--vscode-focusBorder);
     }
     #sysml-toolbar {
+        flex-shrink: 0;
         display: none;
         flex-direction: column;
         gap: 6px;
