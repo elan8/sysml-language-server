@@ -732,7 +732,7 @@ fn relationships_from_member(
                     Some(pfx) => format!("{}::{}", pfx, p.name),
                     None => p.name.clone(),
                 };
-                add_edge_if_both_exist(g, uri, &src, s, RelationshipKind::Specializes);
+                add_specializes_edge_if_exists(g, uri, &src, s, container_prefix);
             }
         }
         M::PartUsage(p) => {
@@ -742,7 +742,7 @@ fn relationships_from_member(
                     Some(pfx) => format!("{}::{}", pfx, name),
                     None => name.to_string(),
                 };
-                add_edge_if_both_exist(g, uri, &src, s, RelationshipKind::Specializes);
+                add_specializes_edge_if_exists(g, uri, &src, s, container_prefix);
             }
             if let Some(ref t) = p.type_ref {
                 let name = p.name.as_deref().unwrap_or("(anonymous)");
@@ -759,7 +759,7 @@ fn relationships_from_member(
                     Some(pfx) => format!("{}::{}", pfx, p.name),
                     None => p.name.clone(),
                 };
-                add_edge_if_both_exist(g, uri, &src, s, RelationshipKind::Specializes);
+                add_specializes_edge_if_exists(g, uri, &src, s, container_prefix);
             }
         }
         M::PortUsage(p) => {
@@ -821,6 +821,23 @@ fn add_typing_edge_if_exists(
 ) {
     for tgt in type_ref_candidates(container_prefix, type_ref) {
         if add_edge_if_both_exist(g, uri, source_qualified, &tgt, RelationshipKind::Typing) {
+            break;
+        }
+    }
+}
+
+/// Adds a specializes edge if source exists and target can be resolved. Same resolution as typing:
+/// specializes target may be unqualified (e.g. "SurveillanceQuadrotorDrone") while the node
+/// has qualified name (e.g. "SurveillanceDrone::SurveillanceQuadrotorDrone").
+fn add_specializes_edge_if_exists(
+    g: &mut SemanticGraph,
+    uri: &Url,
+    source_qualified: &str,
+    specializes_ref: &str,
+    container_prefix: Option<&str>,
+) {
+    for tgt in type_ref_candidates(container_prefix, specializes_ref) {
+        if add_edge_if_both_exist(g, uri, source_qualified, &tgt, RelationshipKind::Specializes) {
             break;
         }
     }

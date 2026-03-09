@@ -58,6 +58,15 @@ export function formatStereotype(type: string | null | undefined): string {
     return '<<' + String(type).trim() + '>>';
 }
 
+/** SysML v2 BNF notation: «type» (guillemets per Clause 8.2.3). */
+export function formatSysMLStereotype(type: string | null | undefined): string {
+    if (!type) {
+        return '';
+    }
+    const normalized = normalizeTypeForDisplay(type);
+    return normalized ? '\u00AB' + normalized + '\u00BB' : '';
+}
+
 export function normalizeTypeForDisplay(type: string | null | undefined): string {
     if (!type) {
         return '';

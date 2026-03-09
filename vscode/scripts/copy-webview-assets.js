@@ -63,6 +63,7 @@ function run() {
             throw error;
         }
     });
+
     console.log('Webview vendor assets copied successfully.');
 }
 

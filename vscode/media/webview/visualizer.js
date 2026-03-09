@@ -620,6 +620,13 @@
     }
     return "<<" + String(type).trim() + ">>";
   }
+  function formatSysMLStereotype(type) {
+    if (!type) {
+      return "";
+    }
+    const normalized = normalizeTypeForDisplay(type);
+    return normalized ? "\xAB" + normalized + "\xBB" : "";
+  }
   function normalizeTypeForDisplay(type) {
     if (!type) {
       return "";
@@ -3906,7 +3913,9 @@
       idToCyId.set(node.id, cyId);
       const category = getCategoryForType((node.type || "").toLowerCase());
       typeStats[category] = (typeStats[category] || 0) + 1;
-      const baseLabel = buildElementDisplayLabel({ name: node.name, type: node.type });
+      const stereotype = formatSysMLStereotype(node.type);
+      const displayName = node.name || "Unnamed";
+      const baseLabel = stereotype ? stereotype + " " + displayName : displayName;
       const typeLower = (node.type || "").toLowerCase();
       const isDefinition = typeLower.includes("def") || typeLower.includes("definition");
       const color = getTypeColor(node.type);
@@ -4278,7 +4287,6 @@
   }
   function getGeneralViewStyles() {
     const editorFg = getCSSVariable("--vscode-editor-foreground");
-    const editorBg = getCSSVariable("--vscode-editor-background");
     return [
       {
         selector: "node",
@@ -4335,15 +4343,69 @@
       {
         selector: 'edge[type = "hierarchy"]',
         style: {
-          "line-color": "rgba(160,180,220,0.7)",
-          "target-arrow-color": "rgba(160,180,220,0.7)"
+          "line-color": GENERAL_VIEW_PALETTE.structural.part,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.structural.part,
+          "line-style": "solid",
+          "width": 2,
+          "target-arrow-shape": "triangle"
         }
       },
       {
         selector: 'edge[type = "relationship"]',
         style: {
-          "line-color": "rgba(100,150,255,0.9)",
-          "target-arrow-color": "rgba(100,150,255,0.9)"
+          "line-color": GENERAL_VIEW_PALETTE.other.default,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.other.default,
+          "width": 2
+        }
+      },
+      {
+        selector: 'edge[relType = "typing"]',
+        style: {
+          "line-color": GENERAL_VIEW_PALETTE.requirements.requirement,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.requirements.requirement,
+          "line-style": "dashed",
+          "width": 2,
+          "target-arrow-shape": "triangle"
+        }
+      },
+      {
+        selector: 'edge[relType = "specializes"]',
+        style: {
+          "line-color": GENERAL_VIEW_PALETTE.structural.port,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.structural.port,
+          "line-style": "solid",
+          "width": 2,
+          "target-arrow-shape": "triangle-backcurve"
+        }
+      },
+      {
+        selector: 'edge[relType = "connection"]',
+        style: {
+          "line-color": GENERAL_VIEW_PALETTE.structural.interface,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.structural.interface,
+          "line-style": "solid",
+          "width": 2.5,
+          "target-arrow-shape": "none"
+        }
+      },
+      {
+        selector: 'edge[relType = "bind"]',
+        style: {
+          "line-color": "#808080",
+          "target-arrow-color": "#808080",
+          "line-style": "dashed",
+          "width": 1.5,
+          "target-arrow-shape": "none"
+        }
+      },
+      {
+        selector: 'edge[relType = "allocate"]',
+        style: {
+          "line-color": GENERAL_VIEW_PALETTE.other.allocation,
+          "target-arrow-color": GENERAL_VIEW_PALETTE.other.allocation,
+          "line-style": "dashed",
+          "width": 2,
+          "target-arrow-shape": "triangle"
         }
       }
     ];
@@ -4391,11 +4453,16 @@
       name: "elk",
       nodeDimensionsIncludeLabels: true,
       elk: {
-        algorithm: "stress",
-        "elk.spacing.nodeNode": "180",
-        "elk.spacing.edgeNode": "80",
-        "elk.spacing.componentComponent": "150",
-        "elk.stress.desiredEdgeLength": "180",
+        algorithm: "layered",
+        direction: "DOWN",
+        "elk.spacing.nodeNode": "150",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "180",
+        "elk.spacing.edgeNode": "90",
+        "elk.spacing.edgeEdge": "80",
+        "elk.edgeRouting": "POLYLINE",
+        "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+        "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+        "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
         "elk.separateConnectedComponents": "true",
         "elk.aspectRatio": "1.4",
         "elk.padding": "[top=80,left=80,bottom=80,right=80]"
