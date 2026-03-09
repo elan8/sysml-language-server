@@ -108,8 +108,8 @@ export function renderStateView(ctx: RenderContext, data: any): void {
 
     transitions.forEach((t: any) => {
         for (const [, machineData] of stateMachineMap) {
-            const stateNames = machineData.states.map((s: any) => s.name || s.id);
-            if (stateNames.includes(t.source) || stateNames.includes(t.target)) {
+            const stateIds = new Set(machineData.states.map((s: any) => s.id || s.name));
+            if (stateIds.has(t.source) || stateIds.has(t.target)) {
                 machineData.transitions.push(t);
                 break;
             }

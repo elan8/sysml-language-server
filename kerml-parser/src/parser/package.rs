@@ -14,6 +14,7 @@ use super::requirement;
 use super::connection;
 use super::interface;
 use super::action;
+use super::state;
 
 /// Mutable state used when parsing a package (name, imports, members, etc.).
 struct PackageParseState<'a> {
@@ -105,6 +106,13 @@ fn process_package_pair<P: MemberParser>(
             let member_span = pair.as_span();
             match action::parse_action_def(pair.clone().into_inner(), source, member_span) {
                 Ok(action_def) => state.members.push(Member::ActionDef(action_def)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::state_def => {
+            let member_span = pair.as_span();
+            match state::parse_state_def(pair.clone().into_inner(), source, member_span, parser) {
+                Ok(state_def) => state.members.push(Member::StateDef(state_def)),
                 Err(e) => return Err(e),
             }
         }

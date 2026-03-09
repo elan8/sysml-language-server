@@ -2018,8 +2018,8 @@
     });
     transitions.forEach((t) => {
       for (const [, machineData] of stateMachineMap) {
-        const stateNames = machineData.states.map((s) => s.name || s.id);
-        if (stateNames.includes(t.source) || stateNames.includes(t.target)) {
+        const stateIds = new Set(machineData.states.map((s) => s.id || s.name));
+        if (stateIds.has(t.source) || stateIds.has(t.target)) {
           machineData.transitions.push(t);
           break;
         }

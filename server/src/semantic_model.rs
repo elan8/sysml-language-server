@@ -655,11 +655,22 @@ fn build_from_member(
         M::StateDef(s) => {
             let range = member_range(s.range.as_ref(), s.name_position.as_ref());
             let qualified = qualified_name(container_prefix, &s.name);
+            // StateDef as child of StateDef = state usage in state machine; use "state" so
+            // state-transition-view recognizes it (it filters for type including 'state' but not 'def').
+            let parent_is_state_def = g
+                .get_node(parent_id)
+                .map(|p| p.element_kind == "state def")
+                .unwrap_or(false);
+            let kind = if parent_is_state_def {
+                "state"
+            } else {
+                "state def"
+            };
             add_node_and_recurse(
                 g,
                 uri,
                 &qualified,
-                "state def",
+                kind,
                 s.name.clone(),
                 range,
                 HashMap::new(),
@@ -851,7 +862,15 @@ fn relationships_from_member(
                     .map(String::from)
                     .or_else(|| container_prefix.map(str::to_string))
                     .unwrap_or_default();
-                add_edge_if_both_exist(g, uri, &source, target, RelationshipKind::Transition);
+                let (src, tgt) = if let Some(pfx) = container_prefix {
+                    (
+                        format!("{}::{}", pfx, source),
+                        format!("{}::{}", pfx, target),
+                    )
+                } else {
+                    (source, target.clone())
+                };
+                add_edge_if_both_exist(g, uri, &src, &tgt, RelationshipKind::Transition);
             }
         }
         _ => {}
@@ -1087,4 +1106,54 @@ fn add_edge_if_both_exist(
     };
     g.graph.add_edge(src_idx, tgt_idx, kind);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kerml_parser::parse_sysml;
+
+    #[test]
+    fn state_machine_graph_has_transition_edges() {
+        let input = r#"
+            package P {
+                state def A;
+                state def B;
+                state def M {
+                    state a : A;
+                    state b : B;
+                    transition t first a then b;
+                }
+            }
+        "#;
+        let doc = parse_sysml(input).expect("parse");
+        // Verify M has TransitionStatement with source/target
+        let pkg = doc.packages.first().unwrap();
+        let m = pkg.members.iter().find_map(|m| {
+            if let Member::StateDef(s) = m {
+                if s.name == "M" {
+                    return Some(s);
+                }
+            }
+            None
+        }).expect("state def M");
+        let trans = m.members.iter().find_map(|m| {
+            if let Member::TransitionStatement(t) = m {
+                Some(t)
+            } else {
+                None
+            }
+        }).expect("M should have TransitionStatement");
+        assert_eq!(trans.source.as_deref(), Some("a"), "transition source");
+        assert_eq!(trans.target.as_deref(), Some("b"), "transition target");
+
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let g = build_graph_from_doc(&doc, &uri);
+        let edges = g.edges_for_uri_as_strings(&uri);
+        let transition_edges: Vec<_> = edges
+            .iter()
+            .filter(|(_, _, kind, _)| *kind == RelationshipKind::Transition)
+            .collect();
+        assert!(!transition_edges.is_empty(), "expected transition edges: {:?}", edges);
+    }
 }

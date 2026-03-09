@@ -253,6 +253,54 @@ mod tests {
     }
 
     #[test]
+    fn test_state_def_in_package() {
+        let input = r#"
+            package P {
+                state def A;
+                state def B;
+                state def M {
+                    state a : A;
+                    state b : B;
+                    transition t first a then b;
+                }
+            }
+        "#;
+        let doc = parse_sysml(input).expect("parse");
+        let pkg = doc.packages.first().expect("package");
+        let state_defs: Vec<_> = pkg
+            .members
+            .iter()
+            .filter_map(|m| {
+                if let Member::StateDef(s) = m {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(state_defs.len(), 3, "expected 3 state defs (A, B, M), got: {:?}", state_defs.iter().map(|s| &s.name).collect::<Vec<_>>());
+        assert_eq!(state_defs[0].name, "A");
+        assert_eq!(state_defs[1].name, "B");
+        assert_eq!(state_defs[2].name, "M");
+        // M should have members: state a, state b, transition t
+        assert!(!state_defs[2].members.is_empty(), "state def M should have members");
+        let m_members: Vec<_> = state_defs[2].members.iter().map(|m| std::mem::discriminant(m)).collect();
+        let has_state_defs = state_defs[2].members.iter().any(|m| matches!(m, Member::StateDef(_)));
+        let has_transition = state_defs[2].members.iter().any(|m| matches!(m, Member::TransitionStatement(_)));
+        assert!(has_state_defs, "M should have StateDef members (a, b), members: {:?}", m_members);
+        assert!(has_transition, "M should have TransitionStatement, members: {:?}", m_members);
+        let trans = state_defs[2].members.iter().find_map(|m| {
+            if let Member::TransitionStatement(t) = m {
+                Some(t)
+            } else {
+                None
+            }
+        }).expect("transition");
+        assert_eq!(trans.source.as_deref(), Some("a"), "transition source");
+        assert_eq!(trans.target.as_deref(), Some("b"), "transition target");
+    }
+
+    #[test]
     fn test_action_def_name_parsing() {
         let input = r#"
             package P {

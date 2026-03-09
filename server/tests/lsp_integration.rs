@@ -710,6 +710,130 @@ fn lsp_sysml_model_graph() {
     let _ = child.kill();
 }
 
+/// sysml/model with scope ["graph"] returns state machine nodes and transition edges.
+/// Validates semantic graph for state-transition-view: state def container, state usages (type "state"),
+/// contains edges, and transition edges.
+#[test]
+fn lsp_sysml_model_state_transition_view() {
+    let mut child = spawn_server();
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = child.stdout.take().expect("stdout");
+
+    let uri = "file:///state_test.sysml";
+    let content = r#"
+        package P {
+            state def A;
+            state def B;
+            state def M {
+                state a : A;
+                state b : B;
+                transition t first a then b;
+            }
+        }
+    "#;
+
+    let init_id = next_id();
+    let init_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": init_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": null,
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "0.1.0" }
+        }
+    });
+    send_message(&mut stdin, &init_req.to_string());
+    let _ = read_message(&mut stdout).expect("init response");
+
+    let initialized = serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} });
+    send_message(&mut stdin, &initialized.to_string());
+
+    let did_open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": { "uri": uri, "languageId": "sysml", "version": 1, "text": content }
+        }
+    });
+    send_message(&mut stdin, &did_open.to_string());
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    let model_id = next_id();
+    let model_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": model_id,
+        "method": "sysml/model",
+        "params": {
+            "textDocument": { "uri": uri },
+            "scope": ["graph"]
+        }
+    });
+    send_message(&mut stdin, &model_req.to_string());
+    let model_resp = read_response(&mut stdout, model_id).expect("sysml/model response");
+    let model_json: serde_json::Value = serde_json::from_str(&model_resp).expect("parse sysml/model response");
+    assert_eq!(model_json["id"], model_id);
+    let result = &model_json["result"];
+    let graph = result.get("graph").expect("sysml/model with scope graph should return graph");
+    let nodes = graph["nodes"].as_array().expect("graph should have nodes array");
+    let edges = graph["edges"].as_array().expect("graph should have edges array");
+
+    // State machine container M (state def) and state usages a, b (type "state")
+    let state_def_nodes: Vec<_> = nodes
+        .iter()
+        .filter(|n| n["type"].as_str() == Some("state def"))
+        .collect();
+    let state_usage_nodes: Vec<_> = nodes
+        .iter()
+        .filter(|n| n["type"].as_str() == Some("state"))
+        .collect();
+
+    assert!(
+        state_def_nodes.iter().any(|n| n["name"].as_str() == Some("M")),
+        "graph should have state def M (state machine container), nodes: {:?}",
+        nodes.iter().map(|n| (n["name"].as_str(), n["type"].as_str())).collect::<Vec<_>>()
+    );
+    assert!(
+        state_usage_nodes.len() >= 2,
+        "graph should have state usages a and b (type 'state'), got: {:?}",
+        state_usage_nodes.iter().map(|n| n["name"].as_str()).collect::<Vec<_>>()
+    );
+
+    // Contains edges: M -> a, M -> b
+    let contains_edges: Vec<_> = edges
+        .iter()
+        .filter(|e| e["type"].as_str() == Some("contains"))
+        .collect();
+    let contains_targets: Vec<&str> = contains_edges
+        .iter()
+        .filter_map(|e| e["target"].as_str())
+        .collect();
+    assert!(
+        contains_targets.iter().any(|t| t.ends_with("::a")),
+        "contains edges should link M to state a, got: {:?}",
+        contains_targets
+    );
+    assert!(
+        contains_targets.iter().any(|t| t.ends_with("::b")),
+        "contains edges should link M to state b, got: {:?}",
+        contains_targets
+    );
+
+    // Transition edges: a -> b
+    let transition_edges: Vec<_> = edges
+        .iter()
+        .filter(|e| e["type"].as_str() == Some("transition"))
+        .collect();
+    assert!(
+        !transition_edges.is_empty(),
+        "graph should have transition edges, got: {:?}",
+        edges.iter().map(|e| (e["type"].as_str(), e["source"].as_str(), e["target"].as_str())).collect::<Vec<_>>()
+    );
+
+    let _ = child.kill();
+}
+
 /// sysml/model with scope ["sequenceDiagrams"] returns diagrams with correct action def names.
 /// Regression test for action def name parsing (was "(anonymous)" due to Pest silent terminals).
 #[test]

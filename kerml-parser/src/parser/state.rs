@@ -12,45 +12,41 @@ fn parse_transition_statement(
     source: &str,
     span: pest::Span<'_>,
 ) -> TransitionStatement {
+    const SKIP: &[&str] = &["transition", "accept", "if", "do", "at", "when", "send", "new", "action", "via", "to", "first", "then"];
+
     let mut name = None;
     let mut source_state = None;
     let mut target_state = None;
-    let mut next_is_first = false;
-    let mut next_is_then = false;
+    let mut all_names: Vec<String> = Vec::new();
+
+    fn collect(pair: pest::iterators::Pair<'_, Rule>, names: &mut Vec<String>) {
+        let txt = pair.as_str().trim_matches('\'').trim_matches('"');
+        match pair.as_rule() {
+            Rule::identifier | Rule::name | Rule::qualified_name | Rule::string_literal => {
+                if !txt.is_empty() && !SKIP.contains(&txt) {
+                    names.push(txt.to_string());
+                }
+            }
+            _ => {
+                for inner in pair.into_inner() {
+                    collect(inner, names);
+                }
+            }
+        }
+    }
 
     for pair in pairs {
-        match pair.as_rule() {
-            Rule::identifier => {
-                let txt = pair.as_str();
-                if txt == "first" {
-                    next_is_first = true;
-                } else if txt == "then" {
-                    next_is_then = true;
-                } else if next_is_first {
-                    source_state = Some(txt.trim_matches('\'').trim_matches('"').to_string());
-                    next_is_first = false;
-                } else if next_is_then {
-                    target_state = Some(txt.trim_matches('\'').trim_matches('"').to_string());
-                    next_is_then = false;
-                } else if name.is_none() && !matches!(txt, "transition" | "accept" | "if" | "do" | "at" | "when" | "send" | "new" | "action" | "via" | "to")
-                {
-                    name = Some(txt.trim_matches('\'').trim_matches('"').to_string());
-                }
-            }
-            Rule::name | Rule::qualified_name | Rule::string_literal => {
-                let txt = pair.as_str().trim_matches('\'').trim_matches('"');
-                if next_is_first {
-                    source_state = Some(txt.to_string());
-                    next_is_first = false;
-                } else if next_is_then {
-                    target_state = Some(txt.to_string());
-                    next_is_then = false;
-                } else if name.is_none() {
-                    name = Some(txt.to_string());
-                }
-            }
-            _ => {}
-        }
+        collect(pair, &mut all_names);
+    }
+
+    // Pattern "transition [name] first A then B": last two names are source, target
+    if all_names.len() >= 2 {
+        source_state = Some(all_names[all_names.len() - 2].clone());
+        target_state = Some(all_names.last().cloned().unwrap());
+    }
+    // If 3+ names, first is transition name (e.g. "transition t first a then b")
+    if all_names.len() >= 3 {
+        name = Some(all_names[0].clone());
     }
 
     TransitionStatement {
@@ -85,6 +81,12 @@ pub(super) fn parse_state_def<P: MemberParser>(
             Rule::member => {
                 if let Ok(member) = parser.parse_member(pair.clone().into_inner(), source) {
                     members.push(member);
+                }
+            }
+            Rule::state_def => {
+                match parse_state_def(pair.clone().into_inner(), source, pair.as_span(), parser) {
+                    Ok(s) => members.push(Member::StateDef(s)),
+                    Err(_) => {}
                 }
             }
             Rule::transition_statement => {
