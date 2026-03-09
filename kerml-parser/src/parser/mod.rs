@@ -253,6 +253,34 @@ mod tests {
     }
 
     #[test]
+    fn test_action_def_name_parsing() {
+        let input = r#"
+            package P {
+                action def ExecutePatrol { }
+                action def ExecuteOrbit { in x : Real; }
+                action def ControlGimbal :> BaseAction { }
+            }
+        "#;
+        let doc = parse_sysml(input).expect("parse");
+        let pkg = doc.packages.first().expect("package");
+        let actions: Vec<_> = pkg
+            .members
+            .iter()
+            .filter_map(|m| {
+                if let Member::ActionDef(a) = m {
+                    Some(a)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(actions.len(), 3, "expected 3 action defs");
+        assert_eq!(actions[0].name, "ExecutePatrol", "first action def name");
+        assert_eq!(actions[1].name, "ExecuteOrbit", "second action def name");
+        assert_eq!(actions[2].name, "ControlGimbal", "third action def name (with specializes)");
+    }
+
+    #[test]
     fn test_metadata_parsing_part_usage() {
         // In Elan8 structure, metadata annotations are on separate lines before the part
         // The parser should pick these up and attach them to the part_usage

@@ -710,6 +710,90 @@ fn lsp_sysml_model_graph() {
     let _ = child.kill();
 }
 
+/// sysml/model with scope ["sequenceDiagrams"] returns diagrams with correct action def names.
+/// Regression test for action def name parsing (was "(anonymous)" due to Pest silent terminals).
+#[test]
+fn lsp_sysml_model_sequence_diagrams() {
+    let mut child = spawn_server();
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = child.stdout.take().expect("stdout");
+
+    let uri = "file:///seq_test.sysml";
+    let content = r#"
+        package P {
+            action def ExecutePatrol { perform action ControlGimbal; }
+            action def ControlGimbal { }
+        }
+    "#;
+
+    let init_id = next_id();
+    let init_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": init_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": null,
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "0.1.0" }
+        }
+    });
+    send_message(&mut stdin, &init_req.to_string());
+    let _ = read_message(&mut stdout).expect("init response");
+
+    let initialized = serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} });
+    send_message(&mut stdin, &initialized.to_string());
+
+    let did_open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": { "uri": uri, "languageId": "sysml", "version": 1, "text": content }
+        }
+    });
+    send_message(&mut stdin, &did_open.to_string());
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    let model_id = next_id();
+    let model_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": model_id,
+        "method": "sysml/model",
+        "params": {
+            "textDocument": { "uri": uri },
+            "scope": ["sequenceDiagrams"]
+        }
+    });
+    send_message(&mut stdin, &model_req.to_string());
+    let model_resp = read_response(&mut stdout, model_id).expect("sysml/model response");
+    let model_json: serde_json::Value = serde_json::from_str(&model_resp).expect("parse sysml/model response");
+    let result = &model_json["result"];
+    let diagrams = result["sequenceDiagrams"].as_array().expect("sequenceDiagrams array");
+
+    assert_eq!(diagrams.len(), 2, "expected 2 sequence diagrams");
+    let names: Vec<&str> = diagrams
+        .iter()
+        .filter_map(|d| d["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"ExecutePatrol"),
+        "diagrams should include ExecutePatrol, got: {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"ControlGimbal"),
+        "diagrams should include ControlGimbal, got: {:?}",
+        names
+    );
+    assert!(
+        !names.iter().any(|n| *n == "(anonymous)" || n.to_lowercase().contains("anonymous")),
+        "no diagram should have anonymous name, got: {:?}",
+        names
+    );
+
+    let _ = child.kill();
+}
+
 /// Workspace scan: definition file exists only on disk; we never didOpen it.
 /// Proves the server indexes files from the workspace root and goto_definition resolves across them.
 #[test]

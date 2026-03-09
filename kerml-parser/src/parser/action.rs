@@ -111,23 +111,22 @@ pub(super) fn parse_action_def(pairs: Pairs<'_, Rule>, source: &str, span: pest:
     let mut name = String::new();
     let mut name_position = None;
     let mut body = Vec::new();
-    let mut seen_def = false;
 
     for pair in pairs {
         match pair.as_rule() {
             Rule::name | Rule::qualified_name => {
-                if seen_def && name.is_empty() {
+                if name.is_empty() {
                     let txt = pair.as_str().trim_matches('\'').trim_matches('"');
-                    name = txt.to_string();
-                    name_position = Some(span_to_position(pair.as_span(), source));
+                    if txt != "action" && txt != "def" {
+                        name = txt.to_string();
+                        name_position = Some(span_to_position(pair.as_span(), source));
+                    }
                 }
             }
             Rule::identifier | Rule::string_literal => {
-                let txt = pair.as_str();
-                if txt == "def" {
-                    seen_def = true;
-                } else if seen_def && name.is_empty() && txt != "action" {
-                    name = txt.trim_matches('\'').trim_matches('"').to_string();
+                let txt = pair.as_str().trim_matches('\'').trim_matches('"');
+                if name.is_empty() && txt != "action" && txt != "def" {
+                    name = txt.to_string();
                     name_position = Some(span_to_position(pair.as_span(), source));
                 }
             }
