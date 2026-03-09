@@ -1168,6 +1168,16 @@ let lastPillarStats = {};
         const typeStats = {};
         const PACKAGE_TYPES = new Set(['package', 'library package', 'standard library package']);
         const idToCyId = new Map();
+        const elementTree = graphToElementTree(graph);
+        const idToElement = new Map();
+        function indexByKey(els) {
+            if (!els || !Array.isArray(els)) return;
+            els.forEach((el) => {
+                if (el && el.id) idToElement.set(el.id, el);
+                if (el && el.children) indexByKey(el.children);
+            });
+        }
+        indexByKey(elementTree);
         const filteredNodes = nodes.filter((node) => {
             if (!node || isMetadataElement(node.type)) return false;
             const typeLower = (node.type || '').toLowerCase().trim();
@@ -1190,9 +1200,12 @@ let lastPillarStats = {};
             idToCyId.set(node.id, cyId);
             const category = getCategoryForType((node.type || '').toLowerCase());
             typeStats[category] = (typeStats[category] || 0) + 1;
-            const stereotype = formatSysMLStereotype(node.type);
-            const displayName = node.name || 'Unnamed';
-            const baseLabel = stereotype ? stereotype + ' ' + displayName : displayName;
+            const elementWithChildren = idToElement.get(node.id);
+            const baseLabel = elementWithChildren ? buildEnhancedElementLabel(elementWithChildren) : (() => {
+                const stereotype = formatSysMLStereotype(node.type);
+                const displayName = node.name || 'Unnamed';
+                return stereotype ? stereotype + ' ' + displayName : displayName;
+            })();
             const typeLower = (node.type || '').toLowerCase();
             const isDefinition = typeLower.includes('def') || typeLower.includes('definition');
             const color = getTypeColor(node.type);

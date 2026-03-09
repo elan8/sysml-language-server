@@ -596,6 +596,7 @@ export async function renderElkTreeView(ctx: ElkContext, width: number, height: 
                 if (docLines.length > 0) sections.push({ title: 'Doc', lines: docLines.slice(0, 4) });
                 if (attrLines.length > 0) sections.push({ title: 'Attributes', lines: attrLines.slice(0, 12) });
                 if (partLines.length > 0) sections.push({ title: 'Parts', lines: partLines.slice(0, 10) });
+                if (portLines.length > 0) sections.push({ title: 'Ports', lines: portLines.slice(0, 8) });
                 if (actionLines.length > 0) sections.push({ title: 'Actions', lines: actionLines.slice(0, 6) });
                 if (constraintLines.length > 0) sections.push({ title: 'Constraints', lines: constraintLines.slice(0, 3) });
                 if (otherLines.length > 0) sections.push({ title: 'Other', lines: otherLines.slice(0, 4) });
