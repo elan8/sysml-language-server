@@ -7,11 +7,17 @@
 use kerml_parser::ast::{Member, SourcePosition, SourceRange, SysMLDocument};
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
+use petgraph::Direction;
 use petgraph::Directed;
 use std::collections::HashMap;
 use tower_lsp::lsp_types::{Position, Range, Url};
 
-use crate::language::{format_multiplicity, selection_contained_in, source_position_to_range, source_range_to_range};
+use tower_lsp::lsp_types::SymbolKind;
+
+use crate::language::{
+    format_multiplicity, selection_contained_in, source_position_to_range, source_range_to_range,
+    SymbolEntry,
+};
 
 /// Unique identifier for a node in the semantic graph.
 /// Combines document URI and qualified name for workspace-wide uniqueness.
@@ -178,6 +184,71 @@ impl SemanticGraph {
                     .and_then(|&idx| self.graph.node_weight(idx))
             })
             .filter(|n| n.parent_id.as_ref() == Some(&parent.id))
+            .collect()
+    }
+
+    /// Returns the node for the given NodeId, if it exists.
+    pub fn get_node(&self, id: &NodeId) -> Option<&SemanticNode> {
+        self.node_index_by_id
+            .get(id)
+            .and_then(|&idx| self.graph.node_weight(idx))
+    }
+
+    /// Returns the node whose range contains the given position (first match).
+    pub fn find_node_at_position(&self, uri: &Url, pos: Position) -> Option<&SemanticNode> {
+        self.nodes_for_uri(uri)
+            .into_iter()
+            .find(|n| {
+                let r = &n.range;
+                (pos.line > r.start.line
+                    || (pos.line == r.start.line && pos.character >= r.start.character))
+                    && (pos.line < r.end.line
+                        || (pos.line == r.end.line && pos.character <= r.end.character))
+            })
+    }
+
+    /// Returns target nodes of typing or specializes edges from the given node.
+    pub fn outgoing_typing_or_specializes_targets(
+        &self,
+        node: &SemanticNode,
+    ) -> Vec<&SemanticNode> {
+        let src_idx = match self.node_index_by_id.get(&node.id) {
+            Some(&idx) => idx,
+            None => return Vec::new(),
+        };
+        let id_by_idx: HashMap<NodeIndex, NodeId> = self
+            .node_index_by_id
+            .iter()
+            .map(|(k, v)| (*v, k.clone()))
+            .collect();
+        let mut targets = Vec::new();
+        for edge in self
+            .graph
+            .edges_directed(src_idx, Direction::Outgoing)
+        {
+            if matches!(
+                edge.weight(),
+                RelationshipKind::Typing | RelationshipKind::Specializes
+            ) {
+                if let Some(tgt_id) = id_by_idx.get(&edge.target()) {
+                    if let Some(tgt) = self.get_node(tgt_id) {
+                        targets.push(tgt);
+                    }
+                }
+            }
+        }
+        targets
+    }
+
+    /// Finds nodes with the given qualified name (may exist in multiple URIs).
+    pub fn find_nodes_by_qualified_name(&self, qualified_name: &str) -> Vec<&SemanticNode> {
+        let qn = qualified_name.replace('.', "::");
+        self.nodes_by_uri
+            .keys()
+            .filter_map(|uri| {
+                let id = NodeId::new(uri, &qn);
+                self.get_node(&id)
+            })
             .collect()
     }
 
@@ -841,6 +912,159 @@ fn add_specializes_edge_if_exists(
             break;
         }
     }
+}
+
+/// Adds typing/specializes edges from nodes in the given URI to targets that may be in other files.
+/// Called after merge so the full graph contains nodes from all documents.
+pub fn add_cross_document_edges_for_uri(g: &mut SemanticGraph, uri: &Url) {
+    let node_ids: Vec<NodeId> = g
+        .nodes_by_uri
+        .get(uri)
+        .map(|ids| ids.clone())
+        .unwrap_or_default();
+    let mut work: Vec<(NodeId, String, Option<String>, RelationshipKind)> = Vec::new();
+    for node_id in &node_ids {
+        let Some(node) = g.get_node(node_id) else {
+            continue;
+        };
+        let prefix: Option<String> = node
+            .parent_id
+            .as_ref()
+            .and_then(|pid| g.get_node(pid))
+            .map(|p| p.id.qualified_name.clone());
+
+        if let Some(v) = node
+            .attributes
+            .get("partType")
+            .or_else(|| node.attributes.get("portType"))
+            .or_else(|| node.attributes.get("actorType"))
+        {
+            if let Some(type_ref) = v.as_str() {
+                work.push((node_id.clone(), type_ref.to_string(), prefix.clone(), RelationshipKind::Typing));
+            }
+        }
+        if let Some(v) = node.attributes.get("specializes") {
+            if let Some(s) = v.as_str() {
+                work.push((
+                    node_id.clone(),
+                    s.to_string(),
+                    prefix.clone(),
+                    RelationshipKind::Specializes,
+                ));
+            }
+        }
+    }
+    for (node_id, type_ref, prefix, kind) in work {
+        add_typing_edge_cross_document(g, &node_id, &type_ref, prefix.as_deref(), kind);
+    }
+}
+
+/// Adds a typing or specializes edge when target may be in a different URI.
+fn add_typing_edge_cross_document(
+    g: &mut SemanticGraph,
+    src_id: &NodeId,
+    type_ref: &str,
+    container_prefix: Option<&str>,
+    kind: RelationshipKind,
+) {
+    let src_idx = match g.node_index_by_id.get(src_id) {
+        Some(&idx) => idx,
+        None => return,
+    };
+    for tgt_qualified in type_ref_candidates(container_prefix, type_ref) {
+        let tgt_qualified = normalize_for_lookup(&tgt_qualified);
+        for uri in g.nodes_by_uri.keys() {
+            let tgt_id = NodeId::new(uri, &tgt_qualified);
+            if let Some(&tgt_idx) = g.node_index_by_id.get(&tgt_id) {
+                g.graph.add_edge(src_idx, tgt_idx, kind.clone());
+                return;
+            }
+        }
+    }
+}
+
+/// Maps element_kind from the semantic model to LSP SymbolKind.
+fn element_kind_to_symbol_kind(kind: &str) -> SymbolKind {
+    match kind {
+        "package" => SymbolKind::MODULE,
+        "part def" => SymbolKind::CLASS,
+        "part" => SymbolKind::VARIABLE,
+        "attribute def" => SymbolKind::PROPERTY,
+        "attribute" => SymbolKind::PROPERTY,
+        "port def" => SymbolKind::INTERFACE,
+        "port" => SymbolKind::INTERFACE,
+        "interface" => SymbolKind::INTERFACE,
+        "connection" => SymbolKind::VARIABLE,
+        "item def" => SymbolKind::CONSTANT,
+        "item" => SymbolKind::CONSTANT,
+        "requirement def" => SymbolKind::STRING,
+        "requirement" => SymbolKind::STRING,
+        "action def" => SymbolKind::FUNCTION,
+        "state def" => SymbolKind::ENUM_MEMBER,
+        "state" => SymbolKind::ENUM_MEMBER,
+        "use case def" => SymbolKind::EVENT,
+        "actor def" => SymbolKind::CONSTRUCTOR,
+        _ => SymbolKind::NULL,
+    }
+}
+
+/// Builds a signature string from node attributes (partType, specializes, etc.).
+fn signature_from_node(node: &SemanticNode) -> Option<String> {
+    let kind = node.element_kind.as_str();
+    let mult = node
+        .attributes
+        .get("multiplicity")
+        .and_then(|v| v.as_str())
+        .map(|m| format!(" {}", m))
+        .unwrap_or_default();
+    let (type_attr, type_suffix) = match kind {
+        "part def" | "part" => (
+            node.attributes.get("partType").or_else(|| node.attributes.get("specializes")),
+            " : ",
+        ),
+        "attribute def" | "attribute" => (node.attributes.get("attributeType"), " : "),
+        "port def" | "port" => (node.attributes.get("portType"), " : "),
+        "actor def" => (node.attributes.get("actorType"), " : "),
+        "item def" => (node.attributes.get("specializes"), " :> "),
+        "item" => (node.attributes.get("itemType"), " : "),
+        _ => (None, ""),
+    };
+    let type_part = type_attr
+        .and_then(|v| v.as_str())
+        .map(|t| format!("{}{}", type_suffix, t))
+        .unwrap_or_default();
+    Some(format!(
+        "{} {}{}{};",
+        kind,
+        node.name,
+        type_part,
+        mult
+    ))
+}
+
+/// Collects symbol entries for a URI from the semantic graph (replaces AST-based collect_symbol_entries).
+pub fn symbol_entries_for_uri(graph: &SemanticGraph, uri: &Url) -> Vec<SymbolEntry> {
+    let mut out = Vec::new();
+    for node in graph.nodes_for_uri(uri) {
+        let container_name = node
+            .parent_id
+            .as_ref()
+            .and_then(|pid| graph.get_node(pid))
+            .map(|p| p.name.clone());
+        let description = format!("{} '{}'", node.element_kind, node.name);
+        let signature = signature_from_node(node);
+        out.push(SymbolEntry {
+            name: node.name.clone(),
+            uri: node.id.uri.clone(),
+            range: node.range,
+            kind: element_kind_to_symbol_kind(&node.element_kind),
+            container_name,
+            detail: Some(node.element_kind.clone()),
+            description: Some(description),
+            signature,
+        });
+    }
+    out
 }
 
 /// Returns true if the edge was added.

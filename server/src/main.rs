@@ -58,7 +58,7 @@ use walkdir::WalkDir;
 use serde::Serialize;
 
 use language::{
-    collect_definition_ranges, collect_document_symbols, collect_symbol_entries,
+    collect_definition_ranges, collect_document_symbols,
     completion_prefix, collect_folding_ranges,
     find_reference_ranges, format_document, is_reserved_keyword, keyword_doc, keyword_hover_markdown,
     line_prefix_at_position, suggest_wrap_in_package, sysml_keywords, word_at_position, SymbolEntry,
@@ -387,6 +387,7 @@ fn update_semantic_graph_for_uri(
     if let Some(d) = doc {
         let new_graph = semantic_model::build_graph_from_doc(d, uri);
         state.semantic_graph.merge(new_graph);
+        semantic_model::add_cross_document_edges_for_uri(&mut state.semantic_graph, uri);
     }
 }
 
@@ -559,10 +560,11 @@ impl LanguageServer for Backend {
             .await
             .unwrap_or_default();
             let mut st = state.write().await;
+            let mut uris_loaded = Vec::new();
             for (uri, content) in entries {
                 let parsed = kerml_parser::parse_sysml(&content).ok();
-                let new_entries = parsed.as_ref().map(|doc| collect_symbol_entries(doc, &uri));
                 update_semantic_graph_for_uri(&mut st, &uri, parsed.as_ref());
+                uris_loaded.push(uri.clone());
                 st.index.insert(
                     uri.clone(),
                     IndexEntry {
@@ -570,7 +572,11 @@ impl LanguageServer for Backend {
                         parsed,
                     },
                 );
-                update_symbol_table_for_uri(&mut st, &uri, new_entries.as_deref());
+                let new_entries = semantic_model::symbol_entries_for_uri(&st.semantic_graph, &uri);
+                update_symbol_table_for_uri(&mut st, &uri, Some(&new_entries));
+            }
+            for u in &uris_loaded {
+                semantic_model::add_cross_document_edges_for_uri(&mut st.semantic_graph, u);
             }
         });
     }
@@ -585,7 +591,6 @@ impl LanguageServer for Backend {
         let parsed = kerml_parser::parse_sysml(&text).ok();
         {
             let mut state = self.state.write().await;
-            let new_entries = parsed.as_ref().map(|doc| collect_symbol_entries(doc, &uri));
             update_semantic_graph_for_uri(&mut state, &uri, parsed.as_ref());
             state.index.insert(
                 uri.clone(),
@@ -594,7 +599,8 @@ impl LanguageServer for Backend {
                     parsed,
                 },
             );
-            update_symbol_table_for_uri(&mut state, &uri, new_entries.as_deref());
+            let new_entries = semantic_model::symbol_entries_for_uri(&state.semantic_graph, &uri);
+            update_symbol_table_for_uri(&mut state, &uri, Some(&new_entries));
         }
         self.publish_diagnostics_for_document(uri, &text).await;
     }
@@ -603,7 +609,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         {
             let mut state = self.state.write().await;
-            let (should_update, new_entries) = if let Some(entry) = state.index.get_mut(&uri) {
+            let should_update = if let Some(entry) = state.index.get_mut(&uri) {
                 for change in params.content_changes {
                     if let Some(range) = change.range {
                         if let Some(new_text) =
@@ -616,16 +622,11 @@ impl LanguageServer for Backend {
                     }
                 }
                 entry.parsed = kerml_parser::parse_sysml(&entry.content).ok();
-                let new_entries = entry
-                    .parsed
-                    .as_ref()
-                    .map(|doc| collect_symbol_entries(doc, &uri));
-                (true, new_entries)
+                true
             } else {
-                (false, None)
+                false
             };
             if should_update {
-                update_symbol_table_for_uri(&mut state, &uri, new_entries.as_deref());
                 let doc_for_graph = state
                     .index
                     .get(&uri)
@@ -634,9 +635,15 @@ impl LanguageServer for Backend {
                 if let Some(new_graph) = doc_for_graph {
                     state.semantic_graph.remove_nodes_for_uri(&uri);
                     state.semantic_graph.merge(new_graph);
+                    semantic_model::add_cross_document_edges_for_uri(
+                        &mut state.semantic_graph,
+                        &uri,
+                    );
                 } else {
                     state.semantic_graph.remove_nodes_for_uri(&uri);
                 }
+                let new_entries = semantic_model::symbol_entries_for_uri(&state.semantic_graph, &uri);
+                update_symbol_table_for_uri(&mut state, &uri, Some(&new_entries));
             }
         }
         let state = self.state.read().await;
@@ -668,8 +675,6 @@ impl LanguageServer for Backend {
                 if let Ok(path) = event.uri.to_file_path() {
                     if let Ok(content) = tokio::fs::read_to_string(&path).await {
                         let parsed = kerml_parser::parse_sysml(&content).ok();
-                        let new_entries =
-                            parsed.as_ref().map(|doc| collect_symbol_entries(doc, &event.uri));
                         update_semantic_graph_for_uri(
                             &mut state,
                             &event.uri,
@@ -679,10 +684,14 @@ impl LanguageServer for Backend {
                             event.uri.clone(),
                             IndexEntry { content, parsed },
                         );
+                        let new_entries = semantic_model::symbol_entries_for_uri(
+                            &state.semantic_graph,
+                            &event.uri,
+                        );
                         update_symbol_table_for_uri(
                             &mut state,
                             &event.uri,
-                            new_entries.as_deref(),
+                            Some(&new_entries),
                         );
                     }
                 }
@@ -752,10 +761,11 @@ impl LanguageServer for Backend {
             .await
             .unwrap_or_default();
             let mut st = state.write().await;
+            let mut uris_loaded = Vec::new();
             for (uri, content) in entries {
                 let parsed = kerml_parser::parse_sysml(&content).ok();
-                let new_entries = parsed.as_ref().map(|doc| collect_symbol_entries(doc, &uri));
                 update_semantic_graph_for_uri(&mut st, &uri, parsed.as_ref());
+                uris_loaded.push(uri.clone());
                 st.index.insert(
                     uri.clone(),
                     IndexEntry {
@@ -763,7 +773,11 @@ impl LanguageServer for Backend {
                         parsed,
                     },
                 );
-                update_symbol_table_for_uri(&mut st, &uri, new_entries.as_deref());
+                let new_entries = semantic_model::symbol_entries_for_uri(&st.semantic_graph, &uri);
+                update_symbol_table_for_uri(&mut st, &uri, Some(&new_entries));
+            }
+            for u in &uris_loaded {
+                semantic_model::add_cross_document_edges_for_uri(&mut st.semantic_graph, u);
             }
         });
     }
@@ -893,7 +907,20 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        // Look up in symbol table: same file first, then rest of workspace.
+        // 2.2: Try graph-based resolution via typing/specializes edges (works cross-file).
+        if let Some(node) = state.semantic_graph.find_node_at_position(&uri, pos) {
+            for target in state.semantic_graph.outgoing_typing_or_specializes_targets(node) {
+                if target.name == word || target.id.qualified_name.ends_with(&format!("::{}", word))
+                {
+                    return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                        uri: target.id.uri.clone(),
+                        range: target.range,
+                    })));
+                }
+            }
+        }
+
+        // Fall back to symbol table (same file first, then rest of workspace).
         if let Some(entry) = state
             .symbol_table
             .iter()
