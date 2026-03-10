@@ -1,0 +1,534 @@
+/**
+ * General View renderer - D3 + elkjs with IBD-style blocks.
+ * Uses elkjs for graph layout and D3 for SVG rendering.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+import type { RenderContext } from '../types';
+import { GENERAL_VIEW_PALETTE } from '../constants';
+import { formatSysMLStereotype } from '../shared';
+import { getTypeColor } from '../shared';
+
+declare const d3: any;
+declare const ELK: any;
+
+const NODE_WIDTH = 200;
+const NODE_HEIGHT_BASE = 70;
+const LINE_HEIGHT = 12;
+const HEADER_HEIGHT = 38;
+const TYPED_BY_HEIGHT = 14;
+const SECTION_GAP = 4;
+
+export interface GeneralViewContext extends RenderContext {
+    buildGeneralViewGraph: (data: any) => { elements: any[]; typeStats: Record<string, number> };
+    renderGeneralChips: (typeStats: Record<string, number>) => void;
+    elkWorkerUrl: string;
+}
+
+/**
+ * Collect compartment content (Parts, Ports, Attributes, etc.) from element.
+ */
+function collectNodeContent(element: any): Array<{ title: string; lines: string[] }> {
+    const sections: Array<{ title: string; lines: string[] }> = [];
+    const attrLines: string[] = [];
+    const portLines: string[] = [];
+    const partLines: string[] = [];
+    const actionLines: string[] = [];
+    const otherLines: string[] = [];
+
+    if (!element?.children?.length) {
+        return sections;
+    }
+
+    const typeLower = (element.type || '').toLowerCase();
+    const isRequirement = typeLower.includes('requirement');
+
+    element.children.forEach((child: any) => {
+        if (!child?.name) return;
+        const cType = (child.type || '').toLowerCase();
+        if (cType.includes('package') || cType.includes('state')) return;
+
+        if (cType === 'attribute' || cType.includes('attribute')) {
+            const dataType = child.attributes?.get ? child.attributes.get('dataType') : (child.attributes?.dataType);
+            const typeStr = dataType ? ' : ' + String(dataType).split('::').pop() : '';
+            attrLines.push('  ' + child.name + typeStr);
+        } else if (cType === 'port' || cType.includes('port')) {
+            const portType = child.attributes?.get ? child.attributes.get('portType') : (child.attributes?.portType);
+            const pTypeStr = portType ? ' : ' + portType : '';
+            portLines.push('  ' + child.name + pTypeStr);
+        } else if (cType.includes('part')) {
+            partLines.push('  ' + child.name);
+        } else if (cType.includes('action')) {
+            actionLines.push('  ' + child.name);
+        } else if (cType.includes('requirement')) {
+            otherLines.push('  ' + child.name);
+        } else if (cType.includes('interface') || cType.includes('connect')) {
+            otherLines.push('  ' + child.name);
+        }
+    });
+
+    if (element.ports?.length) {
+        element.ports.forEach((p: any) => {
+            const pName = typeof p === 'string' ? p : (p?.name || 'port');
+            if (!portLines.some((l) => l.includes(pName))) {
+                portLines.push('  ' + pName);
+            }
+        });
+    }
+
+    if (isRequirement) {
+        if (attrLines.length) sections.push({ title: 'Attributes', lines: attrLines.slice(0, 6) });
+        if (otherLines.length) sections.push({ title: 'Nested', lines: otherLines.slice(0, 4) });
+    } else {
+        if (attrLines.length) sections.push({ title: 'Attributes', lines: attrLines.slice(0, 8) });
+        if (partLines.length) sections.push({ title: 'Parts', lines: partLines.slice(0, 8) });
+        if (portLines.length) sections.push({ title: 'Ports', lines: portLines.slice(0, 6) });
+        if (actionLines.length) sections.push({ title: 'Actions', lines: actionLines.slice(0, 4) });
+        if (otherLines.length) sections.push({ title: 'Other', lines: otherLines.slice(0, 4) });
+    }
+    return sections;
+}
+
+function computeNodeHeight(element: any, hasTypedBy: boolean, sections: Array<{ title: string; lines: string[] }>): number {
+    let h = HEADER_HEIGHT;
+    if (hasTypedBy) h += TYPED_BY_HEIGHT;
+    sections.forEach((s) => {
+        h += 14;
+        h += s.lines.length * LINE_HEIGHT;
+        h += SECTION_GAP;
+    });
+    return Math.max(NODE_HEIGHT_BASE, h + 8);
+}
+
+function computeOrthogonalPath(
+    x1: number, y1: number, x2: number, y2: number,
+    options: { offset?: number; srcRect?: any; tgtRect?: any } = {}
+): { pathD: string; labelX: number; labelY: number } {
+    const offset = options.offset ?? 0;
+    const srcRect = options.srcRect;
+    const tgtRect = options.tgtRect;
+
+    const srcCx = srcRect ? srcRect.x + srcRect.width / 2 : x1;
+    const srcCy = srcRect ? srcRect.y + srcRect.height / 2 : y1;
+    const tgtCx = tgtRect ? tgtRect.x + tgtRect.width / 2 : x2;
+    const tgtCy = tgtRect ? tgtRect.y + tgtRect.height / 2 : y2;
+
+    const dx = tgtCx - srcCx;
+    const dy = tgtCy - srcCy;
+
+    let ox1 = x1, oy1 = y1, ox2 = x2, oy2 = y2;
+    if (srcRect) {
+        if (Math.abs(dx) > Math.abs(dy)) {
+            ox1 = dx > 0 ? srcRect.x + srcRect.width : srcRect.x;
+            oy1 = srcCy + offset;
+        } else {
+            ox1 = srcCx + offset;
+            oy1 = dy > 0 ? srcRect.y + srcRect.height : srcRect.y;
+        }
+    }
+    if (tgtRect) {
+        if (Math.abs(dx) > Math.abs(dy)) {
+            ox2 = dx > 0 ? tgtRect.x : tgtRect.x + tgtRect.width;
+            oy2 = tgtCy + offset;
+        } else {
+            ox2 = tgtCx + offset;
+            oy2 = dy > 0 ? tgtRect.y : tgtRect.y + tgtRect.height;
+        }
+    }
+
+    const distX = Math.abs(ox2 - ox1);
+    const distY = Math.abs(oy2 - oy1);
+    const wpSpread = offset * 0.4;
+
+    let pathD: string;
+    let labelX: number, labelY: number;
+
+    if (distX > distY) {
+        const midX = (ox1 + ox2) / 2 + wpSpread;
+        pathD = 'M' + ox1 + ',' + oy1 + ' L' + midX + ',' + oy1 + ' L' + midX + ',' + oy2 + ' L' + ox2 + ',' + oy2;
+        labelX = midX;
+        labelY = (oy1 + oy2) / 2 - 8 + offset * 0.5;
+    } else {
+        const midY = (oy1 + oy2) / 2 + wpSpread;
+        pathD = 'M' + ox1 + ',' + oy1 + ' L' + ox1 + ',' + midY + ' L' + ox2 + ',' + midY + ' L' + ox2 + ',' + oy2;
+        labelX = (ox1 + ox2) / 2 + offset * 0.5;
+        labelY = midY - 8;
+    }
+    return { pathD, labelX, labelY };
+}
+
+/**
+ * Build SVG path from ELK edge sections (startPoint, endPoint, bendPoints).
+ * Returns null if sections are missing or invalid.
+ */
+function pathFromElkSections(sections: Array<{ startPoint?: { x: number; y: number }; endPoint?: { x: number; y: number }; bendPoints?: Array<{ x: number; y: number }> }> | undefined): string | null {
+    if (!sections || sections.length === 0) return null;
+    const parts: string[] = [];
+    for (const sec of sections) {
+        const sp = sec.startPoint;
+        const ep = sec.endPoint;
+        const bp = sec.bendPoints || [];
+        if (!sp || !ep) return null;
+        parts.push('M' + sp.x + ',' + sp.y);
+        for (const p of bp) {
+            parts.push('L' + p.x + ',' + p.y);
+        }
+        parts.push('L' + ep.x + ',' + ep.y);
+    }
+    return parts.join(' ');
+}
+
+export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): Promise<void> {
+    const { width, height, svg, g, postMessage, renderPlaceholder, clearVisualHighlights } = ctx;
+
+    const result = ctx.buildGeneralViewGraph(data);
+    const { elements, typeStats } = result;
+
+    ctx.renderGeneralChips(typeStats);
+
+    const cyNodes = elements.filter((el: any) => el.group === 'nodes');
+    const cyEdges = elements.filter((el: any) => el.group === 'edges');
+
+    if (cyNodes.length === 0) {
+        renderPlaceholder(width, height, 'General View',
+            'No matching elements to display.\\n\\nTry enabling more categories using the filter chips above.',
+            data);
+        return;
+    }
+
+    if (typeof ELK === 'undefined') {
+        renderPlaceholder(width, height, 'General View',
+            'ELK layout library not loaded. Please refresh the view.',
+            data);
+        return;
+    }
+
+    let elk: any;
+    try {
+        elk = new ELK({ workerUrl: ctx.elkWorkerUrl || undefined });
+    } catch (e) {
+        console.warn('[General View] ELK worker init failed, layout may be unavailable:', e);
+    }
+
+    const nodeWidth = NODE_WIDTH;
+
+    const nodeDataMap = new Map<string, { sections: Array<{ title: string; lines: string[] }>; height: number; typedByName: string | null }>();
+    cyNodes.forEach((el: any) => {
+        const element = el.data.element;
+        const sections = element ? collectNodeContent(element) : [];
+        let typedByName: string | null = null;
+        if (element) {
+            const attrs = element.attributes;
+            typedByName = (attrs && (typeof attrs.get === 'function' ? attrs.get('partType') || attrs.get('type') || attrs.get('typedBy') : attrs.partType || attrs.type || attrs.typedBy)) || null;
+            if (!typedByName && element.partType) typedByName = element.partType;
+            if (!typedByName && element.typings?.length) typedByName = String(element.typings[0]).replace(/^[:~]+/, '').trim();
+            if (!typedByName && element.typing) typedByName = String(element.typing).replace(/^[:~]+/, '').trim();
+        }
+        const nodeHeight = computeNodeHeight(element, !!typedByName, sections);
+        nodeDataMap.set(el.data.id, { sections, height: nodeHeight, typedByName });
+    });
+
+    const elkGraph = {
+        id: 'root',
+        layoutOptions: {
+            'elk.algorithm': 'layered',
+            'elk.direction': 'DOWN',
+            'elk.spacing.nodeNode': '150',
+            'elk.layered.spacing.nodeNodeBetweenLayers': '180',
+            'elk.spacing.edgeNode': '90',
+            'elk.spacing.edgeEdge': '80',
+            'elk.edgeRouting': 'ORTHOGONAL',
+            'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+            'elk.separateConnectedComponents': 'true',
+            'elk.aspectRatio': '1.4',
+            'elk.padding': '[top=80,left=80,bottom=80,right=80]',
+            'org.eclipse.elk.portConstraints': 'FIXED_SIDE',
+            'org.eclipse.elk.json.edgeCoords': 'ROOT'
+        },
+        children: cyNodes.map((el: any) => {
+            const nd = nodeDataMap.get(el.data.id);
+            const nodeHeight = nd?.height ?? NODE_HEIGHT_BASE;
+            return {
+                id: el.data.id,
+                width: nodeWidth,
+                height: nodeHeight,
+                ports: [
+                    { id: el.data.id + '_south', layoutOptions: { 'org.eclipse.elk.port.side': 'SOUTH' } },
+                    { id: el.data.id + '_north', layoutOptions: { 'org.eclipse.elk.port.side': 'NORTH' } }
+                ]
+            };
+        }),
+        edges: cyEdges.map((el: any, idx: number) => ({
+            id: el.data.id || ('edge-' + idx),
+            sources: [el.data.source + '_south'],
+            targets: [el.data.target + '_north']
+        }))
+    };
+
+    let laidOut: any;
+    try {
+        laidOut = elk ? await elk.layout(elkGraph) : null;
+    } catch (e) {
+        console.error('[General View] ELK layout failed:', e);
+    }
+
+    const nodePositions = new Map<string, { x: number; y: number; width: number; height: number }>();
+    if (laidOut && laidOut.children) {
+        laidOut.children.forEach((child: any) => {
+            const nd = nodeDataMap.get(child.id);
+            nodePositions.set(child.id, {
+                x: child.x ?? 0,
+                y: child.y ?? 0,
+                width: child.width ?? nodeWidth,
+                height: child.height ?? nd?.height ?? NODE_HEIGHT_BASE
+            });
+        });
+    } else {
+        let x = 80, y = 80;
+        cyNodes.forEach((el: any, i: number) => {
+            const nd = nodeDataMap.get(el.data.id);
+            const h = nd?.height ?? NODE_HEIGHT_BASE;
+            nodePositions.set(el.data.id, { x, y, width: nodeWidth, height: h });
+            x += nodeWidth + 60;
+            if (x > width - nodeWidth - 80) {
+                x = 80;
+                y += h + 80;
+            }
+        });
+    }
+
+    g.selectAll('*').remove();
+
+    const defs = svg.select('defs').empty() ? svg.append('defs') : svg.select('defs');
+    defs.selectAll('#general-d3-arrow').remove();
+    defs.append('marker')
+        .attr('id', 'general-d3-arrow')
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 8)
+        .attr('refY', 0)
+        .attr('markerWidth', 5)
+        .attr('markerHeight', 5)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('d', 'M0,-4L10,0L0,4')
+        .style('fill', 'var(--vscode-charts-blue)');
+
+    defs.selectAll('#general-d3-specializes').remove();
+    defs.append('marker')
+        .attr('id', 'general-d3-specializes')
+        .attr('viewBox', '0 -6 12 12')
+        .attr('refX', 11)
+        .attr('refY', 0)
+        .attr('markerWidth', 8)
+        .attr('markerHeight', 8)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('d', 'M0,0L10,-4L10,4Z')
+        .style('fill', GENERAL_VIEW_PALETTE.structural.port);
+
+    const edgeGroup = g.append('g').attr('class', 'general-edges');
+    const nodeGroup = g.append('g').attr('class', 'general-nodes');
+
+    const laidOutEdges = laidOut?.edges ?? [];
+    cyEdges.forEach((el: any, edgeIdx: number) => {
+        const srcPos = nodePositions.get(el.data.source);
+        const tgtPos = nodePositions.get(el.data.target);
+        if (!srcPos || !tgtPos) return;
+
+        const elkEdge = laidOutEdges[edgeIdx];
+        let pathD: string;
+        if (elkEdge?.sections) {
+            const elkPath = pathFromElkSections(elkEdge.sections);
+            pathD = elkPath ?? computeOrthogonalPath(0, 0, 0, 0, {
+                srcRect: { x: srcPos.x, y: srcPos.y, width: srcPos.width, height: srcPos.height },
+                tgtRect: { x: tgtPos.x, y: tgtPos.y, width: tgtPos.width, height: tgtPos.height }
+            }).pathD;
+        } else {
+            const { pathD: fallbackPath } = computeOrthogonalPath(0, 0, 0, 0, {
+                srcRect: { x: srcPos.x, y: srcPos.y, width: srcPos.width, height: srcPos.height },
+                tgtRect: { x: tgtPos.x, y: tgtPos.y, width: tgtPos.width, height: tgtPos.height }
+            });
+            pathD = fallbackPath;
+        }
+
+        const relType = (el.data.relType || el.data.type || 'relationship').toLowerCase();
+        let strokeColor = GENERAL_VIEW_PALETTE.other.default;
+        let strokeDash = 'none';
+        let markerEnd = 'url(#general-d3-arrow)';
+        let strokeWidth = '2px';
+
+        if (relType === 'specializes') {
+            strokeColor = GENERAL_VIEW_PALETTE.structural.port;
+            markerEnd = 'url(#general-d3-specializes)';
+        } else if (relType === 'typing') {
+            strokeColor = GENERAL_VIEW_PALETTE.requirements.requirement;
+            strokeDash = '5,3';
+        } else if (relType === 'hierarchy' || relType === 'contains') {
+            strokeColor = GENERAL_VIEW_PALETTE.structural.part;
+        } else if (relType === 'connection' || relType === 'connect') {
+            strokeColor = GENERAL_VIEW_PALETTE.structural.interface;
+        } else if (relType === 'bind' || relType === 'binding') {
+            strokeColor = '#808080';
+            strokeDash = '2,2';
+            markerEnd = 'none';
+        } else if (relType === 'allocate' || relType === 'allocation') {
+            strokeColor = GENERAL_VIEW_PALETTE.other.allocation;
+            strokeDash = '8,4';
+        }
+
+        edgeGroup.append('path')
+            .attr('d', pathD)
+            .attr('class', 'general-connector')
+            .attr('data-source', el.data.source)
+            .attr('data-target', el.data.target)
+            .attr('data-type', relType)
+            .style('fill', 'none')
+            .style('stroke', strokeColor)
+            .style('stroke-width', strokeWidth)
+            .style('stroke-dasharray', strokeDash)
+            .style('opacity', 0.85)
+            .style('marker-end', markerEnd)
+            .style('cursor', 'pointer');
+    });
+
+    const statusEl = document.getElementById('status-text');
+    if (statusEl) statusEl.textContent = 'General View • Tap element to highlight, double-tap to jump';
+
+    let lastTappedId: string | null = null;
+    let tapTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    cyNodes.forEach((el: any) => {
+        const pos = nodePositions.get(el.data.id);
+        if (!pos) return;
+
+        const d = el.data;
+        const nd = nodeDataMap.get(d.id);
+        const sections = nd?.sections ?? [];
+        const typedByName = nd?.typedByName ?? null;
+
+        const isDefinition = d.isDefinition === true;
+        const typeColor = d.color || getTypeColor(d.sysmlType);
+        const stereoDisplay = (d.sysmlType || 'element').toLowerCase();
+        const displayName = (d.elementName || d.label || 'Unnamed').toString();
+        const truncatedName = displayName.length > 24 ? displayName.substring(0, 22) + '..' : displayName;
+
+        const nodeG = nodeGroup.append('g')
+            .attr('class', 'general-node elk-node' + (isDefinition ? ' definition-node' : ' usage-node'))
+            .attr('transform', 'translate(' + pos.x + ',' + pos.y + ')')
+            .attr('data-element-name', d.elementName || d.label)
+            .style('cursor', 'pointer');
+
+        const strokeColor = typeColor;
+        const strokeW = isDefinition ? '3px' : '2px';
+        nodeG.append('rect')
+            .attr('width', pos.width)
+            .attr('height', pos.height)
+            .attr('rx', isDefinition ? 4 : 8)
+            .attr('class', 'graph-node-background node-background')
+            .attr('data-original-stroke', strokeColor)
+            .attr('data-original-width', strokeW)
+            .style('fill', 'var(--vscode-editor-background)')
+            .style('stroke', strokeColor)
+            .style('stroke-width', strokeW)
+            .style('stroke-dasharray', isDefinition ? '6,3' : 'none');
+
+        nodeG.append('rect')
+            .attr('width', pos.width)
+            .attr('height', 5)
+            .attr('rx', 2)
+            .style('fill', typeColor);
+
+        nodeG.append('rect')
+            .attr('y', 5)
+            .attr('width', pos.width)
+            .attr('height', typedByName ? 36 : 28)
+            .style('fill', 'var(--vscode-button-secondaryBackground)');
+
+        const stereo = formatSysMLStereotype(d.sysmlType) || ('«' + stereoDisplay + '»');
+        nodeG.append('text')
+            .attr('x', pos.width / 2)
+            .attr('y', 17)
+            .attr('text-anchor', 'middle')
+            .text(stereo)
+            .style('font-size', '9px')
+            .style('fill', typeColor);
+
+        nodeG.append('text')
+            .attr('class', 'node-name-text')
+            .attr('x', pos.width / 2)
+            .attr('y', 31)
+            .attr('text-anchor', 'middle')
+            .text(truncatedName)
+            .style('font-size', '11px')
+            .style('font-weight', 'bold')
+            .style('fill', 'var(--vscode-editor-foreground)');
+
+        if (typedByName) {
+            const tbText = (typedByName.length > 20 ? typedByName.substring(0, 18) + '..' : typedByName);
+            nodeG.append('text')
+                .attr('x', pos.width / 2)
+                .attr('y', 43)
+                .attr('text-anchor', 'middle')
+                .text(': ' + tbText)
+                .style('font-size', '10px')
+                .style('font-style', 'italic')
+                .style('fill', '#569CD6');
+        }
+
+        let contentY = typedByName ? 50 : 38;
+        sections.forEach((sec) => {
+            nodeG.append('text')
+                .attr('x', 6)
+                .attr('y', contentY)
+                .text(sec.title)
+                .style('font-size', '9px')
+                .style('font-weight', '600')
+                .style('fill', 'var(--vscode-descriptionForeground)');
+            contentY += 12;
+            sec.lines.forEach((line) => {
+                const truncated = line.length > 26 ? line.substring(0, 24) + '..' : line;
+                nodeG.append('text')
+                    .attr('x', 6)
+                    .attr('y', contentY)
+                    .text(truncated)
+                    .style('font-size', '9px')
+                    .style('fill', 'var(--vscode-descriptionForeground)');
+                contentY += LINE_HEIGHT;
+            });
+            contentY += SECTION_GAP;
+        });
+
+        nodeG.on('click', function (event: any) {
+            event.stopPropagation();
+            clearVisualHighlights();
+            g.selectAll('.general-node').select('.graph-node-background').each(function (this: any) {
+                const r = d3.select(this);
+                r.style('stroke', r.attr('data-original-stroke'))
+                    .style('stroke-width', r.attr('data-original-width'));
+            });
+            nodeG.select('.graph-node-background')
+                .style('stroke', '#FFD700')
+                .style('stroke-width', '4px');
+
+            const statusEl = document.getElementById('status-text');
+            if (statusEl) statusEl.textContent = (d.label || d.elementName) + ' [' + (d.sysmlType || 'element') + ']';
+
+            const elementName = d.elementName;
+            const nodeId = d.id;
+            if (elementName) {
+                if (lastTappedId === nodeId && tapTimeout) {
+                    clearTimeout(tapTimeout);
+                    tapTimeout = null;
+                    lastTappedId = null;
+                    postMessage({ command: 'jumpToElement', elementName });
+                } else {
+                    lastTappedId = nodeId;
+                    tapTimeout = setTimeout(() => {
+                        tapTimeout = null;
+                        lastTappedId = null;
+                    }, 250);
+                }
+            }
+        });
+    });
+}

@@ -2307,98 +2307,6 @@
   }
 
   // src/visualization/webview/elk.ts
-  function renderGeneralViewCytoscape(ctx, width, height, data) {
-    ctx.setSysMLToolbarVisible(true);
-    const container = document.getElementById("visualization");
-    if (!container) {
-      return;
-    }
-    container.innerHTML = "";
-    const dataGraph = data?.graph;
-    const hasElements = dataGraph?.nodes?.length > 0 || dataGraph?.edges?.length > 0;
-    if (!hasElements) {
-      const msg = document.createElement("div");
-      msg.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--vscode-descriptionForeground);text-align:center;padding:2rem;";
-      msg.innerHTML = '<strong style="color:var(--vscode-editor-foreground);font-size:1.1rem;">General View</strong><p style="margin:1rem 0;">No elements to display.</p><p>The parser did not return any elements.</p>';
-      container.appendChild(msg);
-      return;
-    }
-    const cyContainer = document.createElement("div");
-    cyContainer.id = "sysml-cytoscape";
-    cyContainer.style.width = "100%";
-    cyContainer.style.height = "100%";
-    cyContainer.style.position = "absolute";
-    cyContainer.style.top = "0";
-    cyContainer.style.left = "0";
-    container.appendChild(cyContainer);
-    const builtGraph = ctx.buildGeneralViewGraph(data);
-    ctx.renderGeneralChips(builtGraph.typeStats);
-    const nodeCount = builtGraph.elements.filter((el) => el.group === "nodes").length;
-    if (nodeCount === 0) {
-      const msg = document.createElement("div");
-      msg.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--vscode-descriptionForeground);text-align:center;padding:2rem;";
-      msg.innerHTML = '<strong style="color:var(--vscode-editor-foreground);font-size:1.1rem;">General View</strong><p style="margin:1rem 0;">No matching elements to display.</p><p>Try enabling more categories using the filter chips above.</p>';
-      container.appendChild(msg);
-      return;
-    }
-    const existingCy = ctx.getCy();
-    if (existingCy) {
-      existingCy.destroy();
-    }
-    const cy2 = cytoscape({
-      container: cyContainer,
-      elements: builtGraph.elements,
-      style: ctx.getGeneralViewStyles(),
-      minZoom: MIN_SYSML_ZOOM,
-      maxZoom: MAX_SYSML_ZOOM,
-      wheelSensitivity: 1,
-      boxSelectionEnabled: false,
-      autounselectify: true
-    });
-    ctx.setCy(cy2);
-    cy2.on("zoom", () => {
-      window.userHasManuallyZoomed = true;
-    });
-    cy2.on("tap", (event) => {
-      if (event.target === cy2) {
-        cy2.elements().removeClass("highlighted-sysml");
-        ctx.clearVisualHighlights();
-      }
-    });
-    let tapTimeout = null;
-    let lastTapped = null;
-    cy2.on("tap", 'node[type = "element"]', (event) => {
-      const node = event.target;
-      cy2.elements().removeClass("highlighted-sysml");
-      node.addClass("highlighted-sysml");
-      const statusEl = document.getElementById("status-text");
-      if (statusEl) statusEl.textContent = node.data("label") + " [" + node.data("sysmlType") + "]";
-      ctx.centerOnNode(node);
-      if (tapTimeout && lastTapped === node.id()) {
-        clearTimeout(tapTimeout);
-        tapTimeout = null;
-        lastTapped = null;
-        const elementNameToJump = node.data("elementName");
-        ctx.postMessage({
-          command: "jumpToElement",
-          elementName: elementNameToJump
-        });
-      } else {
-        lastTapped = node.id();
-        tapTimeout = setTimeout(() => {
-          tapTimeout = null;
-          lastTapped = null;
-        }, 250);
-      }
-    });
-    cy2.resize();
-    cy2.forceRender();
-    setTimeout(() => {
-      ctx.runGeneralViewLayout(true);
-      const statusEl = document.getElementById("status-text");
-      if (statusEl) statusEl.textContent = "General View \u2022 Tap element to highlight, double-tap to jump";
-    }, 100);
-  }
   function renderSysMLView(ctx, width, height, data) {
     ctx.setSysMLToolbarVisible(true);
     const container = document.getElementById("visualization");
@@ -2477,6 +2385,378 @@
         if (statusEl) statusEl.textContent = "SysML Pillar View \u2022 Tap a pillar to expand/collapse";
       }
     }, 100);
+  }
+
+  // src/visualization/webview/renderers/generalView.ts
+  var NODE_WIDTH = 200;
+  var NODE_HEIGHT_BASE = 70;
+  var LINE_HEIGHT = 12;
+  var HEADER_HEIGHT = 38;
+  var TYPED_BY_HEIGHT = 14;
+  var SECTION_GAP = 4;
+  function collectNodeContent(element) {
+    const sections = [];
+    const attrLines = [];
+    const portLines = [];
+    const partLines = [];
+    const actionLines = [];
+    const otherLines = [];
+    if (!element?.children?.length) {
+      return sections;
+    }
+    const typeLower = (element.type || "").toLowerCase();
+    const isRequirement = typeLower.includes("requirement");
+    element.children.forEach((child) => {
+      if (!child?.name) return;
+      const cType = (child.type || "").toLowerCase();
+      if (cType.includes("package") || cType.includes("state")) return;
+      if (cType === "attribute" || cType.includes("attribute")) {
+        const dataType = child.attributes?.get ? child.attributes.get("dataType") : child.attributes?.dataType;
+        const typeStr = dataType ? " : " + String(dataType).split("::").pop() : "";
+        attrLines.push("  " + child.name + typeStr);
+      } else if (cType === "port" || cType.includes("port")) {
+        const portType = child.attributes?.get ? child.attributes.get("portType") : child.attributes?.portType;
+        const pTypeStr = portType ? " : " + portType : "";
+        portLines.push("  " + child.name + pTypeStr);
+      } else if (cType.includes("part")) {
+        partLines.push("  " + child.name);
+      } else if (cType.includes("action")) {
+        actionLines.push("  " + child.name);
+      } else if (cType.includes("requirement")) {
+        otherLines.push("  " + child.name);
+      } else if (cType.includes("interface") || cType.includes("connect")) {
+        otherLines.push("  " + child.name);
+      }
+    });
+    if (element.ports?.length) {
+      element.ports.forEach((p) => {
+        const pName = typeof p === "string" ? p : p?.name || "port";
+        if (!portLines.some((l) => l.includes(pName))) {
+          portLines.push("  " + pName);
+        }
+      });
+    }
+    if (isRequirement) {
+      if (attrLines.length) sections.push({ title: "Attributes", lines: attrLines.slice(0, 6) });
+      if (otherLines.length) sections.push({ title: "Nested", lines: otherLines.slice(0, 4) });
+    } else {
+      if (attrLines.length) sections.push({ title: "Attributes", lines: attrLines.slice(0, 8) });
+      if (partLines.length) sections.push({ title: "Parts", lines: partLines.slice(0, 8) });
+      if (portLines.length) sections.push({ title: "Ports", lines: portLines.slice(0, 6) });
+      if (actionLines.length) sections.push({ title: "Actions", lines: actionLines.slice(0, 4) });
+      if (otherLines.length) sections.push({ title: "Other", lines: otherLines.slice(0, 4) });
+    }
+    return sections;
+  }
+  function computeNodeHeight(element, hasTypedBy, sections) {
+    let h = HEADER_HEIGHT;
+    if (hasTypedBy) h += TYPED_BY_HEIGHT;
+    sections.forEach((s) => {
+      h += 14;
+      h += s.lines.length * LINE_HEIGHT;
+      h += SECTION_GAP;
+    });
+    return Math.max(NODE_HEIGHT_BASE, h + 8);
+  }
+  function computeOrthogonalPath(x1, y1, x2, y2, options = {}) {
+    const offset = options.offset ?? 0;
+    const srcRect = options.srcRect;
+    const tgtRect = options.tgtRect;
+    const srcCx = srcRect ? srcRect.x + srcRect.width / 2 : x1;
+    const srcCy = srcRect ? srcRect.y + srcRect.height / 2 : y1;
+    const tgtCx = tgtRect ? tgtRect.x + tgtRect.width / 2 : x2;
+    const tgtCy = tgtRect ? tgtRect.y + tgtRect.height / 2 : y2;
+    const dx = tgtCx - srcCx;
+    const dy = tgtCy - srcCy;
+    let ox1 = x1, oy1 = y1, ox2 = x2, oy2 = y2;
+    if (srcRect) {
+      if (Math.abs(dx) > Math.abs(dy)) {
+        ox1 = dx > 0 ? srcRect.x + srcRect.width : srcRect.x;
+        oy1 = srcCy + offset;
+      } else {
+        ox1 = srcCx + offset;
+        oy1 = dy > 0 ? srcRect.y + srcRect.height : srcRect.y;
+      }
+    }
+    if (tgtRect) {
+      if (Math.abs(dx) > Math.abs(dy)) {
+        ox2 = dx > 0 ? tgtRect.x : tgtRect.x + tgtRect.width;
+        oy2 = tgtCy + offset;
+      } else {
+        ox2 = tgtCx + offset;
+        oy2 = dy > 0 ? tgtRect.y : tgtRect.y + tgtRect.height;
+      }
+    }
+    const distX = Math.abs(ox2 - ox1);
+    const distY = Math.abs(oy2 - oy1);
+    const wpSpread = offset * 0.4;
+    let pathD;
+    let labelX, labelY;
+    if (distX > distY) {
+      const midX = (ox1 + ox2) / 2 + wpSpread;
+      pathD = "M" + ox1 + "," + oy1 + " L" + midX + "," + oy1 + " L" + midX + "," + oy2 + " L" + ox2 + "," + oy2;
+      labelX = midX;
+      labelY = (oy1 + oy2) / 2 - 8 + offset * 0.5;
+    } else {
+      const midY = (oy1 + oy2) / 2 + wpSpread;
+      pathD = "M" + ox1 + "," + oy1 + " L" + ox1 + "," + midY + " L" + ox2 + "," + midY + " L" + ox2 + "," + oy2;
+      labelX = (ox1 + ox2) / 2 + offset * 0.5;
+      labelY = midY - 8;
+    }
+    return { pathD, labelX, labelY };
+  }
+  function pathFromElkSections(sections) {
+    if (!sections || sections.length === 0) return null;
+    const parts = [];
+    for (const sec of sections) {
+      const sp = sec.startPoint;
+      const ep = sec.endPoint;
+      const bp = sec.bendPoints || [];
+      if (!sp || !ep) return null;
+      parts.push("M" + sp.x + "," + sp.y);
+      for (const p of bp) {
+        parts.push("L" + p.x + "," + p.y);
+      }
+      parts.push("L" + ep.x + "," + ep.y);
+    }
+    return parts.join(" ");
+  }
+  async function renderGeneralViewD3(ctx, data) {
+    const { width, height, svg: svg2, g: g2, postMessage, renderPlaceholder, clearVisualHighlights: clearVisualHighlights2 } = ctx;
+    const result = ctx.buildGeneralViewGraph(data);
+    const { elements, typeStats } = result;
+    ctx.renderGeneralChips(typeStats);
+    const cyNodes = elements.filter((el) => el.group === "nodes");
+    const cyEdges = elements.filter((el) => el.group === "edges");
+    if (cyNodes.length === 0) {
+      renderPlaceholder(
+        width,
+        height,
+        "General View",
+        "No matching elements to display.\\n\\nTry enabling more categories using the filter chips above.",
+        data
+      );
+      return;
+    }
+    if (typeof ELK === "undefined") {
+      renderPlaceholder(
+        width,
+        height,
+        "General View",
+        "ELK layout library not loaded. Please refresh the view.",
+        data
+      );
+      return;
+    }
+    let elk;
+    try {
+      elk = new ELK({ workerUrl: ctx.elkWorkerUrl || void 0 });
+    } catch (e) {
+      console.warn("[General View] ELK worker init failed, layout may be unavailable:", e);
+    }
+    const nodeWidth = NODE_WIDTH;
+    const nodeDataMap = /* @__PURE__ */ new Map();
+    cyNodes.forEach((el) => {
+      const element = el.data.element;
+      const sections = element ? collectNodeContent(element) : [];
+      let typedByName = null;
+      if (element) {
+        const attrs = element.attributes;
+        typedByName = attrs && (typeof attrs.get === "function" ? attrs.get("partType") || attrs.get("type") || attrs.get("typedBy") : attrs.partType || attrs.type || attrs.typedBy) || null;
+        if (!typedByName && element.partType) typedByName = element.partType;
+        if (!typedByName && element.typings?.length) typedByName = String(element.typings[0]).replace(/^[:~]+/, "").trim();
+        if (!typedByName && element.typing) typedByName = String(element.typing).replace(/^[:~]+/, "").trim();
+      }
+      const nodeHeight = computeNodeHeight(element, !!typedByName, sections);
+      nodeDataMap.set(el.data.id, { sections, height: nodeHeight, typedByName });
+    });
+    const elkGraph = {
+      id: "root",
+      layoutOptions: {
+        "elk.algorithm": "layered",
+        "elk.direction": "DOWN",
+        "elk.spacing.nodeNode": "150",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "180",
+        "elk.spacing.edgeNode": "90",
+        "elk.spacing.edgeEdge": "80",
+        "elk.edgeRouting": "ORTHOGONAL",
+        "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+        "elk.separateConnectedComponents": "true",
+        "elk.aspectRatio": "1.4",
+        "elk.padding": "[top=80,left=80,bottom=80,right=80]",
+        "org.eclipse.elk.portConstraints": "FIXED_SIDE",
+        "org.eclipse.elk.json.edgeCoords": "ROOT"
+      },
+      children: cyNodes.map((el) => {
+        const nd = nodeDataMap.get(el.data.id);
+        const nodeHeight = nd?.height ?? NODE_HEIGHT_BASE;
+        return {
+          id: el.data.id,
+          width: nodeWidth,
+          height: nodeHeight,
+          ports: [
+            { id: el.data.id + "_south", layoutOptions: { "org.eclipse.elk.port.side": "SOUTH" } },
+            { id: el.data.id + "_north", layoutOptions: { "org.eclipse.elk.port.side": "NORTH" } }
+          ]
+        };
+      }),
+      edges: cyEdges.map((el, idx) => ({
+        id: el.data.id || "edge-" + idx,
+        sources: [el.data.source + "_south"],
+        targets: [el.data.target + "_north"]
+      }))
+    };
+    let laidOut;
+    try {
+      laidOut = elk ? await elk.layout(elkGraph) : null;
+    } catch (e) {
+      console.error("[General View] ELK layout failed:", e);
+    }
+    const nodePositions = /* @__PURE__ */ new Map();
+    if (laidOut && laidOut.children) {
+      laidOut.children.forEach((child) => {
+        const nd = nodeDataMap.get(child.id);
+        nodePositions.set(child.id, {
+          x: child.x ?? 0,
+          y: child.y ?? 0,
+          width: child.width ?? nodeWidth,
+          height: child.height ?? nd?.height ?? NODE_HEIGHT_BASE
+        });
+      });
+    } else {
+      let x = 80, y = 80;
+      cyNodes.forEach((el, i) => {
+        const nd = nodeDataMap.get(el.data.id);
+        const h = nd?.height ?? NODE_HEIGHT_BASE;
+        nodePositions.set(el.data.id, { x, y, width: nodeWidth, height: h });
+        x += nodeWidth + 60;
+        if (x > width - nodeWidth - 80) {
+          x = 80;
+          y += h + 80;
+        }
+      });
+    }
+    g2.selectAll("*").remove();
+    const defs = svg2.select("defs").empty() ? svg2.append("defs") : svg2.select("defs");
+    defs.selectAll("#general-d3-arrow").remove();
+    defs.append("marker").attr("id", "general-d3-arrow").attr("viewBox", "0 -5 10 10").attr("refX", 8).attr("refY", 0).attr("markerWidth", 5).attr("markerHeight", 5).attr("orient", "auto").append("path").attr("d", "M0,-4L10,0L0,4").style("fill", "var(--vscode-charts-blue)");
+    defs.selectAll("#general-d3-specializes").remove();
+    defs.append("marker").attr("id", "general-d3-specializes").attr("viewBox", "0 -6 12 12").attr("refX", 11).attr("refY", 0).attr("markerWidth", 8).attr("markerHeight", 8).attr("orient", "auto").append("path").attr("d", "M0,0L10,-4L10,4Z").style("fill", GENERAL_VIEW_PALETTE.structural.port);
+    const edgeGroup = g2.append("g").attr("class", "general-edges");
+    const nodeGroup = g2.append("g").attr("class", "general-nodes");
+    const laidOutEdges = laidOut?.edges ?? [];
+    cyEdges.forEach((el, edgeIdx) => {
+      const srcPos = nodePositions.get(el.data.source);
+      const tgtPos = nodePositions.get(el.data.target);
+      if (!srcPos || !tgtPos) return;
+      const elkEdge = laidOutEdges[edgeIdx];
+      let pathD;
+      if (elkEdge?.sections) {
+        const elkPath = pathFromElkSections(elkEdge.sections);
+        pathD = elkPath ?? computeOrthogonalPath(0, 0, 0, 0, {
+          srcRect: { x: srcPos.x, y: srcPos.y, width: srcPos.width, height: srcPos.height },
+          tgtRect: { x: tgtPos.x, y: tgtPos.y, width: tgtPos.width, height: tgtPos.height }
+        }).pathD;
+      } else {
+        const { pathD: fallbackPath } = computeOrthogonalPath(0, 0, 0, 0, {
+          srcRect: { x: srcPos.x, y: srcPos.y, width: srcPos.width, height: srcPos.height },
+          tgtRect: { x: tgtPos.x, y: tgtPos.y, width: tgtPos.width, height: tgtPos.height }
+        });
+        pathD = fallbackPath;
+      }
+      const relType = (el.data.relType || el.data.type || "relationship").toLowerCase();
+      let strokeColor = GENERAL_VIEW_PALETTE.other.default;
+      let strokeDash = "none";
+      let markerEnd = "url(#general-d3-arrow)";
+      let strokeWidth = "2px";
+      if (relType === "specializes") {
+        strokeColor = GENERAL_VIEW_PALETTE.structural.port;
+        markerEnd = "url(#general-d3-specializes)";
+      } else if (relType === "typing") {
+        strokeColor = GENERAL_VIEW_PALETTE.requirements.requirement;
+        strokeDash = "5,3";
+      } else if (relType === "hierarchy" || relType === "contains") {
+        strokeColor = GENERAL_VIEW_PALETTE.structural.part;
+      } else if (relType === "connection" || relType === "connect") {
+        strokeColor = GENERAL_VIEW_PALETTE.structural.interface;
+      } else if (relType === "bind" || relType === "binding") {
+        strokeColor = "#808080";
+        strokeDash = "2,2";
+        markerEnd = "none";
+      } else if (relType === "allocate" || relType === "allocation") {
+        strokeColor = GENERAL_VIEW_PALETTE.other.allocation;
+        strokeDash = "8,4";
+      }
+      edgeGroup.append("path").attr("d", pathD).attr("class", "general-connector").attr("data-source", el.data.source).attr("data-target", el.data.target).attr("data-type", relType).style("fill", "none").style("stroke", strokeColor).style("stroke-width", strokeWidth).style("stroke-dasharray", strokeDash).style("opacity", 0.85).style("marker-end", markerEnd).style("cursor", "pointer");
+    });
+    const statusEl = document.getElementById("status-text");
+    if (statusEl) statusEl.textContent = "General View \u2022 Tap element to highlight, double-tap to jump";
+    let lastTappedId = null;
+    let tapTimeout = null;
+    cyNodes.forEach((el) => {
+      const pos = nodePositions.get(el.data.id);
+      if (!pos) return;
+      const d = el.data;
+      const nd = nodeDataMap.get(d.id);
+      const sections = nd?.sections ?? [];
+      const typedByName = nd?.typedByName ?? null;
+      const isDefinition = d.isDefinition === true;
+      const typeColor = d.color || getTypeColor(d.sysmlType);
+      const stereoDisplay = (d.sysmlType || "element").toLowerCase();
+      const displayName = (d.elementName || d.label || "Unnamed").toString();
+      const truncatedName = displayName.length > 24 ? displayName.substring(0, 22) + ".." : displayName;
+      const nodeG = nodeGroup.append("g").attr("class", "general-node elk-node" + (isDefinition ? " definition-node" : " usage-node")).attr("transform", "translate(" + pos.x + "," + pos.y + ")").attr("data-element-name", d.elementName || d.label).style("cursor", "pointer");
+      const strokeColor = typeColor;
+      const strokeW = isDefinition ? "3px" : "2px";
+      nodeG.append("rect").attr("width", pos.width).attr("height", pos.height).attr("rx", isDefinition ? 4 : 8).attr("class", "graph-node-background node-background").attr("data-original-stroke", strokeColor).attr("data-original-width", strokeW).style("fill", "var(--vscode-editor-background)").style("stroke", strokeColor).style("stroke-width", strokeW).style("stroke-dasharray", isDefinition ? "6,3" : "none");
+      nodeG.append("rect").attr("width", pos.width).attr("height", 5).attr("rx", 2).style("fill", typeColor);
+      nodeG.append("rect").attr("y", 5).attr("width", pos.width).attr("height", typedByName ? 36 : 28).style("fill", "var(--vscode-button-secondaryBackground)");
+      const stereo = formatSysMLStereotype(d.sysmlType) || "\xAB" + stereoDisplay + "\xBB";
+      nodeG.append("text").attr("x", pos.width / 2).attr("y", 17).attr("text-anchor", "middle").text(stereo).style("font-size", "9px").style("fill", typeColor);
+      nodeG.append("text").attr("class", "node-name-text").attr("x", pos.width / 2).attr("y", 31).attr("text-anchor", "middle").text(truncatedName).style("font-size", "11px").style("font-weight", "bold").style("fill", "var(--vscode-editor-foreground)");
+      if (typedByName) {
+        const tbText = typedByName.length > 20 ? typedByName.substring(0, 18) + ".." : typedByName;
+        nodeG.append("text").attr("x", pos.width / 2).attr("y", 43).attr("text-anchor", "middle").text(": " + tbText).style("font-size", "10px").style("font-style", "italic").style("fill", "#569CD6");
+      }
+      let contentY = typedByName ? 50 : 38;
+      sections.forEach((sec) => {
+        nodeG.append("text").attr("x", 6).attr("y", contentY).text(sec.title).style("font-size", "9px").style("font-weight", "600").style("fill", "var(--vscode-descriptionForeground)");
+        contentY += 12;
+        sec.lines.forEach((line) => {
+          const truncated = line.length > 26 ? line.substring(0, 24) + ".." : line;
+          nodeG.append("text").attr("x", 6).attr("y", contentY).text(truncated).style("font-size", "9px").style("fill", "var(--vscode-descriptionForeground)");
+          contentY += LINE_HEIGHT;
+        });
+        contentY += SECTION_GAP;
+      });
+      nodeG.on("click", function(event) {
+        event.stopPropagation();
+        clearVisualHighlights2();
+        g2.selectAll(".general-node").select(".graph-node-background").each(function() {
+          const r = d3.select(this);
+          r.style("stroke", r.attr("data-original-stroke")).style("stroke-width", r.attr("data-original-width"));
+        });
+        nodeG.select(".graph-node-background").style("stroke", "#FFD700").style("stroke-width", "4px");
+        const statusEl2 = document.getElementById("status-text");
+        if (statusEl2) statusEl2.textContent = (d.label || d.elementName) + " [" + (d.sysmlType || "element") + "]";
+        const elementName = d.elementName;
+        const nodeId = d.id;
+        if (elementName) {
+          if (lastTappedId === nodeId && tapTimeout) {
+            clearTimeout(tapTimeout);
+            tapTimeout = null;
+            lastTappedId = null;
+            postMessage({ command: "jumpToElement", elementName });
+          } else {
+            lastTappedId = nodeId;
+            tapTimeout = setTimeout(() => {
+              tapTimeout = null;
+              lastTappedId = null;
+            }, 250);
+          }
+        }
+      });
+    });
   }
 
   // src/visualization/webview/export.ts
@@ -3642,7 +3922,8 @@
           color: borderColor,
           isDefinition,
           category,
-          metadata
+          metadata,
+          element: elementWithChildren || null
         }
       });
     });
@@ -5262,15 +5543,6 @@
         }, 100);
         return;
       }
-      if (view === "general-view") {
-        renderGeneralViewCytoscape(buildElkContext2(), width, height, dataToRender);
-        lastView = view;
-        setTimeout(() => {
-          isRendering = false;
-          hideLoading();
-        }, 150);
-        return;
-      }
       svg = d3.select("#visualization").append("svg").attr("width", width).attr("height", height);
       zoom = d3.zoom().scaleExtent([MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM]).on("zoom", (event) => {
         g.attr("transform", event.transform);
@@ -5333,7 +5605,26 @@
           });
         }
       });
-      if (view === "sequence-view") {
+      if (view === "general-view") {
+        const generalCtx = {
+          ...buildRenderContext2(width, height),
+          buildGeneralViewGraph,
+          renderGeneralChips,
+          elkWorkerUrl
+        };
+        renderGeneralViewD3(generalCtx, dataToRender).then(() => {
+          setTimeout(() => {
+            zoomToFit("auto");
+            updateDimensionsDisplay();
+            isRendering = false;
+            hideLoading();
+          }, 100);
+        }).catch((err) => {
+          console.error("[General View] Render failed:", err);
+          isRendering = false;
+          hideLoading();
+        });
+      } else if (view === "sequence-view") {
         renderSequenceView(buildRenderContext2(width, height), dataToRender);
       } else if (view === "interconnection-view") {
         renderIbdView(buildRenderContext2(width, height), dataToRender);
@@ -5344,16 +5635,18 @@
       } else {
         renderPlaceholderView(width, height, "Unknown View", "The selected view is not yet implemented.", dataToRender);
       }
-      if (shouldPreserveZoom) {
-        restoreZoom();
-      } else {
-        setTimeout(() => zoomToFit("auto"), 100);
+      if (view !== "general-view") {
+        if (shouldPreserveZoom) {
+          restoreZoom();
+        } else {
+          setTimeout(() => zoomToFit("auto"), 100);
+        }
+        setTimeout(() => {
+          updateDimensionsDisplay();
+          isRendering = false;
+          hideLoading();
+        }, 200);
       }
-      setTimeout(() => {
-        updateDimensionsDisplay();
-        isRendering = false;
-        hideLoading();
-      }, 200);
       lastView = view;
     } catch (error) {
       console.error("Error during rendering:", error);
@@ -5460,7 +5753,7 @@
     };
   }
   function resetZoom() {
-    const cytoscapeViews = ["sysml", "general-view"];
+    const cytoscapeViews = ["sysml"];
     if (cytoscapeViews.includes(currentView) && cy) {
       cy.reset();
       fitSysMLView(80, { preferSelection: false });
@@ -5471,7 +5764,7 @@
   }
   function zoomToFit(trigger = "user") {
     const isAuto = trigger === "auto";
-    const cytoscapeViews = ["sysml", "general-view"];
+    const cytoscapeViews = ["sysml"];
     if (cytoscapeViews.includes(currentView) && cy) {
       fitSysMLView(80, { preferSelection: true });
       return;

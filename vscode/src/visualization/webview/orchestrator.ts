@@ -50,7 +50,8 @@ import { renderSequenceView as renderSequenceViewModule } from './renderers/sequ
 import { renderIbdView as renderIbdViewModule } from './renderers/ibd';
 import { renderActivityView as renderActivityViewModule } from './renderers/activity';
 import { renderStateView as renderStateViewModule } from './renderers/state';
-import { renderElkTreeView as renderElkTreeViewModule, renderSysMLView as renderSysMLViewModule, renderGeneralViewCytoscape as renderGeneralViewCytoscapeModule } from './elk';
+import { renderElkTreeView as renderElkTreeViewModule, renderSysMLView as renderSysMLViewModule } from './elk';
+import { renderGeneralViewD3 } from './renderers/generalView';
 import { createExportHandler } from './export';
 
     let vscode: { postMessage: (msg: unknown) => void };
@@ -1228,7 +1229,8 @@ let lastPillarStats = {};
                     color: borderColor,
                     isDefinition,
                     category,
-                    metadata
+                    metadata,
+                    element: elementWithChildren || null
                 }
             });
         });
@@ -3140,16 +3142,6 @@ let lastPillarStats = {};
             }, 100);
             return;
         }
-        if (view === 'general-view') {
-            renderGeneralViewCytoscapeModule(buildElkContext(), width, height, dataToRender);
-            lastView = view;
-            setTimeout(() => {
-                isRendering = false;
-                hideLoading();
-            }, 150);
-            return;
-        }
-
         svg = d3.select('#visualization')
             .append('svg')
             .attr('width', width)
@@ -3279,7 +3271,26 @@ let lastPillarStats = {};
         });
 
         // Synchronous rendering (SysML v2 frameless-view types)
-        if (view === 'sequence-view') {
+        if (view === 'general-view') {
+            const generalCtx = {
+                ...buildRenderContext(width, height),
+                buildGeneralViewGraph,
+                renderGeneralChips,
+                elkWorkerUrl
+            };
+            renderGeneralViewD3(generalCtx, dataToRender).then(() => {
+                setTimeout(() => {
+                    zoomToFit('auto');
+                    updateDimensionsDisplay();
+                    isRendering = false;
+                    hideLoading();
+                }, 100);
+            }).catch((err) => {
+                console.error('[General View] Render failed:', err);
+                isRendering = false;
+                hideLoading();
+            });
+        } else if (view === 'sequence-view') {
                 renderSequenceViewModule(buildRenderContext(width, height), dataToRender);
             } else if (view === 'interconnection-view') {
                 renderIbdViewModule(buildRenderContext(width, height), dataToRender);
@@ -3291,20 +3302,23 @@ let lastPillarStats = {};
                 renderPlaceholderView(width, height, 'Unknown View', 'The selected view is not yet implemented.', dataToRender);
             }
 
-            // If zoom was previously modified, restore it; otherwise zoom to fit
-            if (shouldPreserveZoom) {
-                restoreZoom();
-            } else {
-                // Delay zoom to fit to ensure rendering is complete
-                setTimeout(() => zoomToFit('auto'), 100);
-            }
+            // General view handles zoom/hide in its async .then(); others run here
+            if (view !== 'general-view') {
+                // If zoom was previously modified, restore it; otherwise zoom to fit
+                if (shouldPreserveZoom) {
+                    restoreZoom();
+                } else {
+                    // Delay zoom to fit to ensure rendering is complete
+                    setTimeout(() => zoomToFit('auto'), 100);
+                }
 
-            // Show initial dimensions briefly
-            setTimeout(() => {
-                updateDimensionsDisplay();
-                isRendering = false; // Reset rendering flag
-                hideLoading(); // Hide loading indicator
-            }, 200);
+                // Show initial dimensions briefly
+                setTimeout(() => {
+                    updateDimensionsDisplay();
+                    isRendering = false; // Reset rendering flag
+                    hideLoading(); // Hide loading indicator
+                }, 200);
+            }
 
         // Update lastView after successful render start
         lastView = view;
@@ -3952,7 +3966,7 @@ let lastPillarStats = {};
     }
 
     function resetZoom() {
-        const cytoscapeViews = ['sysml', 'general-view'];
+        const cytoscapeViews = ['sysml'];
         if (cytoscapeViews.includes(currentView) && cy) {
             cy.reset();
             fitSysMLView(80, { preferSelection: false });
@@ -3964,7 +3978,7 @@ let lastPillarStats = {};
 
     function zoomToFit(trigger = 'user') {
         const isAuto = trigger === 'auto';
-        const cytoscapeViews = ['sysml', 'general-view'];
+        const cytoscapeViews = ['sysml'];
         if (cytoscapeViews.includes(currentView) && cy) {
             fitSysMLView(80, { preferSelection: true });
             return;
