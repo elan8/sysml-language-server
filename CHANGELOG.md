@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-10
+
+### Added
+
+- Shared SysML node builder for diagram views with configurable compartments (Header, Attributes, Ports, Parts).
+
+### Changed
+
+- General View and Interconnection View now use standard SysML-style compartments: Header, Attributes, Ports, Parts.
+- Compartment titles are bold; compartments use divider lines only (no filled backgrounds).
+- Each compartment draws only a top divider line (no bottom line) to avoid double lines between adjacent compartments.
+- Header compartment height increased so compartment boundaries no longer overlap the node name.
+
+### Fixed
+
+- Attributes compartment top edge no longer cuts through the header text in diagram nodes.
+- Removed duplicate line between Attributes and Ports compartments.
+
 ## [0.2.2] - 2026-03-06
 
 ### Changed
@@ -52,6 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parser is aligned with the SysML v2 Release validation suite; it does not claim full OMG spec compliance.
 - Some constructs may have incomplete semantic token or outline coverage.
 
+[0.3.0]: https://github.com/elan8/sysml-language-server/releases/tag/v0.3.0
 [0.2.2]: https://github.com/elan8/sysml-language-server/releases/tag/v0.2.2
 [0.2.1]: https://github.com/elan8/sysml-language-server/releases/tag/v0.2.1
 [0.2.0]: https://github.com/elan8/sysml-language-server/releases/tag/v0.2.0
