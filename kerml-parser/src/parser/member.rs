@@ -47,6 +47,8 @@ pub(super) fn parse_member_impl<P: MemberParser>(mut pairs: Pairs<'_, Rule>, sou
             Rule::interface_def => Ok(Member::InterfaceDef(interface::parse_interface_def(pair.into_inner(), source, span, parser)?)),
             Rule::item_def => Ok(Member::ItemDef(item::parse_item_def(pair.into_inner(), source, span, parser)?)),
             Rule::item_usage => Ok(Member::ItemUsage(item::parse_item_usage(pair.into_inner(), source, span)?)),
+            Rule::out_statement => Ok(Member::ItemUsage(item::parse_out_statement(pair.into_inner(), source, span)?)),
+            Rule::inout_statement => Ok(Member::ItemUsage(item::parse_inout_statement(pair.into_inner(), source, span)?)),
             Rule::ref_item => Ok(Member::ItemUsage(item::parse_ref_item(pair.into_inner(), source, span)?)),
             Rule::requirement_def => {
                 let full_text = pair.as_str();

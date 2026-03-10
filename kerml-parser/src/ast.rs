@@ -594,6 +594,8 @@ pub struct ItemDef {
 pub enum ItemDirection {
     In,
     Out,
+    /// Bidirectional (inout)
+    Inout,
 }
 
 /// Item usage
@@ -611,6 +613,9 @@ pub struct ItemUsage {
     pub range: Option<SourceRange>,
     /// Type reference
     pub type_ref: Option<String>,
+    /// Source position of the type reference (for semantic highlighting)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_ref_position: Option<SourcePosition>,
     /// Multiplicity
     pub multiplicity: Option<Multiplicity>,
 }
@@ -950,6 +955,15 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
             Member::ItemUsage(i) => {
                 if let Some(ref pos) = i.name_position {
                     out.push((pos.to_range(), SemanticRole::Property));
+                }
+                if let (Some(ref ty), Some(ref pos)) = (&i.type_ref, &i.type_ref_position) {
+                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                    if let Some(r) = ns_range {
+                        out.push((r, SemanticRole::Namespace));
+                    }
+                    if let Some(r) = type_range {
+                        out.push((r, SemanticRole::Type));
+                    }
                 }
             }
             Member::RequirementDef(r) => {

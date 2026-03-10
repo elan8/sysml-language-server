@@ -45,13 +45,40 @@ fn process_port_def_pair<P: MemberParser>(
                 acc.next_is_specialization = false;
             } else if acc.next_is_type {
                 acc.type_ref = Some(text.to_string());
-                acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
+                let span_len = pair.as_span().end() - pair.as_span().start();
+                if span_len <= text.len() + 3 {
+                    acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
+                }
                 acc.next_is_type = false;
             }
         }
         Rule::member => {
             if let Ok(member) = parser.parse_member(pair.into_inner(), source) {
                 acc.members.push(member);
+            }
+        }
+        Rule::item_usage => {
+            let span = pair.as_span();
+            if let Ok(i) = super::item::parse_item_usage(pair.into_inner(), source, span) {
+                acc.members.push(Member::ItemUsage(i));
+            }
+        }
+        Rule::out_statement => {
+            let span = pair.as_span();
+            if let Ok(i) = super::item::parse_out_statement(pair.into_inner(), source, span) {
+                acc.members.push(Member::ItemUsage(i));
+            }
+        }
+        Rule::in_statement => {
+            let span = pair.as_span();
+            if let Ok(i) = super::package::parse_in_statement(pair.into_inner(), source, span) {
+                acc.members.push(Member::InStatement(i));
+            }
+        }
+        Rule::inout_statement => {
+            let span = pair.as_span();
+            if let Ok(i) = super::item::parse_inout_statement(pair.into_inner(), source, span) {
+                acc.members.push(Member::ItemUsage(i));
             }
         }
         Rule::port_body => {
@@ -138,13 +165,40 @@ fn process_port_usage_pair<P: MemberParser>(
                 acc.name_position = Some(span_to_position(pair.as_span(), source));
             } else if acc.next_is_type {
                 acc.type_ref = Some(text.to_string());
-                acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
+                let span_len = pair.as_span().end() - pair.as_span().start();
+                if span_len <= text.len() + 3 {
+                    acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
+                }
                 acc.next_is_type = false;
             }
         }
         Rule::member => {
             if let Ok(member) = parser.parse_member(pair.into_inner(), source) {
                 acc.members.push(member);
+            }
+        }
+        Rule::item_usage => {
+            let span = pair.as_span();
+            if let Ok(i) = super::item::parse_item_usage(pair.into_inner(), source, span) {
+                acc.members.push(Member::ItemUsage(i));
+            }
+        }
+        Rule::out_statement => {
+            let span = pair.as_span();
+            if let Ok(i) = super::item::parse_out_statement(pair.into_inner(), source, span) {
+                acc.members.push(Member::ItemUsage(i));
+            }
+        }
+        Rule::in_statement => {
+            let span = pair.as_span();
+            if let Ok(i) = super::package::parse_in_statement(pair.into_inner(), source, span) {
+                acc.members.push(Member::InStatement(i));
+            }
+        }
+        Rule::inout_statement => {
+            let span = pair.as_span();
+            if let Ok(i) = super::item::parse_inout_statement(pair.into_inner(), source, span) {
+                acc.members.push(Member::ItemUsage(i));
             }
         }
         Rule::port_body => {

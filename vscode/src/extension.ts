@@ -14,6 +14,12 @@ import {
 } from "./explorer/modelExplorerProvider";
 import { log, logError, showChannel } from "./logger";
 import {
+  decodeSemanticTokens,
+  dumpSemanticTokens,
+  getTokenAtPosition,
+  SEMANTIC_TYPE_NAMES,
+} from "./semanticTokensDump";
+import {
   RESTORE_STATE_KEY,
   VisualizationPanel,
   VisualizerRestoreState,
@@ -155,6 +161,24 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     initializationOptions: {
       libraryPaths,
+    },
+    middleware: {
+      provideDocumentSemanticTokens: (document, token, next) => {
+        const result = next(document, token);
+        const dumpIfEnabled = (res: vscode.SemanticTokens | null | undefined): vscode.SemanticTokens | null | undefined => {
+          const cfg = vscode.workspace.getConfiguration("sysml-language-server");
+          if (cfg.get<boolean>("debug.dumpSemanticTokens") && res) {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (workspaceFolder) {
+              const outPath = path.join(workspaceFolder, "semantic_tokens_frontend_dump.txt");
+              dumpSemanticTokens(document, res, outPath);
+              log(`Semantic tokens dump written to ${outPath}`);
+            }
+          }
+          return res;
+        };
+        return Promise.resolve(result).then(dumpIfEnabled);
+      },
     },
   };
 
@@ -527,6 +551,55 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("sysml.showOutput", () => {
       showChannel();
+    }),
+
+    vscode.commands.registerCommand("sysml.debugSemanticTokenAtCursor", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || !isSysmlDoc(editor.document)) {
+        vscode.window.showWarningMessage(
+          "Open a SysML/KerML file and place the cursor on the word to debug."
+        );
+        return;
+      }
+      if (!client) {
+        vscode.window.showErrorMessage("SysML language server is not running.");
+        return;
+      }
+      try {
+        const doc = editor.document;
+        const pos = editor.selection.active;
+        const result = await client.sendRequest<{ data?: number[] }>(
+          "textDocument/semanticTokens/full",
+          {
+            textDocument: { uri: doc.uri.toString(), version: doc.version },
+          }
+        );
+        if (!result?.data?.length) {
+          vscode.window.showInformationMessage(
+            "No semantic tokens returned. The server may not have indexed this document yet."
+          );
+          return;
+        }
+        const tokens = new vscode.SemanticTokens(new Uint32Array(result.data));
+        const decoded = decodeSemanticTokens(doc, tokens);
+        const token = getTokenAtPosition(decoded, pos.line, pos.character);
+        const typeName = token
+          ? SEMANTIC_TYPE_NAMES[token.type] ?? `?${token.type}`
+          : "(none)";
+        // Display 1-based line/col to match editor gutter
+        const line1 = pos.line + 1;
+        const col1 = pos.character + 1;
+        const msg = token
+          ? `Server token at line ${line1}, col ${col1}: "${token.text}" = ${typeName}`
+          : `No token at line ${line1}, col ${col1} (cursor may be in whitespace or between tokens)`;
+        vscode.window.showInformationMessage(msg);
+        log(msg, "→ Use Developer: Inspect Editor Tokens and Scopes to compare with VS Code's rendering");
+      } catch (err) {
+        logError("Debug semantic token failed", err);
+        vscode.window.showErrorMessage(
+          `Debug failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
     })
   );
 

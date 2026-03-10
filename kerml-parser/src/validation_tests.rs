@@ -221,6 +221,116 @@ mod tests {
         assert!(has_type, "expected Type for 'length' in ISQ::length");
     }
 
+    /// Unit test: top-level "out name : Type;" parses as ItemUsage (ensures member rule handles out).
+    #[test]
+    fn test_out_statement_as_member_in_package() {
+        let source = "package P { out voltage : Real; }";
+        let doc = parse_sysml(source).expect("parse");
+        assert_eq!(doc.packages.len(), 1);
+        assert_eq!(doc.packages[0].members.len(), 1, "expected one member");
+        if let crate::ast::Member::ItemUsage(i) = &doc.packages[0].members[0] {
+            assert_eq!(i.name, "voltage");
+            assert!(i.type_ref.as_deref() == Some("Real") || i.type_ref.is_none(), "type_ref should be Real if present");
+        } else {
+            panic!("expected ItemUsage, got {:?}", doc.packages[0].members[0]);
+        }
+    }
+
+    /// Unit test: port def with a single out item (minimal) to verify port body members are parsed.
+    #[test]
+    fn test_port_def_out_item_in_package_minimal() {
+        let source = "package P { port def PowerPort { out voltage : Real; } }";
+        let doc = parse_sysml(source).expect("parse");
+        let port_defs: Vec<_> = doc.packages.iter().flat_map(|p| &p.members).filter_map(|m| {
+            if let crate::ast::Member::PortDef(pd) = m { Some(pd) } else { None }
+        }).collect();
+        assert_eq!(port_defs.len(), 1, "expected one port def");
+        assert_eq!(port_defs[0].members.len(), 1, "expected one member (out voltage : Real;) in port body");
+        if let crate::ast::Member::ItemUsage(i) = &port_defs[0].members[0] {
+            assert_eq!(i.name, "voltage");
+            assert!(i.name_position.is_some(), "expected name_position for item usage");
+            assert!(i.type_ref.as_deref() == Some("Real") || i.type_ref.is_none(), "type_ref should be Real if present");
+        } else {
+            panic!("expected first port body member to be ItemUsage, got {:?}", port_defs[0].members[0]);
+        }
+    }
+
+    /// Unit test: port defs inside a package with out item usages (SurveillanceDrone-style).
+    /// Ensures TYPE ranges cover only the type name (e.g. "Real", "String"), not the property name (e.g. "current", "velocity").
+    #[test]
+    fn test_semantic_ranges_port_def_out_items_in_package() {
+        let source = r#"package P {
+	port def PowerPort {
+		out voltage : Real;
+		out current : Real;
+	}
+
+	port def SensorDataPort {
+		out position : String;
+		out velocity : String;
+		out attitude : String;
+		out altitude : Real;
+	}
+}"#;
+        let doc = parse_sysml(source).expect("parse");
+        // Port defs must have ItemUsage members (out voltage/current etc.)
+        let port_defs: Vec<_> = doc.packages.iter().flat_map(|p| &p.members).filter_map(|m| {
+            if let crate::ast::Member::PortDef(pd) = m { Some(pd) } else { None }
+        }).collect();
+        assert!(!port_defs.is_empty(), "expected at least one port def in package");
+        let member_counts: Vec<usize> = port_defs.iter().map(|pd| pd.members.len()).collect();
+        let item_usages: Vec<_> = port_defs.iter().flat_map(|pd| &pd.members).filter_map(|m| {
+            if let crate::ast::Member::ItemUsage(i) = m { Some(i) } else { None }
+        }).collect();
+        assert!(
+            item_usages.len() >= 6,
+            "expected at least 6 item usages (voltage, current, position, velocity, attitude, altitude), got {}; port_def member counts: {:?}",
+            item_usages.len(),
+            member_counts
+        );
+        let with_name_pos: Vec<_> = item_usages.iter().filter(|i| i.name_position.is_some()).collect();
+        assert!(
+            with_name_pos.len() >= 6,
+            "expected all item usages to have name_position set, got {} with name_position (names: {:?})",
+            with_name_pos.len(),
+            item_usages.iter().map(|i| i.name.as_str()).collect::<Vec<_>>()
+        );
+
+        let ranges = collect_semantic_ranges(&doc);
+
+        // Property names (item usages) must have a Property range with exact text
+        let property_names = ["voltage", "current", "position", "velocity", "attitude", "altitude"];
+        let property_texts: Vec<String> = ranges
+            .iter()
+            .filter(|(_, role)| *role == SemanticRole::Property)
+            .map(|(r, _)| range_text(source, r))
+            .collect();
+        for name in &property_names {
+            let has = ranges.iter().any(|(r, role)| {
+                *role == SemanticRole::Property && range_text(source, r) == *name
+            });
+            assert!(
+                has,
+                "expected Property range for item name '{}'; Property ranges we got: {:?}",
+                name, property_texts
+            );
+        }
+
+        // TYPE ranges must not cover property names (parser bug: type_ref_position was wrong)
+        let property_names: std::collections::HashSet<&str> =
+            ["voltage", "current", "position", "velocity", "attitude", "altitude"].into();
+        for (r, role) in &ranges {
+            if *role == SemanticRole::Type {
+                let text = range_text(source, r);
+                assert!(
+                    !property_names.contains(text.as_str()),
+                    "TYPE range must not cover property name \"{}\" (parser type_ref_position span bug)",
+                    text
+                );
+            }
+        }
+    }
+
     /// Integration test: parse Vehicle Example VehicleDefinitions.sysml, VehicleIndividuals.sysml, and VehicleUsages.sysml.
     #[test]
     fn test_vehicle_example_definitions_individuals_usages() {

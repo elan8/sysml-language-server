@@ -49,7 +49,8 @@
     "onCommand:sysml.changeVisualizerView",
     "onCommand:sysml.exportVisualization",
     "onCommand:sysml.refreshVisualization",
-    "onCommand:sysml.visualizeFolderWithView"
+    "onCommand:sysml.visualizeFolderWithView",
+    "onCommand:sysml.debugSemanticTokenAtCursor"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -75,18 +76,6 @@
           ".kerml"
         ],
         "configuration": "./language-configuration.json"
-      }
-    ],
-    "grammars": [
-      {
-        "language": "sysml",
-        "scopeName": "source.sysml",
-        "path": "./syntaxes/sysml.tmLanguage.json"
-      },
-      {
-        "language": "kerml",
-        "scopeName": "source.sysml",
-        "path": "./syntaxes/sysml.tmLanguage.json"
       }
     ],
     "snippets": [
@@ -184,6 +173,11 @@
       {
         "command": "sysml.visualizeFolderWithView",
         "title": "Visualize Folder with View...",
+        "category": "SysML"
+      },
+      {
+        "command": "sysml.debugSemanticTokenAtCursor",
+        "title": "Debug: Semantic Token at Cursor",
         "category": "SysML"
       }
     ],
@@ -312,6 +306,11 @@
           "default": false,
           "description": "Enable debug logging to the SysML output channel (View → Output → SysML)."
         },
+        "sysml-language-server.debug.dumpSemanticTokens": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, dump semantic tokens received from the server to semantic_tokens_frontend_dump.txt in the workspace root (for debugging highlighting)."
+        },
         "sysml-language-server.visualization.defaultView": {
           "type": "string",
           "enum": ["general-view", "interconnection-view"],
@@ -331,6 +330,14 @@
           "default": "distinct",
           "description": "Color palette for General View: 'distinct' (semantic SysML pillar colors) or 'classic' (VS Code default syntax colors)."
         }
+      }
+    },
+    "configurationDefaults": {
+      "[sysml]": {
+        "editor.semanticHighlighting.enabled": true
+      },
+      "[kerml]": {
+        "editor.semanticHighlighting.enabled": true
       }
     }
   },

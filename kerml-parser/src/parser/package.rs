@@ -9,6 +9,7 @@ use super::Rule;
 use super::MemberParser;
 use super::span::{span_to_position, span_to_source_range};
 use super::part;
+use super::item;
 use super::port;
 use super::requirement;
 use super::connection;
@@ -58,6 +59,31 @@ fn process_package_pair<P: MemberParser>(
         Rule::member => {
             match parser.parse_member(pair.clone().into_inner(), source) {
                 Ok(member) => state.members.push(member),
+                Err(e) => return Err(e),
+            }
+        }
+        // When member rule is silent (_), package body exposes item_usage/out_statement directly
+        Rule::item_usage => {
+            match item::parse_item_usage(pair.clone().into_inner(), source, pair.as_span()) {
+                Ok(i) => state.members.push(Member::ItemUsage(i)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::out_statement => {
+            match item::parse_out_statement(pair.clone().into_inner(), source, pair.as_span()) {
+                Ok(i) => state.members.push(Member::ItemUsage(i)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::in_statement => {
+            match parse_in_statement(pair.clone().into_inner(), source, pair.as_span()) {
+                Ok(i) => state.members.push(Member::InStatement(i)),
+                Err(e) => return Err(e),
+            }
+        }
+        Rule::inout_statement => {
+            match item::parse_inout_statement(pair.clone().into_inner(), source, pair.as_span()) {
+                Ok(i) => state.members.push(Member::ItemUsage(i)),
                 Err(e) => return Err(e),
             }
         }
@@ -227,7 +253,11 @@ pub(super) fn parse_in_statement(pairs: Pairs<'_, Rule>, source: &str, span: pes
                     *next_is_specializes = false;
                 } else if *next_is_type {
                     *type_ref = Some(text.to_string());
-                    *type_ref_position = Some(span_to_position(pair.as_span(), source));
+                    // Only use this pair's span if it actually matches the type name (avoid parent span bug).
+                    let span_len = pair.as_span().end() - pair.as_span().start();
+                    if span_len <= text.len() + 3 {
+                        *type_ref_position = Some(span_to_position(pair.as_span(), source));
+                    }
                     *next_is_type = false;
                 }
             }
@@ -296,7 +326,10 @@ pub(super) fn parse_end_statement(pairs: Pairs<'_, Rule>, source: &str, span: pe
                     *name_position = Some(span_to_position(pair.as_span(), source));
                 } else if *next_is_type {
                     *type_ref = Some(text.to_string());
-                    *type_ref_position = Some(span_to_position(pair.as_span(), source));
+                    let span_len = pair.as_span().end() - pair.as_span().start();
+                    if span_len <= text.len() + 3 {
+                        *type_ref_position = Some(span_to_position(pair.as_span(), source));
+                    }
                     *next_is_type = false;
                 }
             }

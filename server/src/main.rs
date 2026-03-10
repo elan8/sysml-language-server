@@ -1175,7 +1175,12 @@ impl LanguageServer for Backend {
             None => return Ok(None),
         };
         drop(state);
-        let tokens = semantic_tokens_full(&text, ast_ranges.as_deref());
+        let (tokens, log_lines) = semantic_tokens_full(&text, ast_ranges.as_deref());
+        for line in &log_lines {
+            self.client
+                .log_message(MessageType::LOG, line)
+                .await;
+        }
         Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
 
@@ -1194,7 +1199,7 @@ impl LanguageServer for Backend {
             None => return Ok(None),
         };
         drop(state);
-        let tokens = semantic_tokens_range(
+        let (tokens, log_lines) = semantic_tokens_range(
             &text,
             range.start.line,
             range.start.character,
@@ -1202,6 +1207,11 @@ impl LanguageServer for Backend {
             range.end.character,
             ast_ranges.as_deref(),
         );
+        for line in &log_lines {
+            self.client
+                .log_message(MessageType::LOG, line)
+                .await;
+        }
         Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
     }
 }

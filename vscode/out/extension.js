@@ -32,6 +32,7 @@ const node_1 = require("vscode-languageclient/node");
 const lspModelProvider_1 = require("./providers/lspModelProvider");
 const modelExplorerProvider_1 = require("./explorer/modelExplorerProvider");
 const logger_1 = require("./logger");
+const semanticTokensDump_1 = require("./semanticTokensDump");
 const visualizationPanel_1 = require("./visualization/visualizationPanel");
 const constants_1 = require("./visualization/webview/constants");
 const htmlBuilder_1 = require("./visualization/htmlBuilder");
@@ -126,10 +127,17 @@ function activate(context) {
         }
     }
     (0, logger_1.log)("Server command:", serverCommand, "libraryPaths:", libraryPaths);
+    const logOverrides = config.get("debug.logSemanticTokenOverrides") ?? false;
     const serverOptions = {
         command: serverCommand,
         args: [],
         transport: node_1.TransportKind.stdio,
+        options: {
+            env: {
+                ...process.env,
+                ...(logOverrides && { SYSML_DEBUG_SEMANTIC_TOKENS: "1" }),
+            },
+        },
     };
     const clientOptions = {
         documentSelector: [
@@ -141,6 +149,24 @@ function activate(context) {
         },
         initializationOptions: {
             libraryPaths,
+        },
+        middleware: {
+            provideDocumentSemanticTokens: (document, token, next) => {
+                const result = next(document, token);
+                const dumpIfEnabled = (res) => {
+                    const cfg = vscode.workspace.getConfiguration("sysml-language-server");
+                    if (cfg.get("debug.dumpSemanticTokens") && res) {
+                        const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                        if (workspaceFolder) {
+                            const outPath = path.join(workspaceFolder, "semantic_tokens_frontend_dump.txt");
+                            (0, semanticTokensDump_1.dumpSemanticTokens)(document, res, outPath);
+                            (0, logger_1.log)(`Semantic tokens dump written to ${outPath}`);
+                        }
+                    }
+                    return res;
+                };
+                return Promise.resolve(result).then(dumpIfEnabled);
+            },
         },
     };
     client = new node_1.LanguageClient("sysmlLanguageServer", "SysML Language Server", serverOptions, clientOptions);
@@ -407,6 +433,45 @@ function activate(context) {
     }));
     context.subscriptions.push(vscode.commands.registerCommand("sysml.showOutput", () => {
         (0, logger_1.showChannel)();
+    }), vscode.commands.registerCommand("sysml.debugSemanticTokenAtCursor", async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || !isSysmlDoc(editor.document)) {
+            vscode.window.showWarningMessage("Open a SysML/KerML file and place the cursor on the word to debug.");
+            return;
+        }
+        if (!client) {
+            vscode.window.showErrorMessage("SysML language server is not running.");
+            return;
+        }
+        try {
+            const doc = editor.document;
+            const pos = editor.selection.active;
+            const result = await client.sendRequest("textDocument/semanticTokens/full", {
+                textDocument: { uri: doc.uri.toString(), version: doc.version },
+            });
+            if (!result?.data?.length) {
+                vscode.window.showInformationMessage("No semantic tokens returned. The server may not have indexed this document yet.");
+                return;
+            }
+            const tokens = new vscode.SemanticTokens(new Uint32Array(result.data));
+            const decoded = (0, semanticTokensDump_1.decodeSemanticTokens)(doc, tokens);
+            const token = (0, semanticTokensDump_1.getTokenAtPosition)(decoded, pos.line, pos.character);
+            const typeName = token
+                ? semanticTokensDump_1.SEMANTIC_TYPE_NAMES[token.type] ?? `?${token.type}`
+                : "(none)";
+            // Display 1-based line/col to match editor gutter
+            const line1 = pos.line + 1;
+            const col1 = pos.character + 1;
+            const msg = token
+                ? `Server token at line ${line1}, col ${col1}: "${token.text}" = ${typeName}`
+                : `No token at line ${line1}, col ${col1} (cursor may be in whitespace or between tokens)`;
+            vscode.window.showInformationMessage(msg);
+            (0, logger_1.log)(msg, "→ Use Developer: Inspect Editor Tokens and Scopes to compare with VS Code's rendering");
+        }
+        catch (err) {
+            (0, logger_1.logError)("Debug semantic token failed", err);
+            vscode.window.showErrorMessage(`Debug failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
     }));
     context.subscriptions.push(vscode.commands.registerCommand("sysml.clearCache", async () => {
         if (!client) {
