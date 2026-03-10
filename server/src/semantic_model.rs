@@ -4,7 +4,7 @@
 //! (packages, parts, ports, etc.); edges represent SysML relationships
 //! (typing, specializes, connection, bind, allocate, transition).
 
-use kerml_parser::ast::{Member, SourcePosition, SourceRange, SysMLDocument};
+use kerml_parser::ast::{Member, PartDef, SourcePosition, SourceRange, SysMLDocument};
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use petgraph::Direction;
@@ -300,7 +300,7 @@ impl SemanticGraph {
 pub fn build_graph_from_doc(doc: &SysMLDocument, uri: &Url) -> SemanticGraph {
     let mut g = SemanticGraph::new();
     for pkg in &doc.packages {
-        build_from_package(pkg, uri, None, &mut g);
+        build_from_package(pkg, uri, None, doc, &mut g);
     }
     g
 }
@@ -309,6 +309,7 @@ fn build_from_package(
     pkg: &kerml_parser::ast::Package,
     uri: &Url,
     container_prefix: Option<&str>,
+    doc: &SysMLDocument,
     g: &mut SemanticGraph,
 ) {
     let name = if pkg.name.is_empty() {
@@ -355,7 +356,7 @@ fn build_from_package(
     };
 
     for m in &pkg.members {
-        build_from_member(m, uri, prefix.as_deref(), &node_id, g);
+        build_from_member(m, uri, prefix.as_deref(), &node_id, doc, g);
     }
 }
 
@@ -377,6 +378,7 @@ fn build_from_member(
     uri: &Url,
     container_prefix: Option<&str>,
     parent_id: &NodeId,
+    doc: &SysMLDocument,
     g: &mut SemanticGraph,
 ) {
     use kerml_parser::ast::Member as M;
@@ -409,7 +411,7 @@ fn build_from_member(
             );
             let node_id = NodeId::new(uri, &qualified);
             relationships_from_member(member, uri, container_prefix, g);
-            recurse_members(&p.members, uri, Some(&qualified), g, &node_id);
+            recurse_members(&p.members, uri, Some(&qualified), g, &node_id, doc);
         }
         M::PartUsage(p) => {
             let name = p.name.as_deref().unwrap_or("(anonymous)");
@@ -440,7 +442,10 @@ fn build_from_member(
             );
             let node_id = NodeId::new(uri, &qualified);
             relationships_from_member(member, uri, container_prefix, g);
-            recurse_members(&p.members, uri, Some(&qualified), g, &node_id);
+            recurse_members(&p.members, uri, Some(&qualified), g, &node_id, doc);
+            if let Some(ref t) = p.type_ref {
+                expand_typed_part_usage(doc, uri, &qualified, t, container_prefix, &node_id, g);
+            }
         }
         M::AttributeDef(a) => {
             let range = member_range(a.range.as_ref(), a.name_position.as_ref());
@@ -465,7 +470,7 @@ fn build_from_member(
                 attrs,
                 parent_id,
             );
-            recurse_members(&a.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+            recurse_members(&a.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified), doc);
         }
         M::AttributeUsage(a) => {
             let range = member_range(a.range.as_ref(), a.name_position.as_ref());
@@ -510,7 +515,7 @@ fn build_from_member(
             );
             let node_id = NodeId::new(uri, &qualified);
             relationships_from_member(member, uri, container_prefix, g);
-            recurse_members(&p.members, uri, Some(&qualified), g, &node_id);
+            recurse_members(&p.members, uri, Some(&qualified), g, &node_id, doc);
         }
         M::PortUsage(p) => {
             let name = p.name.as_deref().unwrap_or("(anonymous)");
@@ -532,7 +537,7 @@ fn build_from_member(
             );
             let node_id = NodeId::new(uri, &qualified);
             relationships_from_member(member, uri, container_prefix, g);
-            recurse_members(&p.members, uri, Some(&qualified), g, &node_id);
+            recurse_members(&p.members, uri, Some(&qualified), g, &node_id, doc);
         }
         M::InterfaceDef(i) => {
             let range = member_range(i.range.as_ref(), i.name_position.as_ref());
@@ -547,7 +552,7 @@ fn build_from_member(
                 HashMap::new(),
                 parent_id,
             );
-            recurse_members(&i.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+            recurse_members(&i.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified), doc);
         }
         M::ConnectionUsage(c) => {
             let name = c.name.as_deref().unwrap_or("(connection)");
@@ -582,7 +587,7 @@ fn build_from_member(
                 attrs,
                 parent_id,
             );
-            recurse_members(&i.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+            recurse_members(&i.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified), doc);
         }
         M::ItemUsage(i) => {
             let range = member_range(i.range.as_ref(), i.name_position.as_ref());
@@ -621,7 +626,7 @@ fn build_from_member(
                 HashMap::new(),
                 parent_id,
             );
-            recurse_members(&r.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+            recurse_members(&r.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified), doc);
         }
         M::RequirementUsage(r) => {
             let range = member_range(r.range.as_ref(), r.name_position.as_ref());
@@ -636,7 +641,7 @@ fn build_from_member(
                 HashMap::new(),
                 parent_id,
             );
-            recurse_members(&r.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+            recurse_members(&r.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified), doc);
         }
         M::ActionDef(a) => {
             let range = member_range(a.range.as_ref(), a.name_position.as_ref());
@@ -676,7 +681,7 @@ fn build_from_member(
                 HashMap::new(),
                 parent_id,
             );
-            recurse_members(&s.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+            recurse_members(&s.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified), doc);
         }
         M::ExhibitState(s) => {
             let range = member_range(s.range.as_ref(), s.name_position.as_ref());
@@ -691,7 +696,7 @@ fn build_from_member(
                 HashMap::new(),
                 parent_id,
             );
-            recurse_members(&s.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+            recurse_members(&s.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified), doc);
         }
         M::UseCase(u) => {
             let range = member_range(u.range.as_ref(), u.name_position.as_ref());
@@ -706,7 +711,7 @@ fn build_from_member(
                 HashMap::new(),
                 parent_id,
             );
-            recurse_members(&u.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+            recurse_members(&u.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified), doc);
         }
         M::ActorDef(a) => {
             let range = member_range(a.range.as_ref(), a.name_position.as_ref());
@@ -725,10 +730,10 @@ fn build_from_member(
                 attrs,
                 parent_id,
             );
-            recurse_members(&a.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified));
+            recurse_members(&a.members, uri, Some(&qualified), g, &NodeId::new(uri, &qualified), doc);
         }
         M::Package(p) => {
-            build_from_package(p, uri, container_prefix, g);
+            build_from_package(p, uri, container_prefix, doc, g);
         }
         M::BindStatement(_) | M::AllocateStatement(_) | M::TransitionStatement(_) => {
             relationships_from_member(member, uri, container_prefix, g);
@@ -777,10 +782,198 @@ fn recurse_members(
     prefix: Option<&str>,
     g: &mut SemanticGraph,
     parent_id: &NodeId,
+    doc: &SysMLDocument,
 ) {
     for m in members {
-        build_from_member(m, uri, prefix, parent_id, g);
+        build_from_member(m, uri, prefix, parent_id, doc, g);
     }
+}
+
+/// Finds a PartDef in the document by qualified name (e.g. "SurveillanceDrone::FlightControlAndSensing").
+fn find_part_def_in_doc<'a>(
+    doc: &'a SysMLDocument,
+    qualified: &str,
+) -> Option<&'a PartDef> {
+    for pkg in &doc.packages {
+        let prefix = if pkg.name.is_empty() {
+            ""
+        } else {
+            pkg.name.as_str()
+        };
+        if let Some(found) = find_part_def_in_members(&pkg.members, prefix, qualified) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_part_def_in_members<'a>(
+    members: &'a [Member],
+    prefix: &str,
+    target: &str,
+) -> Option<&'a PartDef> {
+    use kerml_parser::ast::Member as M;
+    for m in members {
+        match m {
+            M::PartDef(p) => {
+                let q = qualified_name(
+                    if prefix.is_empty() {
+                        None
+                    } else {
+                        Some(prefix)
+                    },
+                    &p.name,
+                );
+                if q == target {
+                    return Some(p);
+                }
+                if let Some(found) = find_part_def_in_members(&p.members, &q, target) {
+                    return Some(found);
+                }
+            }
+            M::Package(pkg) => {
+                let q = qualified_name(
+                    if prefix.is_empty() {
+                        None
+                    } else {
+                        Some(prefix)
+                    },
+                    &pkg.name,
+                );
+                if let Some(found) = find_part_def_in_members(&pkg.members, &q, target) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Expands a typed PartUsage by adding nodes for the type's nested parts and ports.
+/// This ensures connection endpoints like "flightControl.flightController.motorCmd" exist.
+fn expand_typed_part_usage(
+    doc: &SysMLDocument,
+    uri: &Url,
+    usage_qualified: &str,
+    type_ref: &str,
+    _container_prefix: Option<&str>,
+    parent_id: &NodeId,
+    g: &mut SemanticGraph,
+) {
+    let pkg_prefix = usage_qualified
+        .split("::")
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("");
+    let candidates = type_ref_candidates(Some(pkg_prefix), type_ref);
+    let part_def = candidates
+        .iter()
+        .find_map(|c| find_part_def_in_doc(doc, c));
+    let Some(part_def) = part_def else { return };
+    expand_part_def_members(
+        doc,
+        uri,
+        usage_qualified,
+        part_def,
+        parent_id,
+        g,
+    );
+}
+
+fn expand_part_def_members(
+    doc: &SysMLDocument,
+    uri: &Url,
+    container_qualified: &str,
+    part_def: &PartDef,
+    parent_id: &NodeId,
+    g: &mut SemanticGraph,
+) {
+    use kerml_parser::ast::Member as M;
+    for m in &part_def.members {
+        match m {
+            M::PartDef(p) => {
+                let qualified = format!("{}::{}", container_qualified, p.name);
+                add_node_if_not_exists(g, uri, &qualified, "part def", p.name.clone(), parent_id);
+                if let Some(ref t) = p.type_ref {
+                    let def = type_ref_candidates(
+                        container_qualified.split("::").next(),
+                        t,
+                    )
+                    .iter()
+                    .find_map(|c| find_part_def_in_doc(doc, c));
+                    if let Some(inner) = def {
+                        expand_part_def_members(
+                            doc,
+                            uri,
+                            &qualified,
+                            inner,
+                            &NodeId::new(uri, &qualified),
+                            g,
+                        );
+                    }
+                }
+            }
+            M::PartUsage(p) => {
+                let name = p.name.as_deref().unwrap_or("(anonymous)");
+                let qualified = format!("{}::{}", container_qualified, name);
+                add_node_if_not_exists(g, uri, &qualified, "part", name.to_string(), parent_id);
+                if let Some(ref t) = p.type_ref {
+                    let def = type_ref_candidates(
+                        container_qualified.split("::").next(),
+                        t,
+                    )
+                    .iter()
+                    .find_map(|c| find_part_def_in_doc(doc, c));
+                    if let Some(inner) = def {
+                        expand_part_def_members(
+                            doc,
+                            uri,
+                            &qualified,
+                            inner,
+                            &NodeId::new(uri, &qualified),
+                            g,
+                        );
+                    }
+                }
+            }
+            M::PortDef(p) => {
+                let qualified = format!("{}::{}", container_qualified, p.name);
+                add_node_if_not_exists(g, uri, &qualified, "port def", p.name.clone(), parent_id);
+            }
+            M::PortUsage(p) => {
+                let name = p.name.as_deref().unwrap_or("(anonymous)");
+                let qualified = format!("{}::{}", container_qualified, name);
+                add_node_if_not_exists(g, uri, &qualified, "port", name.to_string(), parent_id);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn add_node_if_not_exists(
+    g: &mut SemanticGraph,
+    uri: &Url,
+    qualified: &str,
+    kind: &str,
+    name: String,
+    parent_id: &NodeId,
+) {
+    let node_id = NodeId::new(uri, qualified);
+    if g.node_index_by_id.contains_key(&node_id) {
+        return;
+    }
+    let node = SemanticNode {
+        id: node_id.clone(),
+        element_kind: kind.to_string(),
+        name,
+        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+        attributes: HashMap::new(),
+        parent_id: Some(parent_id.clone()),
+    };
+    let idx = g.graph.add_node(node);
+    g.node_index_by_id.insert(node_id.clone(), idx);
+    g.nodes_by_uri.entry(uri.clone()).or_default().push(node_id);
 }
 
 fn relationships_from_member(
@@ -1155,5 +1348,37 @@ mod tests {
             .filter(|(_, _, kind, _)| *kind == RelationshipKind::Transition)
             .collect();
         assert!(!transition_edges.is_empty(), "expected transition edges: {:?}", edges);
+    }
+
+    #[test]
+    fn typed_part_usage_expansion_adds_nested_port_nodes() {
+        // Typed PartUsages expand so connection endpoints (e.g. flightControl.flightController.motorCmd) exist.
+        let input = r#"
+            package P {
+                port def CmdPort {}
+                part def Child {
+                    port cmd : CmdPort;
+                }
+                part def Parent {
+                    part child : Child;
+                }
+                part def Root {
+                    part parent : Parent;
+                }
+            }
+        "#;
+        let doc = parse_sysml(input).expect("parse");
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let g = build_graph_from_doc(&doc, &uri);
+
+        // Expansion adds nested parts/ports under typed PartUsage so connection endpoints exist.
+        let port_id = NodeId::new(&uri, "P::Root::parent::child::cmd");
+        assert!(
+            g.node_index_by_id.contains_key(&port_id),
+            "expected port node P::Root::parent::child::cmd from typed part expansion; nodes: {:?}",
+            g.nodes_by_uri
+                .get(&uri)
+                .map(|v| v.iter().map(|id| id.qualified_name.as_str()).collect::<Vec<_>>())
+        );
     }
 }

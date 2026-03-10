@@ -293,13 +293,14 @@ pub fn build_ibd_for_uri(graph: &SemanticGraph, uri: &Url) -> IbdDataDto {
     let mut connectors = Vec::new();
     for (src, tgt, kind, _name) in &edges {
         if *kind == RelationshipKind::Connection {
-            let source_id = strip_package_prefix(src).to_string();
-            let target_id = strip_package_prefix(tgt).to_string();
+            // Use full qualified path in dot form for frontend findPartPos resolution
+            let source_id = src.replace("::", ".");
+            let target_id = tgt.replace("::", ".");
             connectors.push(IbdConnectorDto {
                 source: src.clone(),
                 target: tgt.clone(),
-                source_id: source_id.replace("::", "."),
-                target_id: target_id.replace("::", "."),
+                source_id,
+                target_id,
                 rel_type: "connection".to_string(),
             });
         }

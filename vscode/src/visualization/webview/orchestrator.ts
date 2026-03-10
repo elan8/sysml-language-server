@@ -822,7 +822,7 @@ let lastPillarStats = {};
         { id: 'packages', label: 'Packages', keywords: ['package'], color: '#6B7280' },
         { id: 'other', label: 'Other', keywords: [], color: '#808080' }
     ];
-    const expandedGeneralCategories = new Set(['partDefs', 'parts']);
+    const expandedGeneralCategories = new Set(['partDefs', 'parts', 'packages']);
 
     function renderGeneralChips(typeStats) {
         const container = document.getElementById('general-chips');
@@ -1168,8 +1168,76 @@ let lastPillarStats = {};
     }
 
     /**
+     * Build synthetic tree edges for General View: root PartDef → parts → typing → PartDef → nested parts.
+     * Returns { edges, rootId } for the usage-centric hierarchy.
+     */
+    function buildSyntheticTreeEdgesForGeneralView(nodes, edges) {
+        const getType = (e) => (e.type || e.rel_type || '').toLowerCase();
+        const containsList = edges.filter((e) => getType(e) === 'contains');
+        const typingList = edges.filter((e) => getType(e) === 'typing');
+        const nodeById = new Map();
+        nodes.forEach((n) => { if (n && n.id) nodeById.set(n.id, n); });
+        const nodeType = (n) => (n?.type || n?.element_type || '').toLowerCase();
+        const isPartDef = (n) => (n && nodeType(n).includes('part def'));
+        const isPartUsage = (n) => (n && (nodeType(n) === 'part' || nodeType(n).includes('part usage')));
+        const containsChildren = new Map();
+        const typingTarget = new Map();
+        containsList.forEach((e) => {
+            if (!containsChildren.has(e.source)) containsChildren.set(e.source, []);
+            containsChildren.get(e.source).push(e.target);
+        });
+        typingList.forEach((e) => {
+            const src = nodeById.get(e.source);
+            if (src && isPartUsage(src)) typingTarget.set(e.source, e.target);
+        });
+        const partDefsWithParts = [...containsChildren.entries()].filter(([pid, kids]) => {
+            const p = nodeById.get(pid);
+            return p && isPartDef(p) && kids.some((k) => isPartUsage(nodeById.get(k)));
+        });
+        const partDefIds = new Set(partDefsWithParts.map(([p]) => p));
+        const containedByPackageOrRoot = new Set();
+        containsList.forEach((e) => {
+            if (e.target && nodeById.get(e.source) && !isPartDef(nodeById.get(e.source))) {
+                containedByPackageOrRoot.add(e.target);
+            }
+        });
+        const hasNoParent = (id) => !containsList.some((e) => e.target === id);
+        const candidateRoots = partDefsWithParts
+            .filter(([pid]) => containedByPackageOrRoot.has(pid) || hasNoParent(pid))
+            .map(([pid]) => pid);
+        const pickRoot = () => {
+            const byName = candidateRoots.find((id) => (nodeById.get(id)?.name || '').includes('SurveillanceQuadrotorDrone') || (nodeById.get(id)?.name || '').includes('Drone'));
+            if (byName) return byName;
+            const byPartCount = [...candidateRoots].sort((a, b) =>
+                (containsChildren.get(b)?.length || 0) - (containsChildren.get(a)?.length || 0));
+            return byPartCount[0];
+        };
+        const rootId = candidateRoots.length ? pickRoot() : (partDefIds.size ? [...partDefIds][0] : null);
+        if (!rootId) return { edges: [], rootId: null };
+        const out = [];
+        const seen = new Set();
+        function visitPartDef(partDefId) {
+            if (seen.has(partDefId)) return;
+            seen.add(partDefId);
+            const kids = containsChildren.get(partDefId) || [];
+            kids.forEach((childId) => {
+                const c = nodeById.get(childId);
+                if (!c || !isPartUsage(c)) return;
+                out.push({ source: partDefId, target: childId, type: 'hierarchy' });
+                const defId = typingTarget.get(childId);
+                if (defId && nodeById.get(defId)) {
+                    out.push({ source: childId, target: defId, type: 'typing' });
+                    visitPartDef(defId);
+                }
+            });
+        }
+        visitPartDef(rootId);
+        return { edges: out, rootId };
+    }
+
+    /**
      * Convert graph (nodes + edges) to Cytoscape elements for General View.
-     * Filters nodes by expandedGeneralCategories, maps nodes to Cytoscape format, edges to hierarchy/relationship.
+     * Uses synthetic tree: root PartDef → parts → typing → PartDef → nested parts.
      */
     function graphToCytoscapeElementsForGeneralView(graph) {
         if (!graph || (!graph.nodes?.length && !graph.edges?.length)) {
@@ -1191,13 +1259,21 @@ let lastPillarStats = {};
             });
         }
         indexByKey(elementTree);
+        const { edges: syntheticEdges, rootId } = buildSyntheticTreeEdgesForGeneralView(nodes, edges);
+        const nodeIdsInTree = new Set();
+        syntheticEdges.forEach((e) => { nodeIdsInTree.add(e.source); nodeIdsInTree.add(e.target); });
+        if (rootId) nodeIdsInTree.add(rootId);
+        const typingTargetPartDefIds = new Set(syntheticEdges.filter((e) => e.type === 'typing').map((e) => e.target));
+        const useSyntheticTree = syntheticEdges.length > 0;
         const filteredNodes = nodes.filter((node) => {
             if (!node || isMetadataElement(node.type)) return false;
             const typeLower = (node.type || '').toLowerCase().trim();
             const isPackage = PACKAGE_TYPES.has(typeLower);
             const category = getCategoryForType(typeLower);
             const matchesCategory = isPackage ? expandedGeneralCategories.has('packages') : expandedGeneralCategories.has(category);
-            return matchesCategory;
+            const isPartDefTypingTarget = typingTargetPartDefIds.has(node.id);
+            const inSyntheticTree = nodeIdsInTree.has(node.id);
+            return (matchesCategory || isPartDefTypingTarget) && (!useSyntheticTree || inSyntheticTree);
         });
         const categoryOrder = new Map(GENERAL_VIEW_CATEGORIES.map((c, i) => [c.id, i]));
         filteredNodes.sort((a, b) => {
@@ -1248,14 +1324,22 @@ let lastPillarStats = {};
         });
         const validNodeIds = new Set(cyElements.filter((el) => el.group === 'nodes').map((el) => el.data.id));
         const hierarchyEdgeIds = new Set();
-        const relationshipEdgeIds = new Set();
+        const typingEdgeIds = new Set();
         const resolveCyId = (backendId) => idToCyId.get(backendId) || null;
-        edges.forEach((edge) => {
+        const edgesToUse = syntheticEdges.length ? syntheticEdges : edges.filter((e) => {
+            const t = (e.type || e.rel_type || '').toLowerCase();
+            return t === 'contains' || t === 'typing';
+        }).map((e) => ({
+            source: e.source,
+            target: e.target,
+            type: (e.type || e.rel_type || '').toLowerCase() === 'contains' ? 'hierarchy' : 'typing'
+        }));
+        edgesToUse.forEach((edge) => {
             const sourceCyId = resolveCyId(edge.source);
             const targetCyId = resolveCyId(edge.target);
             if (!sourceCyId || !targetCyId || sourceCyId === targetCyId || !validNodeIds.has(sourceCyId) || !validNodeIds.has(targetCyId)) return;
-            const isContains = (edge.type || '').toLowerCase() === 'contains';
-            if (isContains) {
+            const edgeType = edge.type || 'hierarchy';
+            if (edgeType === 'hierarchy') {
                 const edgeId = 'hier-' + sourceCyId + '-' + targetCyId;
                 if (!hierarchyEdgeIds.has(edgeId)) {
                     hierarchyEdgeIds.add(edgeId);
@@ -1264,16 +1348,10 @@ let lastPillarStats = {};
                         data: { id: edgeId, source: sourceCyId, target: targetCyId, type: 'hierarchy', label: '' }
                     });
                 }
-            } else {
-                const edgeId = 'rel-' + slugify(edge.type || 'rel') + '-' + sourceCyId + '-' + targetCyId;
-                if (!relationshipEdgeIds.has(edgeId)) {
-                    relationshipEdgeIds.add(edgeId);
-                    let edgeLabel = edge.name || '';
-                    if (!edgeLabel) {
-                        if (edge.type === 'typing') edgeLabel = ': ' + edge.target;
-                        else if (edge.type === 'specializes') edgeLabel = ':> ' + edge.target;
-                        else edgeLabel = edge.type || '';
-                    }
+            } else if (edgeType === 'typing') {
+                const edgeId = 'rel-typing-' + sourceCyId + '-' + targetCyId;
+                if (!typingEdgeIds.has(edgeId)) {
+                    typingEdgeIds.add(edgeId);
                     cyElements.push({
                         group: 'edges',
                         data: {
@@ -1281,8 +1359,8 @@ let lastPillarStats = {};
                             source: sourceCyId,
                             target: targetCyId,
                             type: 'relationship',
-                            relType: edge.type || 'relationship',
-                            label: edgeLabel
+                            relType: 'typing',
+                            label: ': ' + ((nodes.find((n) => n && n.id === edge.target)?.name) || edge.target.split(/[.::]+/).pop() || edge.target)
                         }
                     });
                 }

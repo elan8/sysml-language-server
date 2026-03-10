@@ -228,20 +228,23 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
         nodeDataMap.set(el.data.id, { sections, height: nodeHeight, typedByName });
     });
 
+    // Layout uses ALL edges (hierarchy + typing) so ELK positions the full tree correctly.
+    // Both edge types define parent→child in our synthetic tree; skipping typing causes
+    // PartDefs to be placed far from their parts and edges to cross nodes.
     const elkGraph = {
         id: 'root',
         layoutOptions: {
             'elk.algorithm': 'layered',
             'elk.direction': 'DOWN',
-            'elk.spacing.nodeNode': '150',
-            'elk.layered.spacing.nodeNodeBetweenLayers': '180',
-            'elk.spacing.edgeNode': '90',
-            'elk.spacing.edgeEdge': '80',
+            'elk.spacing.nodeNode': '220',
+            'elk.layered.spacing.nodeNodeBetweenLayers': '280',
+            'elk.spacing.edgeNode': '120',
+            'elk.spacing.edgeEdge': '120',
             'elk.edgeRouting': 'ORTHOGONAL',
             'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
             'elk.separateConnectedComponents': 'true',
             'elk.aspectRatio': '1.4',
-            'elk.padding': '[top=80,left=80,bottom=80,right=80]',
+            'elk.padding': '[top=100,left=100,bottom=100,right=100]',
             'org.eclipse.elk.portConstraints': 'FIXED_SIDE',
             'org.eclipse.elk.json.edgeCoords': 'ROOT'
         },
@@ -330,12 +333,24 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
     const nodeGroup = g.append('g').attr('class', 'general-nodes');
 
     const laidOutEdges = laidOut?.edges ?? [];
+    // For typing edges to same target, assign offsets to reduce overlap
+    const typingByTarget = new Map<string, Array<{ el: any; idx: number }>>();
+    cyEdges.forEach((el: any, idx: number) => {
+        const t = (el.data.type || el.data.relType || '').toLowerCase();
+        if (t === 'typing') {
+            const tgt = el.data.target;
+            if (!typingByTarget.has(tgt)) typingByTarget.set(tgt, []);
+            typingByTarget.get(tgt)!.push({ el, idx });
+        }
+    });
     cyEdges.forEach((el: any, edgeIdx: number) => {
         const srcPos = nodePositions.get(el.data.source);
         const tgtPos = nodePositions.get(el.data.target);
         if (!srcPos || !tgtPos) return;
 
+        const relType = (el.data.relType || el.data.type || 'relationship').toLowerCase();
         const elkEdge = laidOutEdges[edgeIdx];
+
         let pathD: string;
         if (elkEdge?.sections) {
             const elkPath = pathFromElkSections(elkEdge.sections);
@@ -344,14 +359,22 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
                 tgtRect: { x: tgtPos.x, y: tgtPos.y, width: tgtPos.width, height: tgtPos.height }
             }).pathD;
         } else {
+            let offset = 0;
+            if (relType === 'typing') {
+                const group = typingByTarget.get(el.data.target) || [];
+                const rank = group.findIndex((x) => x.el === el);
+                if (rank >= 0 && group.length > 1) {
+                    offset = (rank - (group.length - 1) / 2) * 18;
+                }
+            }
             const { pathD: fallbackPath } = computeOrthogonalPath(0, 0, 0, 0, {
                 srcRect: { x: srcPos.x, y: srcPos.y, width: srcPos.width, height: srcPos.height },
-                tgtRect: { x: tgtPos.x, y: tgtPos.y, width: tgtPos.width, height: tgtPos.height }
+                tgtRect: { x: tgtPos.x, y: tgtPos.y, width: tgtPos.width, height: tgtPos.height },
+                offset
             });
             pathD = fallbackPath;
         }
 
-        const relType = (el.data.relType || el.data.type || 'relationship').toLowerCase();
         let strokeColor = GENERAL_VIEW_PALETTE.other.default;
         let strokeDash = 'none';
         let markerEnd = 'url(#general-d3-arrow)';
