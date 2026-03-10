@@ -9,19 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Shared SysML node builder for diagram views with configurable compartments (Header, Attributes, Ports, Parts).
-
-### Changed
-
-- General View and Interconnection View now use standard SysML-style compartments: Header, Attributes, Ports, Parts.
-- Compartment titles are bold; compartments use divider lines only (no filled backgrounds).
-- Each compartment draws only a top divider line (no bottom line) to avoid double lines between adjacent compartments.
-- Header compartment height increased so compartment boundaries no longer overlap the node name.
-
-### Fixed
-
-- Attributes compartment top edge no longer cuts through the header text in diagram nodes.
-- Removed duplicate line between Attributes and Ports compartments.
+- **General View diagram** — New diagram view showing the model structure with element hierarchy, attributes, ports, and parts. Nodes use standard SysML-style compartments.
 
 ## [0.2.2] - 2026-03-06
 
