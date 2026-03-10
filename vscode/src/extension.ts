@@ -18,6 +18,7 @@ import {
   VisualizationPanel,
   VisualizerRestoreState,
 } from "./visualization/visualizationPanel";
+import { ENABLED_VIEWS } from "./visualization/webview/constants";
 import { getWebviewHtml } from "./visualization/htmlBuilder";
 
 let client: LanguageClient | undefined;
@@ -378,9 +379,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const visualizationViews = [
     { id: "general-view", label: "General", description: "General view (SysML v2 general-view)" },
     { id: "interconnection-view", label: "Interconnection", description: "Parts, ports, connections (SysML v2 interconnection-view)" },
-    { id: "action-flow-view", label: "Action Flow", description: "Actions and flow (SysML v2 action-flow-view)" },
-    { id: "state-transition-view", label: "State Transition", description: "States and transitions (SysML v2 state-transition-view)" },
-    { id: "sequence-view", label: "Sequence", description: "Interactions (SysML v2 sequence-view)" },
+    // Disabled for next release: action-flow-view, state-transition-view, sequence-view
   ];
 
   context.subscriptions.push(
@@ -664,7 +663,8 @@ export function activate(context: vscode.ExtensionContext): void {
         selectedViewId = selected?.viewId;
       }
       if (selectedViewId) {
-        VisualizationPanel.currentPanel.changeView(selectedViewId);
+        const view = ENABLED_VIEWS.has(selectedViewId) ? selectedViewId : 'general-view';
+        VisualizationPanel.currentPanel.changeView(view);
       }
     })
   );

@@ -28,6 +28,7 @@ const vscode = __importStar(require("vscode"));
 const messageHandlers_1 = require("./messageHandlers");
 const updateFlow_1 = require("./updateFlow");
 const htmlBuilder_1 = require("./htmlBuilder");
+const constants_1 = require("./webview/constants");
 exports.RESTORE_STATE_KEY = 'sysmlVisualizerRestoreState';
 async function createCombinedDocumentProxy(fileUris) {
     const openDocs = [];
@@ -82,7 +83,7 @@ class VisualizationPanel {
         this._fileUris = []; // All source file URIs (for folder-level visualization)
         this._extensionVersion = '';
         this._fileUris = fileUris ?? [];
-        if (initialCurrentView) {
+        if (initialCurrentView && constants_1.ENABLED_VIEWS.has(initialCurrentView)) {
             this._currentView = initialCurrentView;
         }
         this._extensionVersion = vscode.extensions.getExtension('Elan8.sysml-language-server')?.packageJSON?.version ?? '0.0.0';
@@ -220,7 +221,8 @@ class VisualizationPanel {
         if (savedState.title) {
             panel.title = savedState.title;
         }
-        VisualizationPanel.currentPanel = new VisualizationPanel(panel, extensionUri, document, lspModelProvider, fileUris, context, savedState.currentView);
+        const view = constants_1.ENABLED_VIEWS.has(savedState.currentView) ? savedState.currentView : 'general-view';
+        VisualizationPanel.currentPanel = new VisualizationPanel(panel, extensionUri, document, lspModelProvider, fileUris, context, view);
     }
     exportVisualization(format, scale = 2) {
         this._panel.webview.postMessage({ command: 'export', format: format.toLowerCase(), scale });

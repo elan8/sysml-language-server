@@ -35,7 +35,8 @@ function mergeGraphs(graphs) {
             }
         }
         for (const edge of g.edges ?? []) {
-            const key = `${edge.type}::${edge.source}::${edge.target}`;
+            const edgeType = edge.type || edge.rel_type || '';
+            const key = `${edgeType}::${edge.source}::${edge.target}`;
             if (!edgeKeys.has(key)) {
                 edgeKeys.add(key);
                 edges.push(edge);
@@ -70,9 +71,12 @@ async function fetchModelData(params) {
             allActivityDiagrams.push(...result.activityDiagrams);
     }
     const mergedGraph = mergeGraphs(allGraphs);
+    const primaryResult = results.find(r => r.graph?.nodes?.length || r.graph?.edges?.length) ?? results[0];
+    const ibd = primaryResult?.ibd;
     const msg = {
         command: 'update',
         graph: mergedGraph,
+        ibd,
         sequenceDiagrams: allSequenceDiagrams,
         activityDiagrams: allActivityDiagrams,
         currentView,

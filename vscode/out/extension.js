@@ -33,6 +33,7 @@ const lspModelProvider_1 = require("./providers/lspModelProvider");
 const modelExplorerProvider_1 = require("./explorer/modelExplorerProvider");
 const logger_1 = require("./logger");
 const visualizationPanel_1 = require("./visualization/visualizationPanel");
+const constants_1 = require("./visualization/webview/constants");
 const htmlBuilder_1 = require("./visualization/htmlBuilder");
 let client;
 let statusItem;
@@ -287,9 +288,7 @@ function activate(context) {
     const visualizationViews = [
         { id: "general-view", label: "General", description: "General view (SysML v2 general-view)" },
         { id: "interconnection-view", label: "Interconnection", description: "Parts, ports, connections (SysML v2 interconnection-view)" },
-        { id: "action-flow-view", label: "Action Flow", description: "Actions and flow (SysML v2 action-flow-view)" },
-        { id: "state-transition-view", label: "State Transition", description: "States and transitions (SysML v2 state-transition-view)" },
-        { id: "sequence-view", label: "Sequence", description: "Interactions (SysML v2 sequence-view)" },
+        // Disabled for next release: action-flow-view, state-transition-view, sequence-view
     ];
     context.subscriptions.push(vscode.commands.registerCommand("sysml.showVisualizer", async () => {
         if (!client) {
@@ -507,7 +506,8 @@ function activate(context) {
             selectedViewId = selected?.viewId;
         }
         if (selectedViewId) {
-            visualizationPanel_1.VisualizationPanel.currentPanel.changeView(selectedViewId);
+            const view = constants_1.ENABLED_VIEWS.has(selectedViewId) ? selectedViewId : 'general-view';
+            visualizationPanel_1.VisualizationPanel.currentPanel.changeView(view);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand("sysml.visualizeFolderWithView", async (uri, selectedUris) => {

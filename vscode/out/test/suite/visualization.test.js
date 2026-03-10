@@ -30,9 +30,6 @@ const visualizationPanel_1 = require("../../visualization/visualizationPanel");
 const VIEW_IDS = [
     "general-view",
     "interconnection-view",
-    "action-flow-view",
-    "state-transition-view",
-    "sequence-view",
 ];
 describe("Visualization Diagram Views", () => {
     it("exports SVG for all views", async function () {
@@ -67,6 +64,15 @@ describe("Visualization Diagram Views", () => {
                 assert.fail(`${viewId}.svg was not created in test-output/diagrams/`);
             }
         }
+        // Interconnection view must show SurveillanceQuadrotorDrone as root (backend defaultRoot).
+        // SVG may draw child containers before the root, so find the root by matching its name.
+        const ibdSvgUri = vscode.Uri.joinPath(outputDir, "interconnection-view.svg");
+        const ibdSvgBytes = await vscode.workspace.fs.readFile(ibdSvgUri);
+        const ibdSvg = new TextDecoder("utf-8").decode(ibdSvgBytes);
+        const hasRoot = /data-element-name="SurveillanceQuadrotorDrone"/.test(ibdSvg);
+        assert.ok(hasRoot, "interconnection-view.svg must contain root part SurveillanceQuadrotorDrone (backend defaultRoot).");
+        const hasNested = /data-element-name="propulsionUnit1"/.test(ibdSvg);
+        assert.ok(hasNested, "interconnection-view.svg must show nested parts (propulsionUnit1 under propulsion).");
     });
 });
 //# sourceMappingURL=visualization.test.js.map

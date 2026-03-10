@@ -10,6 +10,9 @@ export const MAX_SYSML_ZOOM = 5;
 
 export const STRUCTURAL_VIEWS = new Set(['general-view']);
 
+/** Views enabled for the current release. Disabled: action-flow-view, state-transition-view, sequence-view */
+export const ENABLED_VIEWS = new Set(['general-view', 'interconnection-view']);
+
 export const ORIENTATION_LABELS: Record<string, string> = {
     horizontal: 'Horizontal',
     linear: 'Linear (Top-Down)',
@@ -30,9 +33,7 @@ export const STATE_LAYOUT_ICONS: Record<string, string> = {
 export const VIEW_OPTIONS: Record<string, { label: string }> = {
     'general-view': { label: 'General View' },
     'interconnection-view': { label: 'Interconnection View' },
-    'action-flow-view': { label: 'Action Flow View' },
-    'state-transition-view': { label: 'State Transition View' },
-    'sequence-view': { label: 'Sequence View' },
+    // Disabled for next release: action-flow-view, state-transition-view, sequence-view
 };
 
 /**

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { LspModelProvider } from '../providers/lspModelProvider';
-import type { SysMLGraphDTO } from '../providers/sysmlModelTypes';
+import type { SysMLGraphDTO, IbdDataDTO } from '../providers/sysmlModelTypes';
 export interface FetchModelParams {
     documentUri: string;
     fileUris: vscode.Uri[];
@@ -11,6 +11,7 @@ export interface FetchModelParams {
 export interface UpdateMessage {
     command: 'update';
     graph?: SysMLGraphDTO;
+    ibd?: IbdDataDTO;
     sequenceDiagrams: unknown[];
     activityDiagrams: unknown[];
     currentView: string;

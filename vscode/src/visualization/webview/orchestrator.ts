@@ -68,6 +68,7 @@ import { createExportHandler } from './export';
     let currentView = 'general-view';  // SysML v2 general-view as default
     let selectedDiagramIndex = 0; // Track currently selected diagram for multi-diagram views
     let selectedDiagramName = null; // Track selected diagram by name to preserve across updates
+    let selectedIbdRoot = null; // Block to show as root in Interconnection View (IBD)
     let activityDebugLabels = false; // Toggle for showing debug labels on forks/joins in Activity view
     let lastView = currentView;
     let svg = null;
@@ -127,6 +128,17 @@ let lastPillarStats = {};
         }
         // Reset cursor to default
         document.body.style.cursor = '';
+    }
+
+    // Send logs to the extension Output channel (works in tests too)
+    function webviewLog(level: 'info' | 'warn' | 'error', ...args: any[]) {
+        try {
+            if (vscode && typeof vscode.postMessage === 'function') {
+                vscode.postMessage({ command: 'webviewLog', level, args });
+            }
+        } catch {
+            // ignore
+        }
     }
 
     // Activity Debug Labels toggle
@@ -2814,38 +2826,31 @@ let lastPillarStats = {};
             diagrams = currentData?.sequenceDiagrams || [];
             labelText = 'Sequence';
         } else if (activeView === 'interconnection-view') {
-            // For these views, extract top-level packages (same as elk/General View)
-            const elements = currentData?.elements ?? (currentData?.graph ? graphToElementTree(currentData.graph) : []);
-
-            const packagesArray = [];
-            const seenPackages = new Set();
-
-            // Always add "All Packages" option first
-            diagrams.push({ name: 'All Packages', element: null, isAll: true });
-
-            // Find all packages recursively up to depth 3 (SysML v2 spec allows nested packages)
-            function findPackagesForView(elementList, depth = 0) {
-                elementList.forEach(el => {
-                    const typeLower = (el.type || '').toLowerCase();
-                    if (typeLower.includes('package') && !seenPackages.has(el.name)) {
-                        seenPackages.add(el.name);
-                        packagesArray.push({ name: el.name, element: el });
-                    }
-                    // Recurse into all children to find nested packages
-                    if (el.children && el.children.length > 0) {
-                        findPackagesForView(el.children, depth + 1);
-                    }
-                });
+            const preparedData = prepareDataForView({ ...currentData, selectedIbdRoot }, 'interconnection-view');
+            const candidates = preparedData?.ibdRootCandidates || [];
+            if (candidates.length > 0) {
+                diagrams = candidates.map(name => ({ name }));
+                labelText = 'Block';
+                const preferredRoot = preparedData?.selectedIbdRoot && candidates.indexOf(preparedData.selectedIbdRoot) >= 0
+                    ? preparedData.selectedIbdRoot
+                    : (selectedIbdRoot && candidates.indexOf(selectedIbdRoot) >= 0 ? selectedIbdRoot : candidates[0] || null);
+                selectedDiagramIndex = preferredRoot ? candidates.indexOf(preferredRoot) : 0;
+                selectedDiagramName = preferredRoot;
+                selectedIbdRoot = selectedDiagramName;
+                try {
+                    webviewLog('info', '[IBD] selector', {
+                        candidates,
+                        preferredRoot,
+                        selectedIbdRoot_state: selectedIbdRoot,
+                        selectedDiagramIndex,
+                    });
+                } catch {
+                    // ignore
+                }
+            } else {
+                diagrams = [{ name: 'Default', element: null }];
+                labelText = 'Block';
             }
-
-            findPackagesForView(elements);
-
-            // Add packages to diagrams array
-            packagesArray.forEach(pkg => {
-                diagrams.push(pkg);
-            });
-
-            labelText = 'Package';
         }
 
         // Show/hide selector based on number of diagrams
@@ -2885,6 +2890,7 @@ let lastPillarStats = {};
             item.addEventListener('click', function() {
                 selectedDiagramIndex = idx;
                 selectedDiagramName = d.name;
+                if (activeView === 'interconnection-view') selectedIbdRoot = d.name;
                 // Update active state
                 pkgMenu.querySelectorAll('.view-dropdown-item').forEach(i => i.classList.remove('active'));
                 item.classList.add('active');
@@ -3050,7 +3056,31 @@ let lastPillarStats = {};
             }
         }
 
-        const dataToRender = prepareDataForView(baseData, view);
+        const dataForPrepare = view === 'interconnection-view' ? { ...baseData, selectedIbdRoot } : baseData;
+        const dataToRender = prepareDataForView(dataForPrepare, view);
+        if (view === 'interconnection-view') {
+            const ibd = (dataForPrepare as any)?.ibd;
+            const deepPropulsion = Array.isArray(ibd?.parts)
+                ? ibd.parts
+                    .map((p: any) => p?.qualifiedName)
+                    .filter((qn: any) => typeof qn === 'string' && qn.includes('.propulsion.') && qn.split('.').length >= 4)
+                : [];
+            webviewLog(
+                'info',
+                '[IBD] prepare',
+                {
+                    hasIbd: !!ibd,
+                    defaultRoot: ibd?.defaultRoot ?? null,
+                    rootCandidates: Array.isArray(ibd?.rootCandidates) ? ibd.rootCandidates : null,
+                    selectedIbdRoot_state: selectedIbdRoot ?? null,
+                    selectedIbdRoot_prepared: (dataToRender as any)?.selectedIbdRoot ?? null,
+                    partsCount: Array.isArray((dataToRender as any)?.parts) ? (dataToRender as any).parts.length : null,
+                    connectorsCount: Array.isArray((dataToRender as any)?.connectors) ? (dataToRender as any).connectors.length : null,
+                    deepPropulsionCount: deepPropulsion.length,
+                    deepPropulsionSample: deepPropulsion.slice(0, 5),
+                }
+            );
+        }
 
         isRendering = true;
 

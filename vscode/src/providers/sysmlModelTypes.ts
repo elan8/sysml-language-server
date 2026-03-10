@@ -27,7 +27,9 @@ export interface GraphNodeDTO {
 export interface GraphEdgeDTO {
   source: string;
   target: string;
-  type: string;
+  /** Preferred; server may send rel_type instead of type */
+  type?: string;
+  rel_type?: string;
   name?: string;
 }
 
@@ -60,11 +62,44 @@ export interface SysMLModelParams {
   scope?: Array<"graph" | "stats" | "sequenceDiagrams" | "activityDiagrams">;
 }
 
+export interface IbdPartDTO {
+  id: string;
+  name: string;
+  qualifiedName: string;
+  containerId?: string;
+  type: string;
+  attributes?: Record<string, unknown>;
+}
+
+export interface IbdPortDTO {
+  id: string;
+  name: string;
+  parentId: string;
+  direction?: string;
+}
+
+export interface IbdConnectorDTO {
+  source: string;
+  target: string;
+  sourceId: string;
+  targetId: string;
+  type: string;
+}
+
+export interface IbdDataDTO {
+  parts: IbdPartDTO[];
+  ports: IbdPortDTO[];
+  connectors: IbdConnectorDTO[];
+  rootCandidates: string[];
+  defaultRoot?: string;
+}
+
 export interface SysMLModelResult {
   version: number;
   graph?: SysMLGraphDTO;
   sequenceDiagrams?: SequenceDiagramDTO[];
   activityDiagrams?: ActivityDiagramDTO[];
+  ibd?: IbdDataDTO;
   stats?: SysMLModelStatsDTO;
 }
 

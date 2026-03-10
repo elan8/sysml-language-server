@@ -35,6 +35,15 @@ function createMessageDispatcher(ctx) {
     return (message) => {
         switch (message.command) {
             case 'webviewLog':
+                // Also mirror to console so extension tests capture it.
+                // The Output channel is not always visible in test logs.
+                try {
+                    // eslint-disable-next-line no-console
+                    console.log('[SysML Visualizer][WebviewLog]', message.level, ...(message.args ?? []));
+                }
+                catch {
+                    // ignore
+                }
                 handlers.logWebviewMessage(message.level, message.args ?? []);
                 break;
             case 'jumpToElement':

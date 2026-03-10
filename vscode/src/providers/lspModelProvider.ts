@@ -17,9 +17,10 @@ function graphNodeToElementDTO(
 ): SysMLElementDTO {
   const children = (graph.nodes || []).filter((n) => n.parentId === node.id);
   const childDTOs = children.map((c) => graphNodeToElementDTO(c, graph));
+  const edgeType = (e: { type?: string; rel_type?: string }) => e.type || e.rel_type || '';
   const relationships = (graph.edges || [])
-    .filter((e) => e.source === node.id && (e.type || "").toLowerCase() !== "contains")
-    .map((e) => ({ source: e.source, target: e.target, type: e.type, name: e.name }));
+    .filter((e) => e.source === node.id && edgeType(e).toLowerCase() !== 'contains')
+    .map((e) => ({ source: e.source, target: e.target, type: edgeType(e), name: e.name }));
   return {
     type: node.type,
     name: node.name,

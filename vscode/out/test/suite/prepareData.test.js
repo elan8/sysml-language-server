@@ -108,7 +108,7 @@ const createMockData = (overrides = {}) => ({
     ...overrides
 });
 describe("prepareDataForView", () => {
-    const VIEW_IDS = ["general-view", "interconnection-view", "action-flow-view", "state-transition-view", "sequence-view"];
+    const VIEW_IDS = ["general-view", "interconnection-view"];
     VIEW_IDS.forEach((viewId) => {
         it(`returns non-null for view "${viewId}"`, () => {
             const data = createMockData();
@@ -132,18 +132,18 @@ describe("prepareDataForView", () => {
         assert.ok(Array.isArray(result.connectors), "interconnection-view should have connectors array");
         assert.ok(Array.isArray(result.ports), "interconnection-view should have ports array");
     });
-    it("action-flow-view produces diagrams", () => {
+    it.skip("action-flow-view produces diagrams (disabled for release)", () => {
         const data = createMockData();
         const result = (0, prepareData_1.prepareDataForView)(data, "action-flow-view");
         assert.ok(Array.isArray(result.diagrams), "action-flow-view should have diagrams array");
     });
-    it("state-transition-view produces states and transitions", () => {
+    it.skip("state-transition-view produces states and transitions (disabled for release)", () => {
         const data = createMockData();
         const result = (0, prepareData_1.prepareDataForView)(data, "state-transition-view");
         assert.ok(Array.isArray(result.states), "state-transition-view should have states array");
         assert.ok(Array.isArray(result.transitions), "state-transition-view should have transitions array");
     });
-    it("sequence-view produces sequenceDiagrams", () => {
+    it.skip("sequence-view produces sequenceDiagrams (disabled for release)", () => {
         const data = createMockData();
         const result = (0, prepareData_1.prepareDataForView)(data, "sequence-view");
         assert.ok(Array.isArray(result.sequenceDiagrams), "sequence-view should have sequenceDiagrams array");
@@ -185,6 +185,50 @@ describe("prepareDataForView", () => {
         assert.strictEqual(roots[0].name, "root");
         assert.strictEqual(roots[0].children?.length, 1);
         assert.strictEqual(roots[0].children[0].name, "child");
+    });
+    describe("interconnection-view with backend IBD (no fallback)", () => {
+        const mockIbdFromBackend = {
+            parts: [
+                { id: "SurveillanceDrone::SurveillanceQuadrotorDrone", name: "SurveillanceQuadrotorDrone", qualifiedName: "SurveillanceDrone.SurveillanceQuadrotorDrone", containerId: null, type: "part def", attributes: {} },
+                { id: "SurveillanceDrone::SurveillanceQuadrotorDrone::propulsion", name: "propulsion", qualifiedName: "SurveillanceDrone.SurveillanceQuadrotorDrone.propulsion", containerId: "SurveillanceDrone.SurveillanceQuadrotorDrone", type: "part", attributes: {} },
+                { id: "SurveillanceDrone::SurveillanceQuadrotorDrone::flightControl", name: "flightControl", qualifiedName: "SurveillanceDrone.SurveillanceQuadrotorDrone.flightControl", containerId: "SurveillanceDrone.SurveillanceQuadrotorDrone", type: "part", attributes: {} },
+                { id: "SurveillanceDrone::Propulsion", name: "Propulsion", qualifiedName: "SurveillanceDrone.Propulsion", containerId: null, type: "part def", attributes: {} },
+                { id: "SurveillanceDrone::Propulsion::propulsionUnit1", name: "propulsionUnit1", qualifiedName: "SurveillanceDrone.Propulsion.propulsionUnit1", containerId: "SurveillanceDrone.Propulsion", type: "part", attributes: {} },
+            ],
+            ports: [],
+            connectors: [],
+            rootCandidates: ["SurveillanceQuadrotorDrone", "Propulsion"],
+            defaultRoot: "SurveillanceQuadrotorDrone",
+        };
+        it("uses defaultRoot when no selectedIbdRoot (SurveillanceQuadrotorDrone)", () => {
+            const data = { graph: { nodes: [], edges: [] }, ibd: mockIbdFromBackend };
+            const result = (0, prepareData_1.prepareDataForView)(data, "interconnection-view");
+            assert.strictEqual(result.selectedIbdRoot, "SurveillanceQuadrotorDrone", "selectedIbdRoot must be backend defaultRoot");
+            assert.ok(Array.isArray(result.parts) && result.parts.length >= 2, "parts must include root and children");
+            const rootPart = result.parts.find((p) => p.name === "SurveillanceQuadrotorDrone");
+            assert.ok(rootPart, "root part must be SurveillanceQuadrotorDrone");
+            const prefix = "SurveillanceDrone.SurveillanceQuadrotorDrone";
+            const allUnderSqd = result.parts.every((p) => {
+                const q = p.qualifiedName || "";
+                return q === prefix || q.startsWith(prefix + ".");
+            });
+            assert.ok(allUnderSqd, "focused parts must be under SurveillanceQuadrotorDrone");
+        });
+        it("uses user selectedIbdRoot (Propulsion) when provided", () => {
+            const data = { graph: { nodes: [], edges: [] }, ibd: mockIbdFromBackend, selectedIbdRoot: "Propulsion" };
+            const result = (0, prepareData_1.prepareDataForView)(data, "interconnection-view");
+            assert.strictEqual(result.selectedIbdRoot, "Propulsion");
+            const rootPart = result.parts.find((p) => p.name === "Propulsion");
+            assert.ok(rootPart, "root part must be Propulsion when selected");
+        });
+        it("returns empty IBD when no backend ibd (no fallback)", () => {
+            const data = { graph: { nodes: [{ id: "a", name: "A", type: "part def" }], edges: [] } };
+            const result = (0, prepareData_1.prepareDataForView)(data, "interconnection-view");
+            assert.deepStrictEqual(result.parts, []);
+            assert.deepStrictEqual(result.ports, []);
+            assert.deepStrictEqual(result.connectors, []);
+            assert.strictEqual(result.selectedIbdRoot, null);
+        });
     });
 });
 //# sourceMappingURL=prepareData.test.js.map

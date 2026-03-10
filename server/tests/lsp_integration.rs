@@ -997,6 +997,150 @@ fn lsp_workspace_scan_goto_definition() {
     let _ = child.kill();
 }
 
+/// sysml/model with scope ["graph"] returns ibd with defaultRoot = SurveillanceQuadrotorDrone
+/// (largest top-level part tree), not Propulsion. Validates IBD backend for interconnection-view.
+#[test]
+fn lsp_sysml_model_ibd_default_root() {
+    let mut child = spawn_server();
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = child.stdout.take().expect("stdout");
+
+    let uri = "file:///ibd_test.sysml";
+    let content = r#"
+package SurveillanceDrone {
+    port def MotorCommandPort { }
+    port def PowerPort { }
+    part def PropulsionUnit {
+        port cmd : ~MotorCommandPort;
+        port pwr : ~PowerPort;
+    }
+    part def Propulsion {
+        part propulsionUnit1 : PropulsionUnit;
+        part propulsionUnit2 : PropulsionUnit;
+        part propulsionUnit3 : PropulsionUnit;
+        part propulsionUnit4 : PropulsionUnit;
+    }
+    part def FlightController {
+        port motorCmd : ~MotorCommandPort;
+        port pwr : ~PowerPort;
+    }
+    part def FlightControlAndSensing {
+        part flightController : FlightController;
+    }
+    part def SurveillanceQuadrotorDrone {
+        part propulsion : Propulsion;
+        part flightControl : FlightControlAndSensing;
+        connect flightControl.flightController.motorCmd to propulsion.propulsionUnit1.cmd;
+    }
+}
+"#;
+
+    let init_id = next_id();
+    let init_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": init_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": null,
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "0.1.0" }
+        }
+    });
+    send_message(&mut stdin, &init_req.to_string());
+    let _ = read_message(&mut stdout).expect("init response");
+
+    let initialized = serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} });
+    send_message(&mut stdin, &initialized.to_string());
+
+    let did_open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": { "uri": uri, "languageId": "sysml", "version": 1, "text": content }
+        }
+    });
+    send_message(&mut stdin, &did_open.to_string());
+    std::thread::sleep(std::time::Duration::from_millis(120));
+
+    let model_id = next_id();
+    let model_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": model_id,
+        "method": "sysml/model",
+        "params": {
+            "textDocument": { "uri": uri },
+            "scope": ["graph"]
+        }
+    });
+    send_message(&mut stdin, &model_req.to_string());
+    let model_resp = read_response(&mut stdout, model_id).expect("sysml/model response");
+    let model_json: serde_json::Value = serde_json::from_str(&model_resp).expect("parse sysml/model response");
+    assert_eq!(model_json["id"], model_id);
+    let result = &model_json["result"];
+    let ibd = result.get("ibd").expect("sysml/model with scope graph should return ibd");
+    let default_root = ibd["defaultRoot"].as_str().expect("ibd should have defaultRoot");
+    assert_eq!(
+        default_root,
+        "SurveillanceQuadrotorDrone",
+        "defaultRoot must be SurveillanceQuadrotorDrone (largest tree), got: {}",
+        default_root
+    );
+
+    let root_candidates = ibd["rootCandidates"].as_array().expect("ibd should have rootCandidates");
+    assert!(
+        root_candidates.iter().any(|c| c.as_str() == Some("SurveillanceQuadrotorDrone")),
+        "rootCandidates should include SurveillanceQuadrotorDrone: {:?}",
+        root_candidates
+    );
+    assert!(
+        root_candidates.iter().any(|c| c.as_str() == Some("Propulsion")),
+        "rootCandidates should include Propulsion: {:?}",
+        root_candidates
+    );
+
+    let parts = ibd["parts"].as_array().expect("ibd should have parts");
+    let sqd_parts: Vec<_> = parts
+        .iter()
+        .filter(|p| {
+            let qn = p["qualifiedName"].as_str().unwrap_or("");
+            qn == "SurveillanceDrone.SurveillanceQuadrotorDrone"
+                || qn.starts_with("SurveillanceDrone.SurveillanceQuadrotorDrone.")
+        })
+        .collect();
+
+    assert!(
+        sqd_parts.len() >= 8,
+        "IBD must include complete part tree: root + propulsion + flightControl + 4 propulsionUnit + flightController; got {}: {:?}",
+        sqd_parts.len(),
+        sqd_parts.iter().map(|p| p["qualifiedName"].as_str()).collect::<Vec<_>>()
+    );
+
+    let has_propulsion_units = sqd_parts.iter().any(|p| {
+        let qn = p["qualifiedName"].as_str().unwrap_or("");
+        qn.contains(".propulsion.propulsionUnit")
+    });
+    assert!(
+        has_propulsion_units,
+        "IBD must include nested parts under propulsion (propulsionUnit1..4); got: {:?}",
+        sqd_parts.iter().map(|p| p["qualifiedName"].as_str()).collect::<Vec<_>>()
+    );
+
+    let has_flight_controller = sqd_parts.iter().any(|p| {
+        let qn = p["qualifiedName"].as_str().unwrap_or("");
+        qn.contains(".flightControl.flightController")
+    });
+    assert!(
+        has_flight_controller,
+        "IBD must include nested part under flightControl (flightController); got: {:?}",
+        sqd_parts.iter().map(|p| p["qualifiedName"].as_str()).collect::<Vec<_>>()
+    );
+
+    let _connectors = ibd["connectors"].as_array().expect("ibd should have connectors array");
+
+    let _ = child.kill();
+}
+
 /// When SYSML_V2_RELEASE_DIR is set, index that folder and assert workspace/symbol finds symbols.
 /// Validates workspace awareness against the official OMG SysML v2 repo.
 const SYSML_V2_RELEASE_DIR_ENV: &str = "SYSML_V2_RELEASE_DIR";

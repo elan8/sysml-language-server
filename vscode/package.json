@@ -314,7 +314,7 @@
         },
         "sysml-language-server.visualization.defaultView": {
           "type": "string",
-          "enum": ["general-view", "interconnection-view", "action-flow-view", "state-transition-view", "sequence-view"],
+          "enum": ["general-view", "interconnection-view"],
           "default": "general-view",
           "description": "Default view when opening the SysML Model Visualizer (SysML v2 frameless-view types)."
         },

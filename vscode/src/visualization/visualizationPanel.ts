@@ -3,6 +3,7 @@ import { LspModelProvider } from '../providers/lspModelProvider';
 import { createMessageDispatcher } from './messageHandlers';
 import { createUpdateVisualizationFlow } from './updateFlow';
 import { getWebviewHtml } from './htmlBuilder';
+import { ENABLED_VIEWS } from './webview/constants';
 
 export const RESTORE_STATE_KEY = 'sysmlVisualizerRestoreState';
 
@@ -78,7 +79,7 @@ export class VisualizationPanel {
         initialCurrentView?: string,
     ) {
         this._fileUris = fileUris ?? [];
-        if (initialCurrentView) {
+        if (initialCurrentView && ENABLED_VIEWS.has(initialCurrentView)) {
             this._currentView = initialCurrentView;
         }
         this._extensionVersion = vscode.extensions.getExtension('Elan8.sysml-language-server')?.packageJSON?.version ?? '0.0.0';
@@ -243,6 +244,7 @@ export class VisualizationPanel {
             panel.title = savedState.title;
         }
 
+        const view = ENABLED_VIEWS.has(savedState.currentView) ? savedState.currentView : 'general-view';
         VisualizationPanel.currentPanel = new VisualizationPanel(
             panel,
             extensionUri,
@@ -250,7 +252,7 @@ export class VisualizationPanel {
             lspModelProvider,
             fileUris,
             context,
-            savedState.currentView,
+            view,
         );
     }
 

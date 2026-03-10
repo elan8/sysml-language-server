@@ -1,6 +1,7 @@
 //! SysML v2 language server (LSP over stdio).
 #![allow(deprecated)] // LSP deprecated field in SymbolInformation; use tags in future
 
+mod ibd;
 mod language;
 mod model;
 mod semantic_model;
@@ -221,6 +222,8 @@ struct SysmlModelResultDto {
     activity_diagrams: Option<Vec<model::ActivityDiagramDto>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sequence_diagrams: Option<Vec<model::SequenceDiagramDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ibd: Option<ibd::IbdDataDto>,
     stats: Option<SysmlModelStatsDto>,
 }
 
@@ -1210,6 +1213,7 @@ fn empty_model_response(build_start: Instant) -> SysmlModelResultDto {
         }),
         activity_diagrams: None,
         sequence_diagrams: None,
+        ibd: None,
         stats: Some(SysmlModelStatsDto {
             total_elements: 0,
             resolved_elements: 0,
@@ -1363,11 +1367,18 @@ impl Backend {
             )
             .await;
 
+        let ibd = if want_graph && graph.is_some() {
+            Some(ibd::build_ibd_for_uri(&state.semantic_graph, &uri))
+        } else {
+            None
+        };
+
         Ok(SysmlModelResultDto {
             version: 0,
             graph,
             activity_diagrams,
             sequence_diagrams,
+            ibd,
             stats,
         })
     }

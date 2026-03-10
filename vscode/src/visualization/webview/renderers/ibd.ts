@@ -99,99 +99,117 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
         if (part.id) partHeights.set(part.id, calculatePartHeight(part));
     });
 
-    // Order parts by connectivity: place connected parts adjacent to reduce edge crossings.
-    // BFS from roots (parts with no incoming "contains" from other parts) or shortest qualifiedName.
-    const partNames = new Set(parts.map((p: any) => p.name));
-    const partByName = new Map(parts.map((p: any) => [p.name, p]));
-    const containsTargets = new Map<string, Set<string>>(); // source -> targets
-    const containsSources = new Map<string, Set<string>>(); // target -> sources
-    connectors.forEach((c: any) => {
-        if ((c.type === 'composition' || c.name === 'contains') && c.sourceId && c.targetId) {
-            const src = c.sourceId.split('.').pop() || c.sourceId;
-            const tgt = c.targetId.split('.').pop() || c.targetId;
-            if (partNames.has(src) && partNames.has(tgt)) {
-                if (!containsTargets.has(src)) containsTargets.set(src, new Set());
-                containsTargets.get(src)!.add(tgt);
-                if (!containsSources.has(tgt)) containsSources.set(tgt, new Set());
-                containsSources.get(tgt)!.add(src);
-            }
-        }
+    // Build part tree from containment: roots have containerId null/absent; children have containerId === parent
+    // Backend sends containerId as parent's qualifiedName (dot form); match by name, id, or qualifiedName
+    type PartTreeNode = { part: any; children: PartTreeNode[] };
+    const getPartChildren = (p: any) => parts.filter((c: any) =>
+        c.containerId === p.name || c.containerId === p.id || c.containerId === p.qualifiedName
+    );
+    const buildTree = (part: any): PartTreeNode => ({
+        part,
+        children: getPartChildren(part).map((c: any) => buildTree(c))
     });
-    const roots = parts.filter((p: any) => !containsSources.has(p.name) || containsSources.get(p.name)!.size === 0);
-    const orderedParts: any[] = [];
-    const visited = new Set<string>();
-    const queue = roots.length > 0 ? [...roots] : [parts[0]];
-    while (queue.length > 0) {
-        const part = queue.shift()!;
-        if (visited.has(part.name)) continue;
-        visited.add(part.name);
-        orderedParts.push(part);
-        const children = containsTargets.get(part.name);
-        if (children) {
-            children.forEach((childName: string) => {
-                const child = partByName.get(childName);
-                if (child && !visited.has(childName)) queue.push(child);
-            });
-        }
-    }
-    const leftover = parts.filter((p: any) => !visited.has(p.name));
-    const sortedParts = [...orderedParts, ...leftover];
+    const roots = parts.filter((p: any) => p.containerId == null || p.containerId === undefined || p.containerId === '');
+    const rootPart = roots.length > 0
+        ? roots.reduce((a, b) => (getPartChildren(a).length >= getPartChildren(b).length ? a : b))
+        : parts[0];
+    const partTree = rootPart ? buildTree(rootPart) : null;
+    const rootName = rootPart ? rootPart.name : '';
 
-    const cols = isHorizontal
-        ? Math.ceil(Math.sqrt(sortedParts.length * 1.5))
-        : Math.max(2, Math.ceil(Math.sqrt(sortedParts.length)));
-    const rows = Math.ceil(sortedParts.length / Math.max(1, cols));
+    const partPositions = new Map<string, { x: number; y: number; part: any; height: number; width?: number; isContainer?: boolean }>();
+    const innerMargin = 24;
+    const rootHeaderHeight = 28;
 
-    const rowHeights: number[] = [];
-    for (let row = 0; row < rows; row++) {
-        let maxHeight = 80;
-        for (let col = 0; col < cols; col++) {
-            const index = row * cols + col;
-            if (index < sortedParts.length) {
-                const partHeight = partHeights.get(sortedParts[index].name) || 80;
-                maxHeight = Math.max(maxHeight, partHeight);
+    const relativePath = (qualifiedName: string) => {
+        if (!rootName || !qualifiedName) return qualifiedName;
+        const prefix = rootName + '.';
+        return qualifiedName.startsWith(prefix) ? qualifiedName.slice(prefix.length) : qualifiedName;
+    };
+
+    if (partTree) {
+        const placeNode = (node: PartTreeNode, baseX: number, baseY: number, depth: number): { width: number; height: number } => {
+            const part = node.part;
+            const h = partHeights.get(part.name) || 80;
+            const setPos = (posData: { x: number; y: number; part: any; height: number; width?: number; isContainer?: boolean; depth?: number }) => {
+                partPositions.set(part.name, posData);
+                partPositions.set(part.id, posData);
+                if (part.qualifiedName && part.qualifiedName !== part.name) {
+                    partPositions.set(part.qualifiedName, posData);
+                }
+                const rel = relativePath(part.qualifiedName || part.name);
+                if (rel && rel !== part.name) partPositions.set(rel, posData);
+            };
+            if (node.children.length === 0) {
+                const posData = { x: baseX, y: baseY, part, height: h, width: partWidth, depth };
+                setPos(posData);
+                return { width: partWidth, height: h };
             }
-        }
-        rowHeights.push(maxHeight);
-    }
-
-    const partPositions = new Map<string, { x: number; y: number; part: any; height: number }>();
-    const staggerOffset = 60;
-
-    sortedParts.forEach((part: any, index: number) => {
-        const col = index % cols;
-        const row = Math.floor(index / cols);
-
-        let yPos = padding;
-        for (let r = 0; r < row; r++) {
-            yPos += rowHeights[r] + verticalSpacing;
-        }
-
-        if (col % 2 === 1) {
-            yPos += staggerOffset;
-        }
-
-        const posData = {
-            x: padding + col * (partWidth + horizontalSpacing),
-            y: yPos,
-            part: part,
-            height: partHeights.get(part.name) || 80
+            const childSpacingH = horizontalSpacing;
+            const childSpacingV = verticalSpacing;
+            const cols = isHorizontal ? Math.ceil(Math.sqrt(node.children.length * 1.5)) : Math.max(1, Math.ceil(Math.sqrt(node.children.length)));
+            let rowHeights: number[] = [];
+            let maxW = 0;
+            let curX = baseX + innerMargin;
+            let curY = baseY + innerMargin;
+            let rowMaxH = 0;
+            let colIdx = 0;
+            for (const child of node.children) {
+                const size = placeNode(child, curX, curY, depth + 1);
+                rowMaxH = Math.max(rowMaxH, size.height);
+                maxW = Math.max(maxW, curX - baseX + size.width);
+                colIdx++;
+                if (colIdx >= cols) {
+                    curY += rowMaxH + childSpacingV;
+                    rowHeights.push(rowMaxH);
+                    curX = baseX + innerMargin;
+                    rowMaxH = 0;
+                    colIdx = 0;
+                } else {
+                    curX += size.width + childSpacingH;
+                }
+            }
+            if (rowMaxH > 0) rowHeights.push(rowMaxH);
+            const contentW = maxW + innerMargin;
+            const contentH = curY - baseY + (colIdx > 0 ? rowMaxH : 0) + innerMargin;
+            const frameW = Math.max(partWidth, contentW);
+            const frameH = rootHeaderHeight + contentH;
+            const posData = { x: baseX, y: baseY, part, height: frameH, width: frameW, isContainer: true, depth };
+            setPos(posData);
+            return { width: frameW, height: frameH };
         };
-        partPositions.set(part.name, posData);
-        partPositions.set(part.id, posData);
-        if (part.qualifiedName && part.qualifiedName !== part.name) {
-            partPositions.set(part.qualifiedName, posData);
-        }
-    });
+        placeNode(partTree, padding, padding, 0);
+    } else {
+        parts.forEach((part: any) => {
+            const posData = {
+                x: padding,
+                y: padding,
+                part,
+                height: partHeights.get(part.name) || 80,
+                width: partWidth,
+                depth: 0
+            };
+            partPositions.set(part.name, posData);
+            partPositions.set(part.id, posData);
+            if (part.qualifiedName && part.qualifiedName !== part.name) {
+                partPositions.set(part.qualifiedName, posData);
+            }
+        });
+    }
 
     const findPartPos = (qualifiedName: string) => {
         if (!qualifiedName) return null;
+        const normalized = qualifiedName.lastIndexOf('::') >= 0
+            ? qualifiedName.substring(qualifiedName.lastIndexOf('::') + 2)
+            : qualifiedName;
 
+        if (partPositions.has(normalized)) {
+            return partPositions.get(normalized)!;
+        }
         if (partPositions.has(qualifiedName)) {
             return partPositions.get(qualifiedName)!;
         }
 
-        const segments = qualifiedName.split('.');
+        const segments = normalized.split('.');
 
         for (let i = segments.length - 1; i >= 1; i--) {
             const partialPath = segments.slice(0, i).join('.');
@@ -667,8 +685,19 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
 
     const partGroup = g.append('g').attr('class', 'ibd-parts');
 
-    partPositions.forEach((pos, partName) => {
+    const drawnPartIds = new Set<string>();
+    const partEntries = Array.from(partPositions.entries());
+    // Draw by depth ascending so parents (root, intermediate containers) are behind children
+    const byDepth = partEntries.sort((a, b) => {
+        const da = (a[1] as any).depth ?? 999;
+        const db = (b[1] as any).depth ?? 999;
+        return da - db;
+    });
+    byDepth.forEach(([partName, pos]) => {
         if (partName !== pos.part.name) return;
+        const partId = pos.part.id || pos.part.name;
+        if (drawnPartIds.has(partId)) return;
+        drawnPartIds.add(partId);
 
         const part = pos.part;
 
@@ -799,12 +828,64 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
         const contentHeight = contentLines.length * lineHeight + 10;
         const portsHeight = partPorts.length * 16 + 10;
         const totalHeight = Math.max(80, headerHeight + contentHeight + portsHeight);
+        const w = pos.width ?? partWidth;
+        const h = pos.height ?? totalHeight;
 
         const partG = partGroup.append('g')
             .attr('transform', 'translate(' + pos.x + ',' + pos.y + ')')
-            .attr('class', 'ibd-part' + (isDefinition ? ' definition-node' : ' usage-node'))
+            .attr('class', 'ibd-part' + (isDefinition ? ' definition-node' : ' usage-node') + (pos.isContainer ? ' ibd-container' : ''))
             .attr('data-element-name', part.name)
             .style('cursor', 'pointer');
+
+        if (pos.isContainer) {
+            const depth = (pos as { depth?: number }).depth ?? 0;
+            // Intermediate containers (depth 1): distinct fill + thicker stroke so nesting is visible
+            const isIntermediate = depth === 1;
+            const containerFill = isIntermediate
+                ? 'rgba(255,255,255,0.06)'  // lighter tint so intermediate containers stand out
+                : 'var(--vscode-editor-background)';
+            const containerStrokeWidth = isIntermediate ? '3px' : '2px';
+            partG.append('rect')
+                .attr('width', w)
+                .attr('height', h)
+                .attr('rx', 8)
+                .attr('class', 'graph-node-background')
+                .attr('data-original-stroke', typeColor)
+                .attr('data-original-width', containerStrokeWidth)
+                .style('fill', containerFill)
+                .style('stroke', typeColor)
+                .style('stroke-width', containerStrokeWidth)
+                .style('stroke-dasharray', '4,4');
+            partG.append('rect')
+                .attr('width', w)
+                .attr('height', rootHeaderHeight)
+                .attr('rx', 6)
+                .attr('y', 0)
+                .style('fill', 'var(--vscode-button-secondaryBackground)');
+            partG.append('text')
+                .attr('x', w / 2)
+                .attr('y', rootHeaderHeight / 2 + 4)
+                .attr('text-anchor', 'middle')
+                .text(part.name)
+                .style('font-size', '11px')
+                .style('font-weight', 'bold')
+                .style('fill', 'var(--vscode-editor-foreground)');
+            partG.on('click', function (event: any) {
+                event.stopPropagation();
+                clearVisualHighlights();
+                partGroup.selectAll('.ibd-part').select('.graph-node-background, rect').each(function (this: any) {
+                    const r = d3.select(this);
+                    if (r.attr('data-original-stroke')) {
+                        r.style('stroke', r.attr('data-original-stroke'))
+                            .style('stroke-width', r.attr('data-original-width'));
+                    }
+                });
+                partG.select('rect.graph-node-background').style('stroke', '#FFD700').style('stroke-width', '4px');
+                const statusEl = document.getElementById('status-text');
+                if (statusEl) statusEl.textContent = part.name + ' [' + (part.type || 'part') + ']';
+            });
+            return;
+        }
 
         const _ibdStroke = isLibValidated ? GENERAL_VIEW_PALETTE.structural.part : typeColor;
         const _ibdStrokeW = isUsage ? '3px' : '2px';

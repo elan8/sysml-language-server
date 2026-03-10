@@ -17,8 +17,9 @@
         children: []
       });
     });
+    const getEdgeType = (e) => (e.type || e.rel_type || "").toLowerCase();
     edges.forEach((e) => {
-      if ((e.type || "").toLowerCase() === "contains" && e.source && e.target) {
+      if (getEdgeType(e) === "contains" && e.source && e.target) {
         const parent = nodeMap.get(e.source);
         const child = nodeMap.get(e.target);
         if (parent && child) {
@@ -26,14 +27,14 @@
         }
       }
       const relTypes = ["typing", "specializes", "connection", "bind", "allocate", "transition", "satisfy", "verify"];
-      if (relTypes.includes((e.type || "").toLowerCase())) {
+      if (relTypes.includes(getEdgeType(e))) {
         const src = nodeMap.get(e.source);
         if (src) {
           src.relationships.push({ source: e.source, target: e.target, type: e.type, name: e.name });
         }
       }
     });
-    const targetsOfContains = new Set(edges.filter((e) => (e.type || "").toLowerCase() === "contains").map((e) => e.target));
+    const targetsOfContains = new Set(edges.filter((e) => getEdgeType(e) === "contains").map((e) => e.target));
     const roots = nodes.filter((n) => !targetsOfContains.has(n.id)).map((n) => nodeMap.get(n.id)).filter(Boolean);
     return roots;
   }
@@ -43,10 +44,11 @@
     }
     const hasGraph = data.graph?.nodes;
     const elements = hasGraph ? graphToElementTree(data.graph) : data.elements || [];
-    const relationships = hasGraph ? (data.graph.edges || []).filter((e) => (e.type || "") !== "contains").map((e) => ({
+    const edgeType = (e) => e.type || e.rel_type || "";
+    const relationships = hasGraph ? (data.graph.edges || []).filter((e) => edgeType(e) !== "contains").map((e) => ({
       source: e.source,
       target: e.target,
-      type: e.type,
+      type: edgeType(e),
       name: e.name
     })) : data.relationships || [];
     function collectAllElements(elementList, collected = [], parentElement = null) {
@@ -76,193 +78,49 @@
       case "general-view":
         return data;
       case "interconnection-view": {
-        const ibdParts = [];
-        const seenParts = /* @__PURE__ */ new Set();
-        const extractNestedParts = (element, parentPath = "") => {
-          if (!element || !element.children) return;
-          element.children.forEach((child) => {
-            if (!child || !child.type) return;
-            const childTypeLower = child.type.toLowerCase();
-            if ((childTypeLower === "part" || childTypeLower === "part usage" || childTypeLower.includes("part") && !childTypeLower.includes("def")) && !seenParts.has(child.name)) {
-              const qualifiedName = parentPath ? parentPath + "." + child.name : child.name;
-              ibdParts.push({
-                ...child,
-                containerId: element.name,
-                containerType: element.type,
-                qualifiedName
-              });
-              seenParts.add(child.name);
-              extractNestedParts(child, qualifiedName);
-            }
-          });
-        };
-        allElements.forEach((el) => {
-          if (!el.type) return;
-          const typeLower = el.type.toLowerCase();
-          if ((typeLower === "part" || typeLower === "part usage" || typeLower.includes("part") && !typeLower.includes("def")) && !seenParts.has(el.name)) {
-            ibdParts.push({ ...el, qualifiedName: el.name });
-            seenParts.add(el.name);
-            extractNestedParts(el, el.name);
-          }
-        });
-        const partDefs = allElements.filter((el) => {
-          if (!el.type) return false;
-          const typeLower = el.type.toLowerCase();
-          return typeLower === "part def" || typeLower === "part definition";
-        });
-        partDefs.forEach((partDef) => extractNestedParts(partDef, ""));
-        const ibdPorts = [];
-        const processPortsFromPart = (part, partId) => {
-          if (part.children) {
-            part.children.forEach((child) => {
-              if (child.type && child.type.toLowerCase().includes("port")) {
-                ibdPorts.push({
-                  ...child,
-                  id: child.id || child.name,
-                  parentId: partId,
-                  direction: child.direction || (child.type.toLowerCase().includes("in") ? "in" : child.type.toLowerCase().includes("out") ? "out" : "inout")
-                });
-              }
+        if (data.ibd && Array.isArray(data.ibd.parts)) {
+          const ibd = data.ibd;
+          const selectedRoot = data.selectedIbdRoot && typeof data.selectedIbdRoot === "string" ? data.selectedIbdRoot : ibd.defaultRoot ?? ibd.rootCandidates?.[0] ?? null;
+          const rootPart = selectedRoot ? ibd.parts.find((p) => p.name === selectedRoot) : null;
+          const rootPrefix = rootPart ? rootPart.qualifiedName || rootPart.name : selectedRoot || "";
+          const focusedParts = rootPrefix ? ibd.parts.filter((p) => {
+            const q = p.qualifiedName || p.name;
+            return q === rootPrefix || rootPrefix && q.startsWith(rootPrefix + ".");
+          }) : [];
+          const partIds = new Set(focusedParts.map((p) => p.qualifiedName || p.name));
+          const partNames = new Set(focusedParts.map((p) => p.name));
+          const focusedPorts = ibd.ports.filter(
+            (p) => partIds.has(p.parentId) || partNames.has(p.parentId)
+          );
+          const focusedConnectors = ibd.connectors.filter((c) => {
+            const srcMatch = focusedParts.some((p) => {
+              const q = p.qualifiedName || p.name;
+              return c.sourceId === q || c.sourceId.startsWith(q + ".") || c.sourceId === p.name;
             });
-          }
-        };
-        ibdParts.forEach((part) => {
-          const partId = part.id || part.name;
-          processPortsFromPart(part, partId);
-        });
-        allElements.forEach((el) => {
-          if (el.type && el.type.toLowerCase().includes("port")) {
-            const existingPort = ibdPorts.find((p) => p.name === el.name);
-            if (!existingPort) {
-              ibdPorts.push({
-                ...el,
-                id: el.id || el.name,
-                parentId: el.parentId || "root",
-                direction: el.direction || "inout"
-              });
-            }
-          }
-        });
-        const ibdConnectors = [];
-        const explicitConnectors = relationships.filter((rel) => rel.type && (rel.type.includes("connection") || rel.type.includes("flow") || rel.type.includes("binding") || rel.type.includes("interface") || rel.type.includes("allocation") || rel.type.includes("dependency")));
-        explicitConnectors.forEach((rel) => {
-          ibdConnectors.push({ ...rel, sourceId: rel.source, targetId: rel.target });
-        });
-        ibdParts.forEach((part) => {
-          const types = part.typings && part.typings.length > 0 ? part.typings : part.typing ? [part.typing] : [];
-          types.forEach((typeName) => {
-            if (typeName && typeName !== part.name) {
-              const typedElement = allElements.find(
-                (el) => el.name === typeName || el.id === typeName
-              );
-              if (typedElement) {
-                ibdConnectors.push({
-                  source: part.name,
-                  target: typedElement.name,
-                  sourceId: part.name,
-                  targetId: typedElement.name,
-                  type: "typing",
-                  name: "type"
-                });
-              }
-            }
-          });
-        });
-        relationships.filter((rel) => rel.type && (rel.type.includes("attribute") || rel.type.includes("property") || rel.type.includes("reference"))).forEach((rel) => {
-          const sourceInParts = ibdParts.some((p) => p.name === rel.source || p.id === rel.source);
-          const targetInParts = ibdParts.some((p) => p.name === rel.target || p.id === rel.target);
-          if (sourceInParts && targetInParts) {
-            ibdConnectors.push({ ...rel, sourceId: rel.source, targetId: rel.target });
-          }
-        });
-        let focusPart = null;
-        let focusedParts = ibdParts;
-        const partsWithChildren = allElements.filter((el) => {
-          if (!el.type || !el.children || el.children.length === 0) return false;
-          const typeLower = el.type.toLowerCase();
-          const isPartDef = typeLower.includes("part def");
-          const isPartUsage = typeLower === "part" || typeLower === "part usage" || typeLower.includes("part") && !typeLower.includes("def");
-          if (!isPartDef && !isPartUsage) return false;
-          return el.children.some((c) => c.type && c.type.toLowerCase().includes("part"));
-        });
-        if (partsWithChildren.length > 0) {
-          partsWithChildren.sort((a, b) => {
-            const aPartCount = a.children.filter((c) => c.type && c.type.toLowerCase().includes("part")).length;
-            const bPartCount = b.children.filter((c) => c.type && c.type.toLowerCase().includes("part")).length;
-            return bPartCount - aPartCount;
-          });
-          focusedParts = [];
-          const processedPartNames = /* @__PURE__ */ new Set();
-          for (const currentFocusPart of partsWithChildren) {
-            if (processedPartNames.has(currentFocusPart.name)) continue;
-            processedPartNames.add(currentFocusPart.name);
-            focusPart = currentFocusPart;
-            const partChildren = currentFocusPart.children.filter(
-              (c) => c.type && c.type.toLowerCase().includes("part")
-            );
-            focusedParts.push({
-              name: currentFocusPart.name,
-              type: currentFocusPart.type,
-              id: currentFocusPart.id || currentFocusPart.name,
-              attributes: currentFocusPart.attributes || {},
-              children: currentFocusPart.children || []
+            const tgtMatch = focusedParts.some((p) => {
+              const q = p.qualifiedName || p.name;
+              return c.targetId === q || c.targetId.startsWith(q + ".") || c.targetId === p.name;
             });
-            for (const child of partChildren) {
-              if (processedPartNames.has(child.name)) continue;
-              processedPartNames.add(child.name);
-              let enrichedChild = ibdParts.find((p) => p.name === child.name);
-              if (!enrichedChild) {
-                enrichedChild = { ...child, qualifiedName: child.name };
-              }
-              try {
-                if (enrichedChild && enrichedChild.name) {
-                  const partDef = allElements.find(
-                    (el) => el && el.type && el.name && el.type.toLowerCase().includes("part def") && el.name === (enrichedChild.typing || child.typing)
-                  );
-                  if (partDef && partDef.children) {
-                    enrichedChild = { ...enrichedChild, children: partDef.children };
-                  }
-                }
-              } catch {
-              }
-              focusedParts.push(enrichedChild);
-              ibdConnectors.push({
-                source: currentFocusPart.name,
-                target: child.name,
-                sourceId: currentFocusPart.name,
-                targetId: child.name,
-                type: "composition",
-                name: "contains"
-              });
-            }
-            if (currentFocusPart.children) {
-              currentFocusPart.children.forEach((child) => {
-                if (!child || !child.type) return;
-                const childType = child.type.toLowerCase();
-                if (childType === "connection" || childType === "connect" || childType === "bind" || childType === "binding") {
-                  const from = child.attributes?.get?.("from") || child.attributes?.from;
-                  const to = child.attributes?.get?.("to") || child.attributes?.to;
-                  if (from && to) {
-                    ibdConnectors.push({
-                      source: from,
-                      target: to,
-                      sourceId: from,
-                      targetId: to,
-                      type: childType === "bind" || childType === "binding" ? "binding" : "connection",
-                      name: child.name || childType
-                    });
-                  }
-                }
-              });
-            }
-          }
+            return srcMatch && tgtMatch;
+          });
+          return {
+            ...data,
+            elements: focusedParts,
+            parts: focusedParts,
+            ports: focusedPorts,
+            connectors: focusedConnectors,
+            ibdRootCandidates: ibd.rootCandidates || [],
+            selectedIbdRoot: selectedRoot
+          };
         }
         return {
           ...data,
-          elements: focusedParts,
-          parts: focusedParts,
-          ports: ibdPorts,
-          connectors: ibdConnectors
+          elements: [],
+          parts: [],
+          ports: [],
+          connectors: [],
+          ibdRootCandidates: [],
+          selectedIbdRoot: null
         };
       }
       case "action-flow-view": {
@@ -508,10 +366,8 @@
   };
   var VIEW_OPTIONS = {
     "general-view": { label: "General View" },
-    "interconnection-view": { label: "Interconnection View" },
-    "action-flow-view": { label: "Action Flow View" },
-    "state-transition-view": { label: "State Transition View" },
-    "sequence-view": { label: "Sequence View" }
+    "interconnection-view": { label: "Interconnection View" }
+    // Disabled for next release: action-flow-view, state-transition-view, sequence-view
   };
   var GENERAL_VIEW_PALETTE = {
     structural: {
@@ -960,85 +816,104 @@
       partHeights.set(part.name, calculatePartHeight(part));
       if (part.id) partHeights.set(part.id, calculatePartHeight(part));
     });
-    const partNames = new Set(parts.map((p) => p.name));
-    const partByName = new Map(parts.map((p) => [p.name, p]));
-    const containsTargets = /* @__PURE__ */ new Map();
-    const containsSources = /* @__PURE__ */ new Map();
-    connectors.forEach((c) => {
-      if ((c.type === "composition" || c.name === "contains") && c.sourceId && c.targetId) {
-        const src = c.sourceId.split(".").pop() || c.sourceId;
-        const tgt = c.targetId.split(".").pop() || c.targetId;
-        if (partNames.has(src) && partNames.has(tgt)) {
-          if (!containsTargets.has(src)) containsTargets.set(src, /* @__PURE__ */ new Set());
-          containsTargets.get(src).add(tgt);
-          if (!containsSources.has(tgt)) containsSources.set(tgt, /* @__PURE__ */ new Set());
-          containsSources.get(tgt).add(src);
-        }
-      }
+    const getPartChildren = (p) => parts.filter(
+      (c) => c.containerId === p.name || c.containerId === p.id || c.containerId === p.qualifiedName
+    );
+    const buildTree = (part) => ({
+      part,
+      children: getPartChildren(part).map((c) => buildTree(c))
     });
-    const roots = parts.filter((p) => !containsSources.has(p.name) || containsSources.get(p.name).size === 0);
-    const orderedParts = [];
-    const visited = /* @__PURE__ */ new Set();
-    const queue = roots.length > 0 ? [...roots] : [parts[0]];
-    while (queue.length > 0) {
-      const part = queue.shift();
-      if (visited.has(part.name)) continue;
-      visited.add(part.name);
-      orderedParts.push(part);
-      const children = containsTargets.get(part.name);
-      if (children) {
-        children.forEach((childName) => {
-          const child = partByName.get(childName);
-          if (child && !visited.has(childName)) queue.push(child);
-        });
-      }
-    }
-    const leftover = parts.filter((p) => !visited.has(p.name));
-    const sortedParts = [...orderedParts, ...leftover];
-    const cols = isHorizontal ? Math.ceil(Math.sqrt(sortedParts.length * 1.5)) : Math.max(2, Math.ceil(Math.sqrt(sortedParts.length)));
-    const rows = Math.ceil(sortedParts.length / Math.max(1, cols));
-    const rowHeights = [];
-    for (let row = 0; row < rows; row++) {
-      let maxHeight = 80;
-      for (let col = 0; col < cols; col++) {
-        const index = row * cols + col;
-        if (index < sortedParts.length) {
-          const partHeight = partHeights.get(sortedParts[index].name) || 80;
-          maxHeight = Math.max(maxHeight, partHeight);
-        }
-      }
-      rowHeights.push(maxHeight);
-    }
+    const roots = parts.filter((p) => p.containerId == null || p.containerId === void 0 || p.containerId === "");
+    const rootPart = roots.length > 0 ? roots.reduce((a, b) => getPartChildren(a).length >= getPartChildren(b).length ? a : b) : parts[0];
+    const partTree = rootPart ? buildTree(rootPart) : null;
+    const rootName = rootPart ? rootPart.name : "";
     const partPositions = /* @__PURE__ */ new Map();
-    const staggerOffset = 60;
-    sortedParts.forEach((part, index) => {
-      const col = index % cols;
-      const row = Math.floor(index / cols);
-      let yPos = padding;
-      for (let r = 0; r < row; r++) {
-        yPos += rowHeights[r] + verticalSpacing;
-      }
-      if (col % 2 === 1) {
-        yPos += staggerOffset;
-      }
-      const posData = {
-        x: padding + col * (partWidth + horizontalSpacing),
-        y: yPos,
-        part,
-        height: partHeights.get(part.name) || 80
+    const innerMargin = 24;
+    const rootHeaderHeight = 28;
+    const relativePath = (qualifiedName) => {
+      if (!rootName || !qualifiedName) return qualifiedName;
+      const prefix = rootName + ".";
+      return qualifiedName.startsWith(prefix) ? qualifiedName.slice(prefix.length) : qualifiedName;
+    };
+    if (partTree) {
+      const placeNode = (node, baseX, baseY, depth) => {
+        const part = node.part;
+        const h = partHeights.get(part.name) || 80;
+        const setPos = (posData2) => {
+          partPositions.set(part.name, posData2);
+          partPositions.set(part.id, posData2);
+          if (part.qualifiedName && part.qualifiedName !== part.name) {
+            partPositions.set(part.qualifiedName, posData2);
+          }
+          const rel = relativePath(part.qualifiedName || part.name);
+          if (rel && rel !== part.name) partPositions.set(rel, posData2);
+        };
+        if (node.children.length === 0) {
+          const posData2 = { x: baseX, y: baseY, part, height: h, width: partWidth, depth };
+          setPos(posData2);
+          return { width: partWidth, height: h };
+        }
+        const childSpacingH = horizontalSpacing;
+        const childSpacingV = verticalSpacing;
+        const cols = isHorizontal ? Math.ceil(Math.sqrt(node.children.length * 1.5)) : Math.max(1, Math.ceil(Math.sqrt(node.children.length)));
+        let rowHeights = [];
+        let maxW = 0;
+        let curX = baseX + innerMargin;
+        let curY = baseY + innerMargin;
+        let rowMaxH = 0;
+        let colIdx = 0;
+        for (const child of node.children) {
+          const size = placeNode(child, curX, curY, depth + 1);
+          rowMaxH = Math.max(rowMaxH, size.height);
+          maxW = Math.max(maxW, curX - baseX + size.width);
+          colIdx++;
+          if (colIdx >= cols) {
+            curY += rowMaxH + childSpacingV;
+            rowHeights.push(rowMaxH);
+            curX = baseX + innerMargin;
+            rowMaxH = 0;
+            colIdx = 0;
+          } else {
+            curX += size.width + childSpacingH;
+          }
+        }
+        if (rowMaxH > 0) rowHeights.push(rowMaxH);
+        const contentW = maxW + innerMargin;
+        const contentH = curY - baseY + (colIdx > 0 ? rowMaxH : 0) + innerMargin;
+        const frameW = Math.max(partWidth, contentW);
+        const frameH = rootHeaderHeight + contentH;
+        const posData = { x: baseX, y: baseY, part, height: frameH, width: frameW, isContainer: true, depth };
+        setPos(posData);
+        return { width: frameW, height: frameH };
       };
-      partPositions.set(part.name, posData);
-      partPositions.set(part.id, posData);
-      if (part.qualifiedName && part.qualifiedName !== part.name) {
-        partPositions.set(part.qualifiedName, posData);
-      }
-    });
+      placeNode(partTree, padding, padding, 0);
+    } else {
+      parts.forEach((part) => {
+        const posData = {
+          x: padding,
+          y: padding,
+          part,
+          height: partHeights.get(part.name) || 80,
+          width: partWidth,
+          depth: 0
+        };
+        partPositions.set(part.name, posData);
+        partPositions.set(part.id, posData);
+        if (part.qualifiedName && part.qualifiedName !== part.name) {
+          partPositions.set(part.qualifiedName, posData);
+        }
+      });
+    }
     const findPartPos = (qualifiedName) => {
       if (!qualifiedName) return null;
+      const normalized = qualifiedName.lastIndexOf("::") >= 0 ? qualifiedName.substring(qualifiedName.lastIndexOf("::") + 2) : qualifiedName;
+      if (partPositions.has(normalized)) {
+        return partPositions.get(normalized);
+      }
       if (partPositions.has(qualifiedName)) {
         return partPositions.get(qualifiedName);
       }
-      const segments = qualifiedName.split(".");
+      const segments = normalized.split(".");
       for (let i = segments.length - 1; i >= 1; i--) {
         const partialPath = segments.slice(0, i).join(".");
         const pos = partPositions.get(partialPath);
@@ -1342,8 +1217,18 @@
     }
     drawIbdConnectors();
     const partGroup = g2.append("g").attr("class", "ibd-parts");
-    partPositions.forEach((pos, partName) => {
+    const drawnPartIds = /* @__PURE__ */ new Set();
+    const partEntries = Array.from(partPositions.entries());
+    const byDepth = partEntries.sort((a, b) => {
+      const da = a[1].depth ?? 999;
+      const db = b[1].depth ?? 999;
+      return da - db;
+    });
+    byDepth.forEach(([partName, pos]) => {
       if (partName !== pos.part.name) return;
+      const partId = pos.part.id || pos.part.name;
+      if (drawnPartIds.has(partId)) return;
+      drawnPartIds.add(partId);
       const part = pos.part;
       if (!part || !part.name) {
         console.error("[IBD Render] Invalid part in partPositions:", part);
@@ -1454,7 +1339,32 @@
       const contentHeight = contentLines.length * lineHeight + 10;
       const portsHeight = partPorts.length * 16 + 10;
       const totalHeight = Math.max(80, headerHeight + contentHeight + portsHeight);
-      const partG = partGroup.append("g").attr("transform", "translate(" + pos.x + "," + pos.y + ")").attr("class", "ibd-part" + (isDefinition ? " definition-node" : " usage-node")).attr("data-element-name", part.name).style("cursor", "pointer");
+      const w = pos.width ?? partWidth;
+      const h = pos.height ?? totalHeight;
+      const partG = partGroup.append("g").attr("transform", "translate(" + pos.x + "," + pos.y + ")").attr("class", "ibd-part" + (isDefinition ? " definition-node" : " usage-node") + (pos.isContainer ? " ibd-container" : "")).attr("data-element-name", part.name).style("cursor", "pointer");
+      if (pos.isContainer) {
+        const depth = pos.depth ?? 0;
+        const isIntermediate = depth === 1;
+        const containerFill = isIntermediate ? "rgba(255,255,255,0.06)" : "var(--vscode-editor-background)";
+        const containerStrokeWidth = isIntermediate ? "3px" : "2px";
+        partG.append("rect").attr("width", w).attr("height", h).attr("rx", 8).attr("class", "graph-node-background").attr("data-original-stroke", typeColor).attr("data-original-width", containerStrokeWidth).style("fill", containerFill).style("stroke", typeColor).style("stroke-width", containerStrokeWidth).style("stroke-dasharray", "4,4");
+        partG.append("rect").attr("width", w).attr("height", rootHeaderHeight).attr("rx", 6).attr("y", 0).style("fill", "var(--vscode-button-secondaryBackground)");
+        partG.append("text").attr("x", w / 2).attr("y", rootHeaderHeight / 2 + 4).attr("text-anchor", "middle").text(part.name).style("font-size", "11px").style("font-weight", "bold").style("fill", "var(--vscode-editor-foreground)");
+        partG.on("click", function(event) {
+          event.stopPropagation();
+          clearVisualHighlights2();
+          partGroup.selectAll(".ibd-part").select(".graph-node-background, rect").each(function() {
+            const r = d3.select(this);
+            if (r.attr("data-original-stroke")) {
+              r.style("stroke", r.attr("data-original-stroke")).style("stroke-width", r.attr("data-original-width"));
+            }
+          });
+          partG.select("rect.graph-node-background").style("stroke", "#FFD700").style("stroke-width", "4px");
+          const statusEl = document.getElementById("status-text");
+          if (statusEl) statusEl.textContent = part.name + " [" + (part.type || "part") + "]";
+        });
+        return;
+      }
       const _ibdStroke = isLibValidated ? GENERAL_VIEW_PALETTE.structural.part : typeColor;
       const _ibdStrokeW = isUsage ? "3px" : "2px";
       partG.append("rect").attr("width", partWidth).attr("height", totalHeight).attr("rx", isUsage ? 8 : 4).attr("data-original-stroke", _ibdStroke).attr("data-original-width", _ibdStrokeW).style("fill", "var(--vscode-editor-background)").style("stroke", _ibdStroke).style("stroke-width", _ibdStrokeW).style("stroke-dasharray", isDefinition ? "6,3" : "none");
@@ -3028,6 +2938,7 @@
   var currentView = "general-view";
   var selectedDiagramIndex = 0;
   var selectedDiagramName = null;
+  var selectedIbdRoot = null;
   var activityDebugLabels = false;
   var lastView = currentView;
   var svg = null;
@@ -3079,6 +2990,14 @@
       overlay.classList.add("hidden");
     }
     document.body.style.cursor = "";
+  }
+  function webviewLog(level, ...args) {
+    try {
+      if (vscode && typeof vscode.postMessage === "function") {
+        vscode.postMessage({ command: "webviewLog", level, args });
+      }
+    } catch {
+    }
   }
   function setupActivityDebugToggle() {
     const debugBtn = document.getElementById("activity-debug-btn");
@@ -5303,28 +5222,28 @@
       diagrams = currentData?.sequenceDiagrams || [];
       labelText = "Sequence";
     } else if (activeView === "interconnection-view") {
-      let findPackagesForView2 = function(elementList, depth = 0) {
-        elementList.forEach((el) => {
-          const typeLower = (el.type || "").toLowerCase();
-          if (typeLower.includes("package") && !seenPackages.has(el.name)) {
-            seenPackages.add(el.name);
-            packagesArray.push({ name: el.name, element: el });
-          }
-          if (el.children && el.children.length > 0) {
-            findPackagesForView2(el.children, depth + 1);
-          }
-        });
-      };
-      var findPackagesForView = findPackagesForView2;
-      const elements = currentData?.elements ?? (currentData?.graph ? graphToElementTree(currentData.graph) : []);
-      const packagesArray = [];
-      const seenPackages = /* @__PURE__ */ new Set();
-      diagrams.push({ name: "All Packages", element: null, isAll: true });
-      findPackagesForView2(elements);
-      packagesArray.forEach((pkg) => {
-        diagrams.push(pkg);
-      });
-      labelText = "Package";
+      const preparedData = prepareDataForView({ ...currentData, selectedIbdRoot }, "interconnection-view");
+      const candidates = preparedData?.ibdRootCandidates || [];
+      if (candidates.length > 0) {
+        diagrams = candidates.map((name) => ({ name }));
+        labelText = "Block";
+        const preferredRoot = preparedData?.selectedIbdRoot && candidates.indexOf(preparedData.selectedIbdRoot) >= 0 ? preparedData.selectedIbdRoot : selectedIbdRoot && candidates.indexOf(selectedIbdRoot) >= 0 ? selectedIbdRoot : candidates[0] || null;
+        selectedDiagramIndex = preferredRoot ? candidates.indexOf(preferredRoot) : 0;
+        selectedDiagramName = preferredRoot;
+        selectedIbdRoot = selectedDiagramName;
+        try {
+          webviewLog("info", "[IBD] selector", {
+            candidates,
+            preferredRoot,
+            selectedIbdRoot_state: selectedIbdRoot,
+            selectedDiagramIndex
+          });
+        } catch {
+        }
+      } else {
+        diagrams = [{ name: "Default", element: null }];
+        labelText = "Block";
+      }
     }
     if (diagrams.length <= 1) {
       pkgDropdown.style.display = "none";
@@ -5355,6 +5274,7 @@
       item.addEventListener("click", function() {
         selectedDiagramIndex = idx;
         selectedDiagramName = d.name;
+        if (activeView === "interconnection-view") selectedIbdRoot = d.name;
         pkgMenu.querySelectorAll(".view-dropdown-item").forEach((i) => i.classList.remove("active"));
         item.classList.add("active");
         if (pkgLabel) pkgLabel.textContent = d.name;
@@ -5447,7 +5367,27 @@
         }
       }
     }
-    const dataToRender = prepareDataForView(baseData, view);
+    const dataForPrepare = view === "interconnection-view" ? { ...baseData, selectedIbdRoot } : baseData;
+    const dataToRender = prepareDataForView(dataForPrepare, view);
+    if (view === "interconnection-view") {
+      const ibd = dataForPrepare?.ibd;
+      const deepPropulsion = Array.isArray(ibd?.parts) ? ibd.parts.map((p) => p?.qualifiedName).filter((qn) => typeof qn === "string" && qn.includes(".propulsion.") && qn.split(".").length >= 4) : [];
+      webviewLog(
+        "info",
+        "[IBD] prepare",
+        {
+          hasIbd: !!ibd,
+          defaultRoot: ibd?.defaultRoot ?? null,
+          rootCandidates: Array.isArray(ibd?.rootCandidates) ? ibd.rootCandidates : null,
+          selectedIbdRoot_state: selectedIbdRoot ?? null,
+          selectedIbdRoot_prepared: dataToRender?.selectedIbdRoot ?? null,
+          partsCount: Array.isArray(dataToRender?.parts) ? dataToRender.parts.length : null,
+          connectorsCount: Array.isArray(dataToRender?.connectors) ? dataToRender.connectors.length : null,
+          deepPropulsionCount: deepPropulsion.length,
+          deepPropulsionSample: deepPropulsion.slice(0, 5)
+        }
+      );
+    }
     isRendering = true;
     showLoading("Rendering " + (VIEW_OPTIONS[view]?.label || view) + "...");
     const renderSafetyTimeout = setTimeout(() => {

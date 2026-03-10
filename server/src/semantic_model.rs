@@ -28,7 +28,7 @@ pub struct NodeId {
 }
 
 impl NodeId {
-    fn new(uri: &Url, qualified_name: impl Into<String>) -> Self {
+    pub fn new(uri: &Url, qualified_name: impl Into<String>) -> Self {
         Self {
             uri: uri.clone(),
             qualified_name: qualified_name.into(),

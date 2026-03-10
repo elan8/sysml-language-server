@@ -4,6 +4,7 @@ import type {
     SysMLGraphDTO,
     GraphNodeDTO,
     GraphEdgeDTO,
+    IbdDataDTO,
 } from '../providers/sysmlModelTypes';
 
 export interface FetchModelParams {
@@ -17,6 +18,7 @@ export interface FetchModelParams {
 export interface UpdateMessage {
     command: 'update';
     graph?: SysMLGraphDTO;
+    ibd?: IbdDataDTO;
     sequenceDiagrams: unknown[];
     activityDiagrams: unknown[];
     currentView: string;
@@ -56,7 +58,8 @@ export function mergeGraphs(graphs: SysMLGraphDTO[]): SysMLGraphDTO {
             }
         }
         for (const edge of g.edges ?? []) {
-            const key = `${edge.type}::${edge.source}::${edge.target}`;
+            const edgeType = edge.type || edge.rel_type || '';
+            const key = `${edgeType}::${edge.source}::${edge.target}`;
             if (!edgeKeys.has(key)) {
                 edgeKeys.add(key);
                 edges.push(edge);
@@ -107,9 +110,13 @@ export async function fetchModelData(params: FetchModelParams): Promise<UpdateMe
 
     const mergedGraph = mergeGraphs(allGraphs);
 
+    const primaryResult = results.find(r => r.graph?.nodes?.length || r.graph?.edges?.length) ?? results[0];
+    const ibd = primaryResult?.ibd;
+
     const msg: UpdateMessage = {
         command: 'update',
         graph: mergedGraph,
+        ibd,
         sequenceDiagrams: allSequenceDiagrams,
         activityDiagrams: allActivityDiagrams,
         currentView,

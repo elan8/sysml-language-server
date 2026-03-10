@@ -29,8 +29,9 @@ function graphToElementTree(graph) {
             children: []
         });
     });
+    const getEdgeType = (e) => (e.type || e.rel_type || '').toLowerCase();
     edges.forEach((e) => {
-        if ((e.type || '').toLowerCase() === 'contains' && e.source && e.target) {
+        if (getEdgeType(e) === 'contains' && e.source && e.target) {
             const parent = nodeMap.get(e.source);
             const child = nodeMap.get(e.target);
             if (parent && child) {
@@ -38,14 +39,14 @@ function graphToElementTree(graph) {
             }
         }
         const relTypes = ['typing', 'specializes', 'connection', 'bind', 'allocate', 'transition', 'satisfy', 'verify'];
-        if (relTypes.includes((e.type || '').toLowerCase())) {
+        if (relTypes.includes(getEdgeType(e))) {
             const src = nodeMap.get(e.source);
             if (src) {
                 src.relationships.push({ source: e.source, target: e.target, type: e.type, name: e.name });
             }
         }
     });
-    const targetsOfContains = new Set(edges.filter((e) => (e.type || '').toLowerCase() === 'contains').map((e) => e.target));
+    const targetsOfContains = new Set(edges.filter((e) => getEdgeType(e) === 'contains').map((e) => e.target));
     const roots = nodes
         .filter((n) => !targetsOfContains.has(n.id))
         .map((n) => nodeMap.get(n.id))
@@ -58,11 +59,12 @@ function prepareDataForView(data, view) {
     }
     const hasGraph = data.graph?.nodes;
     const elements = hasGraph ? graphToElementTree(data.graph) : (data.elements || []);
+    const edgeType = (e) => (e.type || e.rel_type || '');
     const relationships = hasGraph
-        ? (data.graph.edges || []).filter((e) => (e.type || '') !== 'contains').map((e) => ({
+        ? (data.graph.edges || []).filter((e) => edgeType(e) !== 'contains').map((e) => ({
             source: e.source,
             target: e.target,
-            type: e.type,
+            type: edgeType(e),
             name: e.name
         }))
         : (data.relationships || []);
@@ -94,213 +96,50 @@ function prepareDataForView(data, view) {
         case 'general-view':
             return data;
         case 'interconnection-view': {
-            const ibdParts = [];
-            const seenParts = new Set();
-            const extractNestedParts = (element, parentPath = '') => {
-                if (!element || !element.children)
-                    return;
-                element.children.forEach((child) => {
-                    if (!child || !child.type)
-                        return;
-                    const childTypeLower = child.type.toLowerCase();
-                    if ((childTypeLower === 'part' || childTypeLower === 'part usage' ||
-                        (childTypeLower.includes('part') && !childTypeLower.includes('def'))) &&
-                        !seenParts.has(child.name)) {
-                        const qualifiedName = parentPath ? parentPath + '.' + child.name : child.name;
-                        ibdParts.push({
-                            ...child,
-                            containerId: element.name,
-                            containerType: element.type,
-                            qualifiedName: qualifiedName
-                        });
-                        seenParts.add(child.name);
-                        extractNestedParts(child, qualifiedName);
-                    }
-                });
-            };
-            allElements.forEach((el) => {
-                if (!el.type)
-                    return;
-                const typeLower = el.type.toLowerCase();
-                if ((typeLower === 'part' || typeLower === 'part usage' ||
-                    (typeLower.includes('part') && !typeLower.includes('def'))) &&
-                    !seenParts.has(el.name)) {
-                    ibdParts.push({ ...el, qualifiedName: el.name });
-                    seenParts.add(el.name);
-                    extractNestedParts(el, el.name);
-                }
-            });
-            const partDefs = allElements.filter((el) => {
-                if (!el.type)
-                    return false;
-                const typeLower = el.type.toLowerCase();
-                return typeLower === 'part def' || typeLower === 'part definition';
-            });
-            partDefs.forEach((partDef) => extractNestedParts(partDef, ''));
-            const ibdPorts = [];
-            const processPortsFromPart = (part, partId) => {
-                if (part.children) {
-                    part.children.forEach((child) => {
-                        if (child.type && child.type.toLowerCase().includes('port')) {
-                            ibdPorts.push({
-                                ...child,
-                                id: child.id || child.name,
-                                parentId: partId,
-                                direction: child.direction ||
-                                    (child.type.toLowerCase().includes('in') ? 'in' :
-                                        child.type.toLowerCase().includes('out') ? 'out' : 'inout')
-                            });
-                        }
+            if (data.ibd && Array.isArray(data.ibd.parts)) {
+                const ibd = data.ibd;
+                const selectedRoot = (data.selectedIbdRoot && typeof data.selectedIbdRoot === 'string')
+                    ? data.selectedIbdRoot
+                    : (ibd.defaultRoot ?? ibd.rootCandidates?.[0] ?? null);
+                const rootPart = selectedRoot ? ibd.parts.find((p) => p.name === selectedRoot) : null;
+                const rootPrefix = rootPart ? (rootPart.qualifiedName || rootPart.name) : (selectedRoot || '');
+                const focusedParts = rootPrefix ? ibd.parts.filter((p) => {
+                    const q = p.qualifiedName || p.name;
+                    return q === rootPrefix || (rootPrefix && q.startsWith(rootPrefix + '.'));
+                }) : [];
+                const partIds = new Set(focusedParts.map((p) => p.qualifiedName || p.name));
+                const partNames = new Set(focusedParts.map((p) => p.name));
+                const focusedPorts = ibd.ports.filter((p) => partIds.has(p.parentId) || partNames.has(p.parentId));
+                const focusedConnectors = ibd.connectors.filter((c) => {
+                    const srcMatch = focusedParts.some((p) => {
+                        const q = p.qualifiedName || p.name;
+                        return c.sourceId === q || c.sourceId.startsWith(q + '.') || c.sourceId === p.name;
                     });
-                }
-            };
-            ibdParts.forEach((part) => {
-                const partId = part.id || part.name;
-                processPortsFromPart(part, partId);
-            });
-            allElements.forEach((el) => {
-                if (el.type && el.type.toLowerCase().includes('port')) {
-                    const existingPort = ibdPorts.find((p) => p.name === el.name);
-                    if (!existingPort) {
-                        ibdPorts.push({
-                            ...el,
-                            id: el.id || el.name,
-                            parentId: el.parentId || 'root',
-                            direction: el.direction || 'inout'
-                        });
-                    }
-                }
-            });
-            const ibdConnectors = [];
-            const explicitConnectors = relationships.filter((rel) => rel.type && (rel.type.includes('connection') || rel.type.includes('flow') ||
-                rel.type.includes('binding') || rel.type.includes('interface') ||
-                rel.type.includes('allocation') || rel.type.includes('dependency')));
-            explicitConnectors.forEach((rel) => {
-                ibdConnectors.push({ ...rel, sourceId: rel.source, targetId: rel.target });
-            });
-            ibdParts.forEach((part) => {
-                const types = (part.typings && part.typings.length > 0)
-                    ? part.typings : (part.typing ? [part.typing] : []);
-                types.forEach((typeName) => {
-                    if (typeName && typeName !== part.name) {
-                        const typedElement = allElements.find((el) => el.name === typeName || el.id === typeName);
-                        if (typedElement) {
-                            ibdConnectors.push({
-                                source: part.name,
-                                target: typedElement.name,
-                                sourceId: part.name,
-                                targetId: typedElement.name,
-                                type: 'typing',
-                                name: 'type'
-                            });
-                        }
-                    }
-                });
-            });
-            relationships
-                .filter((rel) => rel.type && (rel.type.includes('attribute') || rel.type.includes('property') ||
-                rel.type.includes('reference')))
-                .forEach((rel) => {
-                const sourceInParts = ibdParts.some((p) => p.name === rel.source || p.id === rel.source);
-                const targetInParts = ibdParts.some((p) => p.name === rel.target || p.id === rel.target);
-                if (sourceInParts && targetInParts) {
-                    ibdConnectors.push({ ...rel, sourceId: rel.source, targetId: rel.target });
-                }
-            });
-            let focusPart = null;
-            let focusedParts = ibdParts;
-            const partsWithChildren = allElements.filter((el) => {
-                if (!el.type || !el.children || el.children.length === 0)
-                    return false;
-                const typeLower = el.type.toLowerCase();
-                const isPartDef = typeLower.includes('part def');
-                const isPartUsage = (typeLower === 'part' || typeLower === 'part usage' ||
-                    (typeLower.includes('part') && !typeLower.includes('def')));
-                if (!isPartDef && !isPartUsage)
-                    return false;
-                return el.children.some((c) => c.type && c.type.toLowerCase().includes('part'));
-            });
-            if (partsWithChildren.length > 0) {
-                partsWithChildren.sort((a, b) => {
-                    const aPartCount = a.children.filter((c) => c.type && c.type.toLowerCase().includes('part')).length;
-                    const bPartCount = b.children.filter((c) => c.type && c.type.toLowerCase().includes('part')).length;
-                    return bPartCount - aPartCount;
-                });
-                focusedParts = [];
-                const processedPartNames = new Set();
-                for (const currentFocusPart of partsWithChildren) {
-                    if (processedPartNames.has(currentFocusPart.name))
-                        continue;
-                    processedPartNames.add(currentFocusPart.name);
-                    focusPart = currentFocusPart;
-                    const partChildren = currentFocusPart.children.filter((c) => c.type && c.type.toLowerCase().includes('part'));
-                    focusedParts.push({
-                        name: currentFocusPart.name,
-                        type: currentFocusPart.type,
-                        id: currentFocusPart.id || currentFocusPart.name,
-                        attributes: currentFocusPart.attributes || {},
-                        children: currentFocusPart.children || []
+                    const tgtMatch = focusedParts.some((p) => {
+                        const q = p.qualifiedName || p.name;
+                        return c.targetId === q || c.targetId.startsWith(q + '.') || c.targetId === p.name;
                     });
-                    for (const child of partChildren) {
-                        if (processedPartNames.has(child.name))
-                            continue;
-                        processedPartNames.add(child.name);
-                        let enrichedChild = ibdParts.find((p) => p.name === child.name);
-                        if (!enrichedChild) {
-                            enrichedChild = { ...child, qualifiedName: child.name };
-                        }
-                        try {
-                            if (enrichedChild && enrichedChild.name) {
-                                const partDef = allElements.find((el) => el && el.type && el.name &&
-                                    el.type.toLowerCase().includes('part def') &&
-                                    el.name === (enrichedChild.typing || child.typing));
-                                if (partDef && partDef.children) {
-                                    enrichedChild = { ...enrichedChild, children: partDef.children };
-                                }
-                            }
-                        }
-                        catch {
-                            // Skip enrichment on error
-                        }
-                        focusedParts.push(enrichedChild);
-                        ibdConnectors.push({
-                            source: currentFocusPart.name,
-                            target: child.name,
-                            sourceId: currentFocusPart.name,
-                            targetId: child.name,
-                            type: 'composition',
-                            name: 'contains'
-                        });
-                    }
-                    if (currentFocusPart.children) {
-                        currentFocusPart.children.forEach((child) => {
-                            if (!child || !child.type)
-                                return;
-                            const childType = child.type.toLowerCase();
-                            if (childType === 'connection' || childType === 'connect' || childType === 'bind' || childType === 'binding') {
-                                const from = child.attributes?.get?.('from') || child.attributes?.from;
-                                const to = child.attributes?.get?.('to') || child.attributes?.to;
-                                if (from && to) {
-                                    ibdConnectors.push({
-                                        source: from,
-                                        target: to,
-                                        sourceId: from,
-                                        targetId: to,
-                                        type: childType === 'bind' || childType === 'binding' ? 'binding' : 'connection',
-                                        name: child.name || childType
-                                    });
-                                }
-                            }
-                        });
-                    }
-                }
+                    return srcMatch && tgtMatch;
+                });
+                return {
+                    ...data,
+                    elements: focusedParts,
+                    parts: focusedParts,
+                    ports: focusedPorts,
+                    connectors: focusedConnectors,
+                    ibdRootCandidates: ibd.rootCandidates || [],
+                    selectedIbdRoot: selectedRoot,
+                };
             }
+            // No backend IBD: interconnection view uses server data only (no client fallback).
             return {
                 ...data,
-                elements: focusedParts,
-                parts: focusedParts,
-                ports: ibdPorts,
-                connectors: ibdConnectors
+                elements: [],
+                parts: [],
+                ports: [],
+                connectors: [],
+                ibdRootCandidates: [],
+                selectedIbdRoot: null,
             };
         }
         case 'action-flow-view': {
