@@ -379,8 +379,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const visualizationViews = [
     { id: "general-view", label: "General", description: "General view (SysML v2 general-view)" },
     { id: "interconnection-view", label: "Interconnection", description: "Parts, ports, connections (SysML v2 interconnection-view)" },
-    // Disabled for next release: action-flow-view, state-transition-view, sequence-view
-  ];
+    // Disabled for next release: interconnection-view (routing), action-flow-view, state-transition-view, sequence-view
+  ].filter((v) => ENABLED_VIEWS.has(v.id));
 
   context.subscriptions.push(
     vscode.commands.registerCommand("sysml.showVisualizer", async () => {

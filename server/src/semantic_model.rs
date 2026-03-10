@@ -1381,4 +1381,64 @@ mod tests {
                 .map(|v| v.iter().map(|id| id.qualified_name.as_str()).collect::<Vec<_>>())
         );
     }
+
+    #[test]
+    fn connection_edges_added_when_port_nodes_exist() {
+        // Connection "connect flightControl.flightController.motorCmd to propulsion.propulsionUnit1.cmd"
+        // requires port nodes from expand_typed_part_usage. Verifies connection edges are added.
+        let input = r#"
+            package SurveillanceDrone {
+                port def MotorCommandPort {}
+                port def PowerPort {}
+                part def PropulsionUnit {
+                    port cmd : ~MotorCommandPort;
+                    port pwr : ~PowerPort;
+                }
+                part def Propulsion {
+                    part propulsionUnit1 : PropulsionUnit;
+                    part propulsionUnit2 : PropulsionUnit;
+                }
+                part def FlightController {
+                    port motorCmd : ~MotorCommandPort;
+                    port pwr : ~PowerPort;
+                }
+                part def FlightControlAndSensing {
+                    part flightController : FlightController;
+                }
+                part def SurveillanceQuadrotorDrone {
+                    part propulsion : Propulsion;
+                    part flightControl : FlightControlAndSensing;
+                    connect flightControl.flightController.motorCmd to propulsion.propulsionUnit1.cmd;
+                }
+            }
+        "#;
+        let doc = parse_sysml(input).expect("parse");
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let g = build_graph_from_doc(&doc, &uri);
+
+        let src = "SurveillanceDrone::SurveillanceQuadrotorDrone::flightControl::flightController::motorCmd";
+        let tgt = "SurveillanceDrone::SurveillanceQuadrotorDrone::propulsion::propulsionUnit1::cmd";
+        assert!(
+            g.node_index_by_id.contains_key(&NodeId::new(&uri, src)),
+            "expected motorCmd port node; nodes: {:?}",
+            g.nodes_by_uri
+                .get(&uri)
+                .map(|v| v.iter().map(|id| id.qualified_name.as_str()).collect::<Vec<_>>())
+        );
+        assert!(
+            g.node_index_by_id.contains_key(&NodeId::new(&uri, tgt)),
+            "expected cmd port node"
+        );
+
+        let edges = g.edges_for_uri_as_strings(&uri);
+        let conn_edges: Vec<_> = edges
+            .iter()
+            .filter(|(_, _, kind, _)| *kind == RelationshipKind::Connection)
+            .collect();
+        assert!(
+            !conn_edges.is_empty(),
+            "expected connection edges; edges: {:?}",
+            edges
+        );
+    }
 }

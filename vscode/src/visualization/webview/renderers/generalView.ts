@@ -1,6 +1,6 @@
 /**
- * General View renderer - D3 + elkjs with IBD-style blocks.
- * Uses elkjs for graph layout and D3 for SVG rendering.
+ * General View renderer - D3 + elkjs with SysML v2 compartment nodes.
+ * Uses shared sysmlNodeBuilder for Header, Attributes, Parts, Ports compartments.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -8,96 +8,34 @@ import type { RenderContext } from '../types';
 import { GENERAL_VIEW_PALETTE } from '../constants';
 import { formatSysMLStereotype } from '../shared';
 import { getTypeColor } from '../shared';
+import {
+    collectCompartmentsFromElement,
+    computeNodeHeightFromCompartments,
+    renderSysMLNode,
+    type SysMLNodeCompartments,
+    type SysMLNodeConfig
+} from './sysmlNodeBuilder';
 
 declare const d3: any;
 declare const ELK: any;
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT_BASE = 70;
-const LINE_HEIGHT = 12;
-const HEADER_HEIGHT = 38;
-const TYPED_BY_HEIGHT = 14;
-const SECTION_GAP = 4;
+
+/** General view uses full SysML v2 compartments: Header, Attributes, Parts, Ports, Other */
+const GENERAL_VIEW_NODE_CONFIG: SysMLNodeConfig = {
+    showHeader: true,
+    showAttributes: true,
+    showParts: true,
+    showPorts: true,
+    showOther: true,
+    maxLinesPerCompartment: 8
+};
 
 export interface GeneralViewContext extends RenderContext {
     buildGeneralViewGraph: (data: any) => { elements: any[]; typeStats: Record<string, number> };
     renderGeneralChips: (typeStats: Record<string, number>) => void;
     elkWorkerUrl: string;
-}
-
-/**
- * Collect compartment content (Parts, Ports, Attributes, etc.) from element.
- */
-function collectNodeContent(element: any): Array<{ title: string; lines: string[] }> {
-    const sections: Array<{ title: string; lines: string[] }> = [];
-    const attrLines: string[] = [];
-    const portLines: string[] = [];
-    const partLines: string[] = [];
-    const actionLines: string[] = [];
-    const otherLines: string[] = [];
-
-    if (!element?.children?.length) {
-        return sections;
-    }
-
-    const typeLower = (element.type || '').toLowerCase();
-    const isRequirement = typeLower.includes('requirement');
-
-    element.children.forEach((child: any) => {
-        if (!child?.name) return;
-        const cType = (child.type || '').toLowerCase();
-        if (cType.includes('package') || cType.includes('state')) return;
-
-        if (cType === 'attribute' || cType.includes('attribute')) {
-            const dataType = child.attributes?.get ? child.attributes.get('dataType') : (child.attributes?.dataType);
-            const typeStr = dataType ? ' : ' + String(dataType).split('::').pop() : '';
-            attrLines.push('  ' + child.name + typeStr);
-        } else if (cType === 'port' || cType.includes('port')) {
-            const portType = child.attributes?.get ? child.attributes.get('portType') : (child.attributes?.portType);
-            const pTypeStr = portType ? ' : ' + portType : '';
-            portLines.push('  ' + child.name + pTypeStr);
-        } else if (cType.includes('part')) {
-            partLines.push('  ' + child.name);
-        } else if (cType.includes('action')) {
-            actionLines.push('  ' + child.name);
-        } else if (cType.includes('requirement')) {
-            otherLines.push('  ' + child.name);
-        } else if (cType.includes('interface') || cType.includes('connect')) {
-            otherLines.push('  ' + child.name);
-        }
-    });
-
-    if (element.ports?.length) {
-        element.ports.forEach((p: any) => {
-            const pName = typeof p === 'string' ? p : (p?.name || 'port');
-            if (!portLines.some((l) => l.includes(pName))) {
-                portLines.push('  ' + pName);
-            }
-        });
-    }
-
-    if (isRequirement) {
-        if (attrLines.length) sections.push({ title: 'Attributes', lines: attrLines.slice(0, 6) });
-        if (otherLines.length) sections.push({ title: 'Nested', lines: otherLines.slice(0, 4) });
-    } else {
-        if (attrLines.length) sections.push({ title: 'Attributes', lines: attrLines.slice(0, 8) });
-        if (partLines.length) sections.push({ title: 'Parts', lines: partLines.slice(0, 8) });
-        if (portLines.length) sections.push({ title: 'Ports', lines: portLines.slice(0, 6) });
-        if (actionLines.length) sections.push({ title: 'Actions', lines: actionLines.slice(0, 4) });
-        if (otherLines.length) sections.push({ title: 'Other', lines: otherLines.slice(0, 4) });
-    }
-    return sections;
-}
-
-function computeNodeHeight(element: any, hasTypedBy: boolean, sections: Array<{ title: string; lines: string[] }>): number {
-    let h = HEADER_HEIGHT;
-    if (hasTypedBy) h += TYPED_BY_HEIGHT;
-    sections.forEach((s) => {
-        h += 14;
-        h += s.lines.length * LINE_HEIGHT;
-        h += SECTION_GAP;
-    });
-    return Math.max(NODE_HEIGHT_BASE, h + 8);
 }
 
 function computeOrthogonalPath(
@@ -212,20 +150,19 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
 
     const nodeWidth = NODE_WIDTH;
 
-    const nodeDataMap = new Map<string, { sections: Array<{ title: string; lines: string[] }>; height: number; typedByName: string | null }>();
+    const nodeDataMap = new Map<string, { compartments: SysMLNodeCompartments; height: number }>();
     cyNodes.forEach((el: any) => {
         const element = el.data.element;
-        const sections = element ? collectNodeContent(element) : [];
-        let typedByName: string | null = null;
-        if (element) {
-            const attrs = element.attributes;
-            typedByName = (attrs && (typeof attrs.get === 'function' ? attrs.get('partType') || attrs.get('type') || attrs.get('typedBy') : attrs.partType || attrs.type || attrs.typedBy)) || null;
-            if (!typedByName && element.partType) typedByName = element.partType;
-            if (!typedByName && element.typings?.length) typedByName = String(element.typings[0]).replace(/^[:~]+/, '').trim();
-            if (!typedByName && element.typing) typedByName = String(element.typing).replace(/^[:~]+/, '').trim();
-        }
-        const nodeHeight = computeNodeHeight(element, !!typedByName, sections);
-        nodeDataMap.set(el.data.id, { sections, height: nodeHeight, typedByName });
+        const compartments = element ? collectCompartmentsFromElement(element) : {
+            header: { stereotype: 'element', name: 'Unnamed' },
+            typedByName: null,
+            attributes: [],
+            parts: [],
+            ports: [],
+            other: []
+        };
+        const nodeHeight = computeNodeHeightFromCompartments(compartments, GENERAL_VIEW_NODE_CONFIG, NODE_WIDTH);
+        nodeDataMap.set(el.data.id, { compartments, height: Math.max(NODE_HEIGHT_BASE, nodeHeight) });
     });
 
     // Layout uses ALL edges (hierarchy + typing) so ELK positions the full tree correctly.
@@ -426,99 +363,29 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
 
         const d = el.data;
         const nd = nodeDataMap.get(d.id);
-        const sections = nd?.sections ?? [];
-        const typedByName = nd?.typedByName ?? null;
+        const compartments = nd?.compartments ?? {
+            header: { stereotype: (d.sysmlType || 'element').toLowerCase(), name: (d.elementName || d.label || 'Unnamed').toString() },
+            typedByName: null,
+            attributes: [],
+            parts: [],
+            ports: [],
+            other: []
+        };
 
         const isDefinition = d.isDefinition === true;
         const typeColor = d.color || getTypeColor(d.sysmlType);
-        const stereoDisplay = (d.sysmlType || 'element').toLowerCase();
-        const displayName = (d.elementName || d.label || 'Unnamed').toString();
-        const truncatedName = displayName.length > 24 ? displayName.substring(0, 22) + '..' : displayName;
 
-        const nodeG = nodeGroup.append('g')
-            .attr('class', 'general-node elk-node' + (isDefinition ? ' definition-node' : ' usage-node'))
-            .attr('transform', 'translate(' + pos.x + ',' + pos.y + ')')
-            .attr('data-element-name', d.elementName || d.label)
-            .style('cursor', 'pointer');
-
-        const strokeColor = typeColor;
-        const strokeW = isDefinition ? '3px' : '2px';
-        nodeG.append('rect')
-            .attr('width', pos.width)
-            .attr('height', pos.height)
-            .attr('rx', isDefinition ? 4 : 8)
-            .attr('class', 'graph-node-background node-background')
-            .attr('data-original-stroke', strokeColor)
-            .attr('data-original-width', strokeW)
-            .style('fill', 'var(--vscode-editor-background)')
-            .style('stroke', strokeColor)
-            .style('stroke-width', strokeW)
-            .style('stroke-dasharray', isDefinition ? '6,3' : 'none');
-
-        nodeG.append('rect')
-            .attr('width', pos.width)
-            .attr('height', 5)
-            .attr('rx', 2)
-            .style('fill', typeColor);
-
-        nodeG.append('rect')
-            .attr('y', 5)
-            .attr('width', pos.width)
-            .attr('height', typedByName ? 36 : 28)
-            .style('fill', 'var(--vscode-button-secondaryBackground)');
-
-        const stereo = formatSysMLStereotype(d.sysmlType) || ('«' + stereoDisplay + '»');
-        nodeG.append('text')
-            .attr('x', pos.width / 2)
-            .attr('y', 17)
-            .attr('text-anchor', 'middle')
-            .text(stereo)
-            .style('font-size', '9px')
-            .style('fill', typeColor);
-
-        nodeG.append('text')
-            .attr('class', 'node-name-text')
-            .attr('x', pos.width / 2)
-            .attr('y', 31)
-            .attr('text-anchor', 'middle')
-            .text(truncatedName)
-            .style('font-size', '11px')
-            .style('font-weight', 'bold')
-            .style('fill', 'var(--vscode-editor-foreground)');
-
-        if (typedByName) {
-            const tbText = (typedByName.length > 20 ? typedByName.substring(0, 18) + '..' : typedByName);
-            nodeG.append('text')
-                .attr('x', pos.width / 2)
-                .attr('y', 43)
-                .attr('text-anchor', 'middle')
-                .text(': ' + tbText)
-                .style('font-size', '10px')
-                .style('font-style', 'italic')
-                .style('fill', '#569CD6');
-        }
-
-        let contentY = typedByName ? 50 : 38;
-        sections.forEach((sec) => {
-            nodeG.append('text')
-                .attr('x', 6)
-                .attr('y', contentY)
-                .text(sec.title)
-                .style('font-size', '9px')
-                .style('font-weight', '600')
-                .style('fill', 'var(--vscode-descriptionForeground)');
-            contentY += 12;
-            sec.lines.forEach((line) => {
-                const truncated = line.length > 26 ? line.substring(0, 24) + '..' : line;
-                nodeG.append('text')
-                    .attr('x', 6)
-                    .attr('y', contentY)
-                    .text(truncated)
-                    .style('font-size', '9px')
-                    .style('fill', 'var(--vscode-descriptionForeground)');
-                contentY += LINE_HEIGHT;
-            });
-            contentY += SECTION_GAP;
+        const nodeG = renderSysMLNode(nodeGroup, compartments, {
+            x: pos.x,
+            y: pos.y,
+            width: pos.width,
+            height: pos.height,
+            config: GENERAL_VIEW_NODE_CONFIG,
+            isDefinition,
+            typeColor,
+            formatStereotype: (t) => formatSysMLStereotype(t) || ('«' + t + '»'),
+            nodeClass: 'general-node elk-node',
+            dataElementName: d.elementName || d.label
         });
 
         nodeG.on('click', function (event: any) {

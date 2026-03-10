@@ -10,8 +10,8 @@ export const MAX_SYSML_ZOOM = 5;
 
 export const STRUCTURAL_VIEWS = new Set(['general-view']);
 
-/** Views enabled for the current release. Disabled: action-flow-view, state-transition-view, sequence-view */
-export const ENABLED_VIEWS = new Set(['general-view', 'interconnection-view']);
+/** Views enabled for the current release. Disabled: interconnection-view (routing quality), action-flow-view, state-transition-view, sequence-view */
+export const ENABLED_VIEWS = new Set(['general-view']);
 
 export const ORIENTATION_LABELS: Record<string, string> = {
     horizontal: 'Horizontal',

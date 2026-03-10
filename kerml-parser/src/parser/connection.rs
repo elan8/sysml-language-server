@@ -53,9 +53,20 @@ pub(super) fn parse_connection_usage(
 
         match rule {
             Rule::name | Rule::qualified_name | Rule::identifier => {
-                let ident = pair.as_str().to_string();
-                log::debug!("parse_connection_usage: Found direct identifier: {}", ident);
-                identifiers.push(ident);
+                let ident = pair.as_str().trim().to_string();
+                if !ident.is_empty() {
+                    log::debug!("parse_connection_usage: Found direct identifier: {}", ident);
+                    identifiers.push(ident);
+                }
+            }
+            Rule::connect_end => {
+                // connect_end matches qualified_name, name, string_literal, etc.
+                // Use as_str() to get the full endpoint text (e.g. "flightControl.flightController.motorCmd")
+                let ident = pair.as_str().trim().to_string();
+                if !ident.is_empty() {
+                    log::debug!("parse_connection_usage: Found connect_end: {}", ident);
+                    identifiers.push(ident);
+                }
             }
             Rule::expr_value | Rule::expr_or | Rule::expr_xor | Rule::expr_and | Rule::expr_compare
             | Rule::expr_add_sub | Rule::expr_mul_div | Rule::expr_power | Rule::expr_primary

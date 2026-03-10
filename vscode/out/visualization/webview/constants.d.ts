@@ -7,7 +7,7 @@ export declare const MAX_CANVAS_ZOOM = 5;
 export declare const MIN_SYSML_ZOOM = 0.04;
 export declare const MAX_SYSML_ZOOM = 5;
 export declare const STRUCTURAL_VIEWS: Set<string>;
-/** Views enabled for the current release. Disabled: action-flow-view, state-transition-view, sequence-view */
+/** Views enabled for the current release. Disabled: interconnection-view (routing quality), action-flow-view, state-transition-view, sequence-view */
 export declare const ENABLED_VIEWS: Set<string>;
 export declare const ORIENTATION_LABELS: Record<string, string>;
 export declare const STATE_LAYOUT_LABELS: Record<string, string>;

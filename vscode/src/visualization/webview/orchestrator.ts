@@ -3326,7 +3326,8 @@ let lastPillarStats = {};
                 postMessage: (msg) => vscode.postMessage(msg),
                 onStartInlineEdit: (nodeG, elementName, x, y, wd) => startInlineEdit(nodeG, elementName, x, y, wd),
                 renderPlaceholder: (wd, ht, viewName, message, d) => renderPlaceholderView(wd, ht, viewName, message, d),
-                clearVisualHighlights
+                clearVisualHighlights,
+                elkWorkerUrl
             };
         }
 
@@ -3401,7 +3402,18 @@ let lastPillarStats = {};
         } else if (view === 'sequence-view') {
                 renderSequenceViewModule(buildRenderContext(width, height), dataToRender);
             } else if (view === 'interconnection-view') {
-                renderIbdViewModule(buildRenderContext(width, height), dataToRender);
+                renderIbdViewModule(buildRenderContext(width, height), dataToRender).then(() => {
+                    setTimeout(() => {
+                        zoomToFit('auto');
+                        updateDimensionsDisplay();
+                        isRendering = false;
+                        hideLoading();
+                    }, 100);
+                }).catch((err) => {
+                    console.error('[Interconnection View] Render failed:', err);
+                    isRendering = false;
+                    hideLoading();
+                });
             } else if (view === 'action-flow-view') {
                 renderActivityViewModule(buildRenderContext(width, height), dataToRender);
             } else if (view === 'state-transition-view') {
@@ -3410,8 +3422,8 @@ let lastPillarStats = {};
                 renderPlaceholderView(width, height, 'Unknown View', 'The selected view is not yet implemented.', dataToRender);
             }
 
-            // General view handles zoom/hide in its async .then(); others run here
-            if (view !== 'general-view') {
+            // General view and interconnection view handle zoom/hide in their async .then(); others run here
+            if (view !== 'general-view' && view !== 'interconnection-view') {
                 // If zoom was previously modified, restore it; otherwise zoom to fit
                 if (shouldPreserveZoom) {
                     restoreZoom();

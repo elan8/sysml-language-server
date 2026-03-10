@@ -738,7 +738,7 @@
   }
 
   // src/visualization/webview/renderers/ibd.ts
-  function renderIbdView(ctx, data) {
+  async function renderIbdView(ctx, data) {
     const { width, height, svg: svg2, g: g2, layoutDirection: layoutDirection2, postMessage, onStartInlineEdit, renderPlaceholder, clearVisualHighlights: clearVisualHighlights2 } = ctx;
     if (!data || !data.parts || data.parts.length === 0) {
       renderPlaceholder(
@@ -758,11 +758,13 @@
     const padding = 140;
     const horizontalSpacing = 160;
     const verticalSpacing = 100;
+    const toDot = (qn) => (qn || "").replace(/::/g, ".");
+    const partToElkId = (p) => toDot(p.qualifiedName) || p.id || p.name;
     parts.forEach((part, index) => {
       if (!part.id) part.id = part.name || "part-" + index;
     });
     const calculatePartHeight = (part) => {
-      const partPorts = ports.filter((p) => p && (p.parentId === part.name || p.parentId === part.id));
+      const partPorts = ports.filter((p) => p && (p.parentId === part.name || p.parentId === part.id || p.parentId === part.qualifiedName));
       const partChildren = part.children || [];
       let contentLineCount = 0;
       partPorts.forEach((p) => {
@@ -817,7 +819,7 @@
       if (part.id) partHeights.set(part.id, calculatePartHeight(part));
     });
     const getPartChildren = (p) => parts.filter(
-      (c) => c.containerId === p.name || c.containerId === p.id || c.containerId === p.qualifiedName
+      (c) => c.containerId === p.name || c.containerId === p.id || c.containerId === p.qualifiedName || toDot(c.containerId) === toDot(p.qualifiedName)
     );
     const buildTree = (part) => ({
       part,
@@ -827,6 +829,88 @@
     const rootPart = roots.length > 0 ? roots.reduce((a, b) => getPartChildren(a).length >= getPartChildren(b).length ? a : b) : parts[0];
     const partTree = rootPart ? buildTree(rootPart) : null;
     const rootName = rootPart ? rootPart.name : "";
+    const leafParts = parts.filter((p) => getPartChildren(p).length === 0);
+    const leafPartIds = new Set(leafParts.map((p) => partToElkId(p)));
+    const findPartForEndpoint = (endpointPath) => {
+      if (!endpointPath) return null;
+      const pathDot = endpointPath.indexOf("::") >= 0 ? endpointPath.substring(endpointPath.lastIndexOf("::") + 2) : endpointPath;
+      let best = null;
+      for (const part of parts) {
+        const qn = toDot(part.qualifiedName || part.name);
+        if (!qn) continue;
+        if (pathDot === qn || pathDot.startsWith(qn + ".")) {
+          if (!best || qn.length > best.len) best = { part, len: qn.length };
+        }
+      }
+      return best?.part ?? null;
+    };
+    let elkLaidOut = null;
+    const useElk = typeof ELK !== "undefined" && ctx.elkWorkerUrl && partTree;
+    if (useElk) {
+      try {
+        const elk = new ELK({ workerUrl: ctx.elkWorkerUrl || void 0 });
+        const treeToElkNode = (node) => {
+          const part = node.part;
+          const id = partToElkId(part);
+          const h = partHeights.get(part.name) || 80;
+          if (node.children.length === 0) {
+            return {
+              id,
+              width: partWidth,
+              height: h,
+              ports: [
+                { id: id + "_west", layoutOptions: { "org.eclipse.elk.port.side": "WEST" } },
+                { id: id + "_east", layoutOptions: { "org.eclipse.elk.port.side": "EAST" } }
+              ]
+            };
+          }
+          const childNodes = node.children.map((c) => treeToElkNode(c));
+          const minW = Math.max(partWidth, 400);
+          const minH = rootHeaderHeight + 120;
+          return {
+            id,
+            width: minW,
+            height: minH,
+            children: childNodes
+          };
+        };
+        const elkEdges = [];
+        connectors.forEach((conn, idx) => {
+          const srcPart = findPartForEndpoint(conn.sourceId || conn.source);
+          const tgtPart = findPartForEndpoint(conn.targetId || conn.target);
+          if (!srcPart || !tgtPart || !leafPartIds.has(partToElkId(srcPart)) || !leafPartIds.has(partToElkId(tgtPart))) return;
+          elkEdges.push({
+            id: "edge-" + idx,
+            sources: [partToElkId(srcPart) + "_east"],
+            targets: [partToElkId(tgtPart) + "_west"]
+          });
+        });
+        const elkGraph = {
+          id: "root",
+          layoutOptions: {
+            "elk.algorithm": "layered",
+            "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+            "elk.direction": "RIGHT",
+            "elk.spacing.nodeNode": "80",
+            "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+            "elk.spacing.edgeNode": "60",
+            "elk.spacing.edgeEdge": "40",
+            "elk.edgeRouting": "ORTHOGONAL",
+            "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+            "elk.separateConnectedComponents": "true",
+            "elk.padding": "[top=60,left=60,bottom=60,right=60]",
+            "org.eclipse.elk.portConstraints": "FIXED_SIDE",
+            "org.eclipse.elk.json.edgeCoords": "ROOT"
+          },
+          children: [treeToElkNode(partTree)],
+          edges: elkEdges
+        };
+        elkLaidOut = await elk.layout(elkGraph);
+      } catch (e) {
+        console.warn("[IBD] ELK layout failed, using tree layout:", e);
+        elkLaidOut = null;
+      }
+    }
     const partPositions = /* @__PURE__ */ new Map();
     const innerMargin = 24;
     const rootHeaderHeight = 28;
@@ -835,22 +919,42 @@
       const prefix = rootName + ".";
       return qualifiedName.startsWith(prefix) ? qualifiedName.slice(prefix.length) : qualifiedName;
     };
-    if (partTree) {
+    const setPos = (part, posData) => {
+      partPositions.set(part.name, posData);
+      partPositions.set(part.id, posData);
+      if (part.qualifiedName && part.qualifiedName !== part.name) {
+        partPositions.set(part.qualifiedName, posData);
+      }
+      partPositions.set(partToElkId(part), posData);
+      const rel = relativePath(part.qualifiedName || part.name);
+      if (rel && rel !== part.name) partPositions.set(rel, posData);
+    };
+    const idToPart = /* @__PURE__ */ new Map();
+    parts.forEach((p) => idToPart.set(partToElkId(p), p));
+    const extractElkPositions = (elkNode, parentAbsX, parentAbsY, depth) => {
+      const part = idToPart.get(elkNode.id);
+      if (!part) return;
+      const absX = parentAbsX + (elkNode.x ?? 0);
+      const absY = parentAbsY + (elkNode.y ?? 0);
+      const w = elkNode.width ?? partWidth;
+      const h = elkNode.height ?? (partHeights.get(part.name) || 80);
+      const isContainer = elkNode.children && elkNode.children.length > 0;
+      const posData = { x: absX + padding, y: absY + padding, part, height: h, width: w, isContainer, depth };
+      setPos(part, posData);
+      if (elkNode.children && elkNode.children.length > 0) {
+        elkNode.children.forEach((ch) => extractElkPositions(ch, absX, absY, depth + 1));
+      }
+    };
+    if (elkLaidOut && elkLaidOut.children && elkLaidOut.children.length > 0) {
+      const rootElk = elkLaidOut.children[0];
+      extractElkPositions(rootElk, 0, 0, 0);
+    } else if (partTree) {
       const placeNode = (node, baseX, baseY, depth) => {
         const part = node.part;
         const h = partHeights.get(part.name) || 80;
-        const setPos = (posData2) => {
-          partPositions.set(part.name, posData2);
-          partPositions.set(part.id, posData2);
-          if (part.qualifiedName && part.qualifiedName !== part.name) {
-            partPositions.set(part.qualifiedName, posData2);
-          }
-          const rel = relativePath(part.qualifiedName || part.name);
-          if (rel && rel !== part.name) partPositions.set(rel, posData2);
-        };
         if (node.children.length === 0) {
           const posData2 = { x: baseX, y: baseY, part, height: h, width: partWidth, depth };
-          setPos(posData2);
+          setPos(part, posData2);
           return { width: partWidth, height: h };
         }
         const childSpacingH = horizontalSpacing;
@@ -883,7 +987,7 @@
         const frameW = Math.max(partWidth, contentW);
         const frameH = rootHeaderHeight + contentH;
         const posData = { x: baseX, y: baseY, part, height: frameH, width: frameW, isContainer: true, depth };
-        setPos(posData);
+        setPos(part, posData);
         return { width: frameW, height: frameH };
       };
       placeNode(partTree, padding, padding, 0);
@@ -897,13 +1001,107 @@
           width: partWidth,
           depth: 0
         };
-        partPositions.set(part.name, posData);
-        partPositions.set(part.id, posData);
-        if (part.qualifiedName && part.qualifiedName !== part.name) {
-          partPositions.set(part.qualifiedName, posData);
-        }
+        setPos(part, posData);
       });
     }
+    const parsePathToPoints = (d) => {
+      const pts = [];
+      const tokens = d.replace(/[ML]/gi, " ").replace(/,/g, " ").trim().split(/\s+/);
+      let i = 0;
+      while (i + 1 < tokens.length) {
+        const x = parseFloat(tokens[i]);
+        const y = parseFloat(tokens[i + 1]);
+        if (!Number.isNaN(x) && !Number.isNaN(y)) pts.push({ x, y });
+        i += 2;
+      }
+      return pts;
+    };
+    const pointsToPathD = (pts) => {
+      if (pts.length === 0) return "";
+      let s = "M" + pts[0].x + "," + pts[0].y;
+      for (let i = 1; i < pts.length; i++) s += " L" + pts[i].x + "," + pts[i].y;
+      return s;
+    };
+    const rectIntersectsHSeg = (y, x1, x2, r, margin) => {
+      const yMin = r.y - margin, yMax = r.y + r.height + margin;
+      if (y < yMin || y > yMax) return false;
+      const xMin = Math.min(x1, x2) - margin, xMax = Math.max(x1, x2) + margin;
+      return !(xMax < r.x || xMin > r.x + r.width);
+    };
+    const rectIntersectsVSeg = (x, y1, y2, r, margin) => {
+      const xMin = r.x - margin, xMax = r.x + r.width + margin;
+      if (x < xMin || x > xMax) return false;
+      const yMin = Math.min(y1, y2) - margin, yMax = Math.max(y1, y2) + margin;
+      return !(yMax < r.y || yMin > r.y + r.height);
+    };
+    const OBSTACLE_MARGIN = 10;
+    const MAX_DETOUR_DEPTH = 4;
+    const routeAroundLeafObstacles = (points, obstacles, depth = 0) => {
+      if (points.length < 2 || obstacles.length === 0 || depth >= MAX_DETOUR_DEPTH) return points;
+      for (let i = 0; i < points.length - 1; i++) {
+        const a = points[i], b = points[i + 1];
+        const isHoriz = Math.abs(a.y - b.y) < 1e-6;
+        const isVert = Math.abs(a.x - b.x) < 1e-6;
+        if (!isHoriz && !isVert) continue;
+        for (const r of obstacles) {
+          const hits = isHoriz ? rectIntersectsHSeg(a.y, a.x, b.x, r, OBSTACLE_MARGIN) : rectIntersectsVSeg(a.x, a.y, b.y, r, OBSTACLE_MARGIN);
+          if (!hits) continue;
+          if (isHoriz) {
+            const aboveY = r.y - OBSTACLE_MARGIN;
+            const belowY = r.y + r.height + OBSTACLE_MARGIN;
+            const above = [a, { x: a.x, y: aboveY }, { x: b.x, y: aboveY }, b];
+            const below = [a, { x: a.x, y: belowY }, { x: b.x, y: belowY }, b];
+            const newObs = obstacles.filter((o) => o !== r);
+            const mergedAbove = [...points.slice(0, i), ...above, ...points.slice(i + 2)];
+            const mergedBelow = [...points.slice(0, i), ...below, ...points.slice(i + 2)];
+            const resultAbove = routeAroundLeafObstacles(mergedAbove, newObs, depth + 1);
+            const resultBelow = routeAroundLeafObstacles(mergedBelow, newObs, depth + 1);
+            const lenAbove = resultAbove.reduce((sum, p, j) => {
+              if (j === 0) return 0;
+              return sum + Math.abs(resultAbove[j].x - resultAbove[j - 1].x) + Math.abs(resultAbove[j].y - resultAbove[j - 1].y);
+            }, 0);
+            const lenBelow = resultBelow.reduce((sum, p, j) => {
+              if (j === 0) return 0;
+              return sum + Math.abs(resultBelow[j].x - resultBelow[j - 1].x) + Math.abs(resultBelow[j].y - resultBelow[j - 1].y);
+            }, 0);
+            return lenAbove <= lenBelow ? resultAbove : resultBelow;
+          } else {
+            const leftX = r.x - OBSTACLE_MARGIN;
+            const rightX = r.x + r.width + OBSTACLE_MARGIN;
+            const left = [a, { x: leftX, y: a.y }, { x: leftX, y: b.y }, b];
+            const right = [a, { x: rightX, y: a.y }, { x: rightX, y: b.y }, b];
+            const newObs = obstacles.filter((o) => o !== r);
+            const mergedLeft = [...points.slice(0, i), ...left, ...points.slice(i + 2)];
+            const mergedRight = [...points.slice(0, i), ...right, ...points.slice(i + 2)];
+            const resultLeft = routeAroundLeafObstacles(mergedLeft, newObs, depth + 1);
+            const resultRight = routeAroundLeafObstacles(mergedRight, newObs, depth + 1);
+            const lenLeft = resultLeft.reduce((sum, p, j) => {
+              if (j === 0) return 0;
+              return sum + Math.abs(resultLeft[j].x - resultLeft[j - 1].x) + Math.abs(resultLeft[j].y - resultLeft[j - 1].y);
+            }, 0);
+            const lenRight = resultRight.reduce((sum, p, j) => {
+              if (j === 0) return 0;
+              return sum + Math.abs(resultRight[j].x - resultRight[j - 1].x) + Math.abs(resultRight[j].y - resultRight[j - 1].y);
+            }, 0);
+            return lenLeft <= lenRight ? resultLeft : resultRight;
+          }
+        }
+      }
+      return points;
+    };
+    const pathFromElkSectionsWithPorts = (sections, srcX, srcY, tgtX, tgtY) => {
+      if (!sections || sections.length === 0) return null;
+      const sec = sections[0];
+      if (!sec?.startPoint || !sec?.endPoint) return null;
+      const bp = sec.bendPoints || [];
+      const px = (x) => x + padding;
+      const parts2 = ["M" + srcX + "," + srcY];
+      for (const p of bp) {
+        parts2.push("L" + px(p.x) + "," + px(p.y));
+      }
+      parts2.push("L" + tgtX + "," + tgtY);
+      return parts2.join(" ");
+    };
     const findPartPos = (qualifiedName) => {
       if (!qualifiedName) return null;
       const normalized = qualifiedName.lastIndexOf("::") >= 0 ? qualifiedName.substring(qualifiedName.lastIndexOf("::") + 2) : qualifiedName;
@@ -936,7 +1134,7 @@
     function drawIbdConnectors() {
       g2.selectAll(".ibd-connectors").remove();
       g2.selectAll(".ibd-connector-labels").remove();
-      connectorGroup = g2.insert("g", ".ibd-parts").attr("class", "ibd-connectors");
+      connectorGroup = g2.append("g").attr("class", "ibd-connectors");
       usedLabelPositions = [];
       pendingLabels = [];
       const nodePairConnectors = /* @__PURE__ */ new Map();
@@ -960,6 +1158,27 @@
         }
         portConnections.get(portKey).push({ connector, idx });
       });
+      const collectElkEdges = (node, acc) => {
+        if (node?.edges) acc.push(...node.edges);
+        (node?.children ?? []).forEach((c) => collectElkEdges(c, acc));
+      };
+      const allElkEdges = [];
+      if (elkLaidOut) collectElkEdges(elkLaidOut, allElkEdges);
+      const getLeafObstaclesExcluding = (srcPartName, tgtPartName) => {
+        const rects = [];
+        partPositions.forEach((pos, key) => {
+          if (key !== pos.part.name) return;
+          if (pos.isContainer) return;
+          if (pos.part.name === srcPartName || pos.part.name === tgtPartName) return;
+          rects.push({
+            x: pos.x,
+            y: pos.y,
+            width: pos.width ?? partWidth,
+            height: pos.height
+          });
+        });
+        return rects;
+      };
       const connectorOffsets = /* @__PURE__ */ new Map();
       nodePairConnectors.forEach((group) => {
         const count = group.length;
@@ -972,7 +1191,7 @@
       partPositions.forEach((pos, partName) => {
         if (partName !== pos.part.name) return;
         const part = pos.part;
-        const partPorts = ports.filter((p) => p && (p.parentId === part.name || p.parentId === part.id));
+        const partPorts = ports.filter((p) => p && (p.parentId === part.name || p.parentId === part.id || p.parentId === part.qualifiedName));
         const portStartY = part.attributes && (part.attributes.get && (part.attributes.get("partType") || part.attributes.get("type"))) ? 70 : 58;
         partPorts.forEach((p, i) => {
           const portY = pos.y + portStartY + i * 28;
@@ -983,7 +1202,7 @@
       const findPortPosition = (partPos, portName) => {
         if (!partPos || !portName) return null;
         const part = partPos.part;
-        const partPorts = ports.filter((p) => p && (p.parentId === part.name || p.parentId === part.id));
+        const partPorts = ports.filter((p) => p && (p.parentId === part.name || p.parentId === part.id || p.parentId === part.qualifiedName));
         const portNameLower = portName.toLowerCase();
         const port = partPorts.find((p) => p && p.name && (p.name.toLowerCase() === portNameLower || portName.toLowerCase().includes(p.name.toLowerCase())));
         if (!port) return null;
@@ -1047,26 +1266,39 @@
         let pathD;
         let labelX, labelY;
         const standoff = 40;
-        if (srcPortPos && tgtPortPos) {
+        const elkEdge = allElkEdges.find((e) => e.id === "edge-" + connIdx);
+        const elkPath = elkEdge?.sections && srcPortPos && tgtPortPos ? pathFromElkSectionsWithPorts(elkEdge.sections, srcX, srcY, tgtX, tgtY) : null;
+        if (elkPath) {
+          pathD = elkPath;
+          const sec = elkEdge?.sections?.[0];
+          const bp = sec?.bendPoints || [];
+          if (bp.length > 0) {
+            const mid = bp[Math.floor(bp.length / 2)];
+            labelX = mid.x + padding;
+            labelY = mid.y + padding;
+          } else {
+            labelX = (srcX + tgtX) / 2;
+            labelY = (srcY + tgtY) / 2;
+          }
+        } else if (srcPortPos && tgtPortPos) {
           const srcIsLeft = srcPortPos.isLeft;
           const tgtIsLeft = tgtPortPos.isLeft;
-          const offsetSrcY = srcY + baseOffset * 0.5;
-          const offsetTgtY = tgtY + baseOffset * 0.5;
+          const routeXOffset = baseOffset;
           if (srcIsLeft && tgtIsLeft) {
-            const routeX = Math.min(srcPos.x, tgtPos.x) - standoff - baseOffset;
-            pathD = "M" + srcX + "," + offsetSrcY + " L" + routeX + "," + offsetSrcY + " L" + routeX + "," + offsetTgtY + " L" + tgtX + "," + offsetTgtY;
+            const routeX = Math.min(srcPos.x, tgtPos.x) - standoff - routeXOffset;
+            pathD = "M" + srcX + "," + srcY + " L" + routeX + "," + srcY + " L" + routeX + "," + tgtY + " L" + tgtX + "," + tgtY;
             labelX = routeX;
-            labelY = (offsetSrcY + offsetTgtY) / 2;
+            labelY = (srcY + tgtY) / 2;
           } else if (!srcIsLeft && !tgtIsLeft) {
-            const routeX = Math.max(srcPos.x + partWidth, tgtPos.x + partWidth) + standoff + baseOffset;
-            pathD = "M" + srcX + "," + offsetSrcY + " L" + routeX + "," + offsetSrcY + " L" + routeX + "," + offsetTgtY + " L" + tgtX + "," + offsetTgtY;
+            const routeX = Math.max(srcPos.x + partWidth, tgtPos.x + partWidth) + standoff + routeXOffset;
+            pathD = "M" + srcX + "," + srcY + " L" + routeX + "," + srcY + " L" + routeX + "," + tgtY + " L" + tgtX + "," + tgtY;
             labelX = routeX;
-            labelY = (offsetSrcY + offsetTgtY) / 2;
+            labelY = (srcY + tgtY) / 2;
           } else {
-            const midX = (srcX + tgtX) / 2 + baseOffset;
-            pathD = "M" + srcX + "," + offsetSrcY + " L" + midX + "," + offsetSrcY + " L" + midX + "," + offsetTgtY + " L" + tgtX + "," + offsetTgtY;
+            const midX = (srcX + tgtX) / 2 + routeXOffset;
+            pathD = "M" + srcX + "," + srcY + " L" + midX + "," + srcY + " L" + midX + "," + tgtY + " L" + tgtX + "," + tgtY;
             labelX = midX;
-            labelY = (offsetSrcY + offsetTgtY) / 2;
+            labelY = (srcY + tgtY) / 2;
           }
         } else {
           const srcCx = srcPos.x + partWidth / 2;
@@ -1092,6 +1324,12 @@
             labelX = (x1 + x2) / 2;
             labelY = midY;
           }
+        }
+        const obstacles = getLeafObstaclesExcluding(srcPos.part.name, tgtPos.part.name);
+        if (obstacles.length > 0) {
+          const pts = parsePathToPoints(pathD);
+          const routed = routeAroundLeafObstacles(pts, obstacles);
+          if (routed.length >= 2) pathD = pointsToPathD(routed);
         }
         const connTypeLower = (connector.type || "").toLowerCase();
         const connNameLower = (connector.name || "").toLowerCase();
@@ -1215,7 +1453,6 @@
         }
       });
     }
-    drawIbdConnectors();
     const partGroup = g2.append("g").attr("class", "ibd-parts");
     const drawnPartIds = /* @__PURE__ */ new Set();
     const partEntries = Array.from(partPositions.entries());
@@ -1244,7 +1481,7 @@
         typedByName = part.attributes.get("partType") || part.attributes.get("type") || part.attributes.get("typedBy");
       }
       if (!typedByName && part.partType) typedByName = part.partType;
-      const partPorts = ports.filter((p) => p && (p.parentId === part.name || p.parentId === part.id));
+      const partPorts = ports.filter((p) => p && (p.parentId === part.name || p.parentId === part.id || p.parentId === part.qualifiedName));
       const partChildren = part.children || [];
       const contentLines = [];
       const formatProperties = (obj) => {
@@ -1442,6 +1679,7 @@
       });
       partG.call(ibdDrag);
     });
+    drawIbdConnectors();
   }
 
   // src/visualization/webview/renderers/activity.ts
@@ -2297,22 +2535,48 @@
     }, 100);
   }
 
-  // src/visualization/webview/renderers/generalView.ts
-  var NODE_WIDTH = 200;
-  var NODE_HEIGHT_BASE = 70;
+  // src/visualization/webview/renderers/sysmlNodeBuilder.ts
+  var DEFAULT_CONFIG = {
+    showHeader: true,
+    showAttributes: true,
+    showParts: true,
+    showPorts: true,
+    showOther: true,
+    maxLinesPerCompartment: 8
+  };
   var LINE_HEIGHT = 12;
-  var HEADER_HEIGHT = 38;
+  var COMPARTMENT_LABEL_HEIGHT = 14;
+  var COMPARTMENT_GAP = 2;
+  var COMPARTMENT_PADDING = 4;
+  var HEADER_COMPARTMENT_HEIGHT = 44;
   var TYPED_BY_HEIGHT = 14;
-  var SECTION_GAP = 4;
-  function collectNodeContent(element) {
-    const sections = [];
-    const attrLines = [];
-    const portLines = [];
-    const partLines = [];
-    const actionLines = [];
-    const otherLines = [];
+  var PADDING = 6;
+  function collectCompartmentsFromElement(element) {
+    const headerName = (element?.name ?? element?.elementName ?? element?.label ?? "Unnamed").toString();
+    const result = {
+      header: {
+        stereotype: (element?.type || "element").toLowerCase(),
+        name: headerName
+      },
+      typedByName: null,
+      attributes: [],
+      parts: [],
+      ports: [],
+      other: []
+    };
+    if (element) {
+      const attrs = element.attributes;
+      result.typedByName = attrs && (typeof attrs.get === "function" ? attrs.get("partType") || attrs.get("type") || attrs.get("typedBy") : attrs.partType || attrs.type || attrs.typedBy) || null;
+      if (!result.typedByName && element.partType) result.typedByName = element.partType;
+      if (!result.typedByName && element.typings?.length) {
+        result.typedByName = String(element.typings[0]).replace(/^[:~]+/, "").trim();
+      }
+      if (!result.typedByName && element.typing) {
+        result.typedByName = String(element.typing).replace(/^[:~]+/, "").trim();
+      }
+    }
     if (!element?.children?.length) {
-      return sections;
+      return result;
     }
     const typeLower = (element.type || "").toLowerCase();
     const isRequirement = typeLower.includes("requirement");
@@ -2323,51 +2587,132 @@
       if (cType === "attribute" || cType.includes("attribute")) {
         const dataType = child.attributes?.get ? child.attributes.get("dataType") : child.attributes?.dataType;
         const typeStr = dataType ? " : " + String(dataType).split("::").pop() : "";
-        attrLines.push("  " + child.name + typeStr);
+        result.attributes.push("  " + child.name + typeStr);
       } else if (cType === "port" || cType.includes("port")) {
         const portType = child.attributes?.get ? child.attributes.get("portType") : child.attributes?.portType;
         const pTypeStr = portType ? " : " + portType : "";
-        portLines.push("  " + child.name + pTypeStr);
+        result.ports.push("  " + child.name + pTypeStr);
       } else if (cType.includes("part")) {
-        partLines.push("  " + child.name);
+        result.parts.push("  " + child.name);
       } else if (cType.includes("action")) {
-        actionLines.push("  " + child.name);
-      } else if (cType.includes("requirement")) {
-        otherLines.push("  " + child.name);
-      } else if (cType.includes("interface") || cType.includes("connect")) {
-        otherLines.push("  " + child.name);
+        const existing = result.other.find((o) => o.title === "Actions");
+        if (existing) existing.lines.push("  " + child.name);
+        else result.other.push({ title: "Actions", lines: ["  " + child.name] });
+      } else if (cType.includes("requirement") || cType.includes("interface") || cType.includes("connect")) {
+        const existing = result.other.find((o) => o.title === "Nested");
+        if (existing) existing.lines.push("  " + child.name);
+        else result.other.push({ title: "Nested", lines: ["  " + child.name] });
       }
     });
     if (element.ports?.length) {
       element.ports.forEach((p) => {
         const pName = typeof p === "string" ? p : p?.name || "port";
-        if (!portLines.some((l) => l.includes(pName))) {
-          portLines.push("  " + pName);
-        }
+        if (!result.ports.some((l) => l.includes(pName))) result.ports.push("  " + pName);
       });
     }
-    if (isRequirement) {
-      if (attrLines.length) sections.push({ title: "Attributes", lines: attrLines.slice(0, 6) });
-      if (otherLines.length) sections.push({ title: "Nested", lines: otherLines.slice(0, 4) });
-    } else {
-      if (attrLines.length) sections.push({ title: "Attributes", lines: attrLines.slice(0, 8) });
-      if (partLines.length) sections.push({ title: "Parts", lines: partLines.slice(0, 8) });
-      if (portLines.length) sections.push({ title: "Ports", lines: portLines.slice(0, 6) });
-      if (actionLines.length) sections.push({ title: "Actions", lines: actionLines.slice(0, 4) });
-      if (otherLines.length) sections.push({ title: "Other", lines: otherLines.slice(0, 4) });
+    if (isRequirement && result.other.length) {
+      result.attributes = [];
+      result.parts = [];
+      result.ports = [];
     }
-    return sections;
+    return result;
   }
-  function computeNodeHeight(element, hasTypedBy, sections) {
-    let h = HEADER_HEIGHT;
-    if (hasTypedBy) h += TYPED_BY_HEIGHT;
-    sections.forEach((s) => {
-      h += 14;
-      h += s.lines.length * LINE_HEIGHT;
-      h += SECTION_GAP;
-    });
-    return Math.max(NODE_HEIGHT_BASE, h + 8);
+  function computeNodeHeightFromCompartments(compartments, config, nodeWidth) {
+    const cfg = { ...DEFAULT_CONFIG, ...config };
+    let h = PADDING * 2;
+    if (cfg.showHeader) {
+      h += HEADER_COMPARTMENT_HEIGHT;
+      if (compartments.typedByName) h += TYPED_BY_HEIGHT;
+    }
+    const hasBodyCompartments = cfg.showAttributes && compartments.attributes.length > 0 || cfg.showParts && compartments.parts.length > 0 || cfg.showPorts && compartments.ports.length > 0 || cfg.showOther && !!compartments.other?.some((s) => s.lines.length > 0);
+    if (cfg.showHeader && hasBodyCompartments) {
+      h += COMPARTMENT_PADDING;
+    }
+    const addComp = (lines) => {
+      if (lines.length === 0) return;
+      const n = cfg.maxLinesPerCompartment ? Math.min(lines.length, cfg.maxLinesPerCompartment) : lines.length;
+      h += COMPARTMENT_PADDING * 2 + COMPARTMENT_LABEL_HEIGHT + n * LINE_HEIGHT + COMPARTMENT_GAP;
+    };
+    if (cfg.showAttributes) addComp(compartments.attributes);
+    if (cfg.showParts) addComp(compartments.parts);
+    if (cfg.showPorts) addComp(compartments.ports);
+    if (cfg.showOther && compartments.other?.length) {
+      compartments.other.forEach((sec) => {
+        const n = cfg.maxLinesPerCompartment ? Math.min(sec.lines.length, cfg.maxLinesPerCompartment) : sec.lines.length;
+        h += COMPARTMENT_PADDING * 2 + COMPARTMENT_LABEL_HEIGHT + n * LINE_HEIGHT + COMPARTMENT_GAP;
+      });
+    }
+    return Math.max(60, h);
   }
+  function renderSysMLNode(parentGroup, compartments, options) {
+    const cfg = { ...DEFAULT_CONFIG, ...options.config || {} };
+    const formatStereo = options.formatStereotype || ((t) => "\xAB" + t + "\xBB");
+    let contentY = 0;
+    const nodeG = parentGroup.append("g").attr("class", (options.nodeClass || "sysml-node") + (options.isDefinition ? " definition-node" : " usage-node")).attr("transform", "translate(" + options.x + "," + options.y + ")").attr("data-element-name", options.dataElementName || compartments.header.name).style("cursor", "pointer");
+    const strokeColor = options.typeColor || "var(--vscode-charts-blue)";
+    const strokeW = options.isDefinition ? "3px" : "2px";
+    nodeG.append("rect").attr("width", options.width).attr("height", options.height).attr("rx", options.isDefinition ? 4 : 8).attr("class", "graph-node-background sysml-node-bg").attr("data-original-stroke", strokeColor).attr("data-original-width", strokeW).style("fill", "var(--vscode-editor-background)").style("stroke", strokeColor).style("stroke-width", strokeW).style("stroke-dasharray", options.isDefinition ? "6,3" : "none");
+    if (cfg.showHeader) {
+      const headerH = HEADER_COMPARTMENT_HEIGHT + (compartments.typedByName ? TYPED_BY_HEIGHT : 0);
+      nodeG.append("rect").attr("y", 0).attr("width", options.width).attr("height", 5).attr("rx", 2).style("fill", strokeColor);
+      nodeG.append("rect").attr("y", 5).attr("width", options.width).attr("height", headerH - 5).attr("class", "sysml-header-compartment").style("fill", "var(--vscode-button-secondaryBackground)");
+      const stereo = formatStereo(compartments.header.stereotype) || "\xAB" + compartments.header.stereotype + "\xBB";
+      nodeG.append("text").attr("x", options.width / 2).attr("y", 17).attr("text-anchor", "middle").text(stereo).style("font-size", "9px").style("fill", strokeColor);
+      const displayName = compartments.header.name;
+      const truncatedName = displayName.length > 26 ? displayName.substring(0, 24) + ".." : displayName;
+      nodeG.append("text").attr("class", "node-name-text").attr("x", options.width / 2).attr("y", 31).attr("text-anchor", "middle").text(truncatedName).style("font-size", "11px").style("font-weight", "bold").style("fill", "var(--vscode-editor-foreground)");
+      if (compartments.typedByName) {
+        const tbText = compartments.typedByName.length > 22 ? compartments.typedByName.substring(0, 20) + ".." : compartments.typedByName;
+        nodeG.append("text").attr("x", options.width / 2).attr("y", 43).attr("text-anchor", "middle").text(": " + tbText).style("font-size", "10px").style("font-style", "italic").style("fill", "#569CD6");
+      }
+      contentY += headerH;
+      contentY += COMPARTMENT_PADDING;
+    }
+    const renderCompartment = (title, lines) => {
+      if (lines.length === 0) return;
+      const limit = cfg.maxLinesPerCompartment ? Math.min(lines.length, cfg.maxLinesPerCompartment) : lines.length;
+      const slice = lines.slice(0, limit);
+      const compTop = contentY;
+      nodeG.append("line").attr("x1", PADDING).attr("y1", compTop).attr("x2", options.width - PADDING).attr("y2", compTop).attr("class", "sysml-compartment-divider").style("stroke", "var(--vscode-panel-border)").style("stroke-width", "1px");
+      contentY += 4;
+      nodeG.append("text").attr("x", PADDING).attr("y", contentY + 9).text(title).style("font-size", "9px").style("font-weight", "bold").style("fill", "var(--vscode-descriptionForeground)");
+      contentY += COMPARTMENT_LABEL_HEIGHT;
+      slice.forEach((line) => {
+        const truncated = line.length > 28 ? line.substring(0, 26) + ".." : line;
+        nodeG.append("text").attr("x", PADDING).attr("y", contentY + 9).text(truncated).style("font-size", "9px").style("fill", "var(--vscode-descriptionForeground)");
+        contentY += LINE_HEIGHT;
+      });
+      contentY += COMPARTMENT_PADDING;
+      contentY += COMPARTMENT_GAP;
+    };
+    if (cfg.showAttributes && compartments.attributes.length > 0) {
+      renderCompartment("Attributes", compartments.attributes);
+    }
+    if (cfg.showParts && compartments.parts.length > 0) {
+      renderCompartment("Parts", compartments.parts);
+    }
+    if (cfg.showPorts && compartments.ports.length > 0) {
+      renderCompartment("Ports", compartments.ports);
+    }
+    if (cfg.showOther && compartments.other?.length) {
+      compartments.other.forEach((sec) => {
+        if (sec.lines.length > 0) renderCompartment(sec.title, sec.lines);
+      });
+    }
+    return nodeG;
+  }
+
+  // src/visualization/webview/renderers/generalView.ts
+  var NODE_WIDTH = 200;
+  var NODE_HEIGHT_BASE = 70;
+  var GENERAL_VIEW_NODE_CONFIG = {
+    showHeader: true,
+    showAttributes: true,
+    showParts: true,
+    showPorts: true,
+    showOther: true,
+    maxLinesPerCompartment: 8
+  };
   function computeOrthogonalPath(x1, y1, x2, y2, options = {}) {
     const offset = options.offset ?? 0;
     const srcRect = options.srcRect;
@@ -2468,17 +2813,16 @@
     const nodeDataMap = /* @__PURE__ */ new Map();
     cyNodes.forEach((el) => {
       const element = el.data.element;
-      const sections = element ? collectNodeContent(element) : [];
-      let typedByName = null;
-      if (element) {
-        const attrs = element.attributes;
-        typedByName = attrs && (typeof attrs.get === "function" ? attrs.get("partType") || attrs.get("type") || attrs.get("typedBy") : attrs.partType || attrs.type || attrs.typedBy) || null;
-        if (!typedByName && element.partType) typedByName = element.partType;
-        if (!typedByName && element.typings?.length) typedByName = String(element.typings[0]).replace(/^[:~]+/, "").trim();
-        if (!typedByName && element.typing) typedByName = String(element.typing).replace(/^[:~]+/, "").trim();
-      }
-      const nodeHeight = computeNodeHeight(element, !!typedByName, sections);
-      nodeDataMap.set(el.data.id, { sections, height: nodeHeight, typedByName });
+      const compartments = element ? collectCompartmentsFromElement(element) : {
+        header: { stereotype: "element", name: "Unnamed" },
+        typedByName: null,
+        attributes: [],
+        parts: [],
+        ports: [],
+        other: []
+      };
+      const nodeHeight = computeNodeHeightFromCompartments(compartments, GENERAL_VIEW_NODE_CONFIG, NODE_WIDTH);
+      nodeDataMap.set(el.data.id, { compartments, height: Math.max(NODE_HEIGHT_BASE, nodeHeight) });
     });
     const elkGraph = {
       id: "root",
@@ -2626,36 +2970,27 @@
       if (!pos) return;
       const d = el.data;
       const nd = nodeDataMap.get(d.id);
-      const sections = nd?.sections ?? [];
-      const typedByName = nd?.typedByName ?? null;
+      const compartments = nd?.compartments ?? {
+        header: { stereotype: (d.sysmlType || "element").toLowerCase(), name: (d.elementName || d.label || "Unnamed").toString() },
+        typedByName: null,
+        attributes: [],
+        parts: [],
+        ports: [],
+        other: []
+      };
       const isDefinition = d.isDefinition === true;
       const typeColor = d.color || getTypeColor(d.sysmlType);
-      const stereoDisplay = (d.sysmlType || "element").toLowerCase();
-      const displayName = (d.elementName || d.label || "Unnamed").toString();
-      const truncatedName = displayName.length > 24 ? displayName.substring(0, 22) + ".." : displayName;
-      const nodeG = nodeGroup.append("g").attr("class", "general-node elk-node" + (isDefinition ? " definition-node" : " usage-node")).attr("transform", "translate(" + pos.x + "," + pos.y + ")").attr("data-element-name", d.elementName || d.label).style("cursor", "pointer");
-      const strokeColor = typeColor;
-      const strokeW = isDefinition ? "3px" : "2px";
-      nodeG.append("rect").attr("width", pos.width).attr("height", pos.height).attr("rx", isDefinition ? 4 : 8).attr("class", "graph-node-background node-background").attr("data-original-stroke", strokeColor).attr("data-original-width", strokeW).style("fill", "var(--vscode-editor-background)").style("stroke", strokeColor).style("stroke-width", strokeW).style("stroke-dasharray", isDefinition ? "6,3" : "none");
-      nodeG.append("rect").attr("width", pos.width).attr("height", 5).attr("rx", 2).style("fill", typeColor);
-      nodeG.append("rect").attr("y", 5).attr("width", pos.width).attr("height", typedByName ? 36 : 28).style("fill", "var(--vscode-button-secondaryBackground)");
-      const stereo = formatSysMLStereotype(d.sysmlType) || "\xAB" + stereoDisplay + "\xBB";
-      nodeG.append("text").attr("x", pos.width / 2).attr("y", 17).attr("text-anchor", "middle").text(stereo).style("font-size", "9px").style("fill", typeColor);
-      nodeG.append("text").attr("class", "node-name-text").attr("x", pos.width / 2).attr("y", 31).attr("text-anchor", "middle").text(truncatedName).style("font-size", "11px").style("font-weight", "bold").style("fill", "var(--vscode-editor-foreground)");
-      if (typedByName) {
-        const tbText = typedByName.length > 20 ? typedByName.substring(0, 18) + ".." : typedByName;
-        nodeG.append("text").attr("x", pos.width / 2).attr("y", 43).attr("text-anchor", "middle").text(": " + tbText).style("font-size", "10px").style("font-style", "italic").style("fill", "#569CD6");
-      }
-      let contentY = typedByName ? 50 : 38;
-      sections.forEach((sec) => {
-        nodeG.append("text").attr("x", 6).attr("y", contentY).text(sec.title).style("font-size", "9px").style("font-weight", "600").style("fill", "var(--vscode-descriptionForeground)");
-        contentY += 12;
-        sec.lines.forEach((line) => {
-          const truncated = line.length > 26 ? line.substring(0, 24) + ".." : line;
-          nodeG.append("text").attr("x", 6).attr("y", contentY).text(truncated).style("font-size", "9px").style("fill", "var(--vscode-descriptionForeground)");
-          contentY += LINE_HEIGHT;
-        });
-        contentY += SECTION_GAP;
+      const nodeG = renderSysMLNode(nodeGroup, compartments, {
+        x: pos.x,
+        y: pos.y,
+        width: pos.width,
+        height: pos.height,
+        config: GENERAL_VIEW_NODE_CONFIG,
+        isDefinition,
+        typeColor,
+        formatStereotype: (t) => formatSysMLStereotype(t) || "\xAB" + t + "\xBB",
+        nodeClass: "general-node elk-node",
+        dataElementName: d.elementName || d.label
       });
       nodeG.on("click", function(event) {
         event.stopPropagation();
@@ -5549,7 +5884,8 @@
           postMessage: (msg) => vscode.postMessage(msg),
           onStartInlineEdit: (nodeG, elementName, x, y, wd) => startInlineEdit(nodeG, elementName, x, y, wd),
           renderPlaceholder: (wd, ht, viewName, message, d) => renderPlaceholderView(wd, ht, viewName, message, d),
-          clearVisualHighlights
+          clearVisualHighlights,
+          elkWorkerUrl
         };
       };
       var buildElkContext = buildElkContext2, buildRenderContext = buildRenderContext2;
@@ -5660,7 +5996,18 @@
       } else if (view === "sequence-view") {
         renderSequenceView(buildRenderContext2(width, height), dataToRender);
       } else if (view === "interconnection-view") {
-        renderIbdView(buildRenderContext2(width, height), dataToRender);
+        renderIbdView(buildRenderContext2(width, height), dataToRender).then(() => {
+          setTimeout(() => {
+            zoomToFit("auto");
+            updateDimensionsDisplay();
+            isRendering = false;
+            hideLoading();
+          }, 100);
+        }).catch((err) => {
+          console.error("[Interconnection View] Render failed:", err);
+          isRendering = false;
+          hideLoading();
+        });
       } else if (view === "action-flow-view") {
         renderActivityView(buildRenderContext2(width, height), dataToRender);
       } else if (view === "state-transition-view") {
@@ -5668,7 +6015,7 @@
       } else {
         renderPlaceholderView(width, height, "Unknown View", "The selected view is not yet implemented.", dataToRender);
       }
-      if (view !== "general-view") {
+      if (view !== "general-view" && view !== "interconnection-view") {
         if (shouldPreserveZoom) {
           restoreZoom();
         } else {

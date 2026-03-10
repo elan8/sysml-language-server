@@ -1,5 +1,6 @@
 /**
  * IBD/Interconnection View renderer - parts, ports, connectors.
+ * Uses ELK for connection-aware layout and orthogonal edge routing when available.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -8,8 +9,9 @@ import { GENERAL_VIEW_PALETTE } from '../constants';
 import { getTypeColor, isLibraryValidated } from '../shared';
 
 declare const d3: any;
+declare const ELK: any;
 
-export function renderIbdView(ctx: RenderContext, data: any): void {
+export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string }, data: any): Promise<void> {
     const { width, height, svg, g, layoutDirection, postMessage, onStartInlineEdit, renderPlaceholder, clearVisualHighlights } = ctx;
 
     if (!data || !data.parts || data.parts.length === 0) {
@@ -30,6 +32,9 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
     const horizontalSpacing = 160;  // More space between nodes for connectors
     const verticalSpacing = 100;    // More vertical space for connector routing
 
+    const toDot = (qn: string) => (qn || '').replace(/::/g, '.');
+    const partToElkId = (p: any) => toDot(p.qualifiedName) || p.id || p.name;
+
     // Assign IDs to parts
     parts.forEach((part: any, index: number) => {
         if (!part.id) part.id = part.name || ('part-' + index);
@@ -37,7 +42,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
 
     // Helper function to calculate part height based on content
     const calculatePartHeight = (part: any) => {
-        const partPorts = ports.filter((p: any) => p && (p.parentId === part.name || p.parentId === part.id));
+        const partPorts = ports.filter((p: any) => p && (p.parentId === part.name || p.parentId === part.id || p.parentId === part.qualifiedName));
         const partChildren = part.children || [];
 
         let contentLineCount = 0;
@@ -103,7 +108,8 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
     // Backend sends containerId as parent's qualifiedName (dot form); match by name, id, or qualifiedName
     type PartTreeNode = { part: any; children: PartTreeNode[] };
     const getPartChildren = (p: any) => parts.filter((c: any) =>
-        c.containerId === p.name || c.containerId === p.id || c.containerId === p.qualifiedName
+        c.containerId === p.name || c.containerId === p.id || c.containerId === p.qualifiedName ||
+        toDot(c.containerId) === toDot(p.qualifiedName)
     );
     const buildTree = (part: any): PartTreeNode => ({
         part,
@@ -116,6 +122,96 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
     const partTree = rootPart ? buildTree(rootPart) : null;
     const rootName = rootPart ? rootPart.name : '';
 
+    const leafParts = parts.filter((p: any) => getPartChildren(p).length === 0);
+    const leafPartIds = new Set<string>(leafParts.map((p: any) => partToElkId(p)));
+
+    const findPartForEndpoint = (endpointPath: string): any => {
+        if (!endpointPath) return null;
+        const pathDot = endpointPath.indexOf('::') >= 0 ? endpointPath.substring(endpointPath.lastIndexOf('::') + 2) : endpointPath;
+        let best: { part: any; len: number } | null = null;
+        for (const part of parts) {
+            const qn = toDot(part.qualifiedName || part.name);
+            if (!qn) continue;
+            if (pathDot === qn || pathDot.startsWith(qn + '.')) {
+                if (!best || qn.length > best.len) best = { part, len: qn.length };
+            }
+        }
+        return best?.part ?? null;
+    };
+
+    let elkLaidOut: any = null;
+    const useElk = typeof ELK !== 'undefined' && ctx.elkWorkerUrl && partTree;
+
+    if (useElk) {
+        try {
+            const elk = new ELK({ workerUrl: ctx.elkWorkerUrl || undefined });
+
+            const treeToElkNode = (node: PartTreeNode): any => {
+                const part = node.part;
+                const id = partToElkId(part);
+                const h = partHeights.get(part.name) || 80;
+                if (node.children.length === 0) {
+                    return {
+                        id,
+                        width: partWidth,
+                        height: h,
+                        ports: [
+                            { id: id + '_west', layoutOptions: { 'org.eclipse.elk.port.side': 'WEST' } },
+                            { id: id + '_east', layoutOptions: { 'org.eclipse.elk.port.side': 'EAST' } }
+                        ]
+                    };
+                }
+                const childNodes = node.children.map((c) => treeToElkNode(c));
+                const minW = Math.max(partWidth, 400);
+                const minH = rootHeaderHeight + 120;
+                return {
+                    id,
+                    width: minW,
+                    height: minH,
+                    children: childNodes
+                };
+            };
+
+            const elkEdges: Array<{ id: string; sources: string[]; targets: string[] }> = [];
+            connectors.forEach((conn: any, idx: number) => {
+                const srcPart = findPartForEndpoint(conn.sourceId || conn.source);
+                const tgtPart = findPartForEndpoint(conn.targetId || conn.target);
+                if (!srcPart || !tgtPart || !leafPartIds.has(partToElkId(srcPart)) || !leafPartIds.has(partToElkId(tgtPart))) return;
+                elkEdges.push({
+                    id: 'edge-' + idx,
+                    sources: [partToElkId(srcPart) + '_east'],
+                    targets: [partToElkId(tgtPart) + '_west']
+                });
+            });
+
+            const elkGraph = {
+                id: 'root',
+                layoutOptions: {
+                    'elk.algorithm': 'layered',
+                    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+                    'elk.direction': 'RIGHT',
+                    'elk.spacing.nodeNode': '80',
+                    'elk.layered.spacing.nodeNodeBetweenLayers': '120',
+                    'elk.spacing.edgeNode': '60',
+                    'elk.spacing.edgeEdge': '40',
+                    'elk.edgeRouting': 'ORTHOGONAL',
+                    'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+                    'elk.separateConnectedComponents': 'true',
+                    'elk.padding': '[top=60,left=60,bottom=60,right=60]',
+                    'org.eclipse.elk.portConstraints': 'FIXED_SIDE',
+                    'org.eclipse.elk.json.edgeCoords': 'ROOT'
+                },
+                children: [treeToElkNode(partTree)],
+                edges: elkEdges
+            };
+
+            elkLaidOut = await elk.layout(elkGraph);
+        } catch (e) {
+            console.warn('[IBD] ELK layout failed, using tree layout:', e);
+            elkLaidOut = null;
+        }
+    }
+
     const partPositions = new Map<string, { x: number; y: number; part: any; height: number; width?: number; isContainer?: boolean }>();
     const innerMargin = 24;
     const rootHeaderHeight = 28;
@@ -126,22 +222,45 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
         return qualifiedName.startsWith(prefix) ? qualifiedName.slice(prefix.length) : qualifiedName;
     };
 
-    if (partTree) {
+    const setPos = (part: any, posData: { x: number; y: number; part: any; height: number; width?: number; isContainer?: boolean; depth?: number }) => {
+        partPositions.set(part.name, posData);
+        partPositions.set(part.id, posData);
+        if (part.qualifiedName && part.qualifiedName !== part.name) {
+            partPositions.set(part.qualifiedName, posData);
+        }
+        partPositions.set(partToElkId(part), posData);
+        const rel = relativePath(part.qualifiedName || part.name);
+        if (rel && rel !== part.name) partPositions.set(rel, posData);
+    };
+
+    const idToPart = new Map<string, any>();
+    parts.forEach((p: any) => idToPart.set(partToElkId(p), p));
+
+    const extractElkPositions = (elkNode: any, parentAbsX: number, parentAbsY: number, depth: number) => {
+        const part = idToPart.get(elkNode.id);
+        if (!part) return;
+        const absX = parentAbsX + (elkNode.x ?? 0);
+        const absY = parentAbsY + (elkNode.y ?? 0);
+        const w = elkNode.width ?? partWidth;
+        const h = elkNode.height ?? (partHeights.get(part.name) || 80);
+        const isContainer = elkNode.children && elkNode.children.length > 0;
+        const posData = { x: absX + padding, y: absY + padding, part, height: h, width: w, isContainer, depth };
+        setPos(part, posData);
+        if (elkNode.children && elkNode.children.length > 0) {
+            elkNode.children.forEach((ch: any) => extractElkPositions(ch, absX, absY, depth + 1));
+        }
+    };
+
+    if (elkLaidOut && elkLaidOut.children && elkLaidOut.children.length > 0) {
+        const rootElk = elkLaidOut.children[0];
+        extractElkPositions(rootElk, 0, 0, 0);
+    } else if (partTree) {
         const placeNode = (node: PartTreeNode, baseX: number, baseY: number, depth: number): { width: number; height: number } => {
             const part = node.part;
             const h = partHeights.get(part.name) || 80;
-            const setPos = (posData: { x: number; y: number; part: any; height: number; width?: number; isContainer?: boolean; depth?: number }) => {
-                partPositions.set(part.name, posData);
-                partPositions.set(part.id, posData);
-                if (part.qualifiedName && part.qualifiedName !== part.name) {
-                    partPositions.set(part.qualifiedName, posData);
-                }
-                const rel = relativePath(part.qualifiedName || part.name);
-                if (rel && rel !== part.name) partPositions.set(rel, posData);
-            };
             if (node.children.length === 0) {
                 const posData = { x: baseX, y: baseY, part, height: h, width: partWidth, depth };
-                setPos(posData);
+                setPos(part, posData);
                 return { width: partWidth, height: h };
             }
             const childSpacingH = horizontalSpacing;
@@ -174,7 +293,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
             const frameW = Math.max(partWidth, contentW);
             const frameH = rootHeaderHeight + contentH;
             const posData = { x: baseX, y: baseY, part, height: frameH, width: frameW, isContainer: true, depth };
-            setPos(posData);
+            setPos(part, posData);
             return { width: frameW, height: frameH };
         };
         placeNode(partTree, padding, padding, 0);
@@ -188,13 +307,130 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
                 width: partWidth,
                 depth: 0
             };
-            partPositions.set(part.name, posData);
-            partPositions.set(part.id, posData);
-            if (part.qualifiedName && part.qualifiedName !== part.name) {
-                partPositions.set(part.qualifiedName, posData);
-            }
+            setPos(part, posData);
         });
     }
+
+    type Rect = { x: number; y: number; width: number; height: number };
+
+    /** Parse SVG path d string (M/L only) into points. */
+    const parsePathToPoints = (d: string): { x: number; y: number }[] => {
+        const pts: { x: number; y: number }[] = [];
+        const tokens = d.replace(/[ML]/gi, ' ').replace(/,/g, ' ').trim().split(/\s+/);
+        let i = 0;
+        while (i + 1 < tokens.length) {
+            const x = parseFloat(tokens[i]);
+            const y = parseFloat(tokens[i + 1]);
+            if (!Number.isNaN(x) && !Number.isNaN(y)) pts.push({ x, y });
+            i += 2;
+        }
+        return pts;
+    };
+
+    const pointsToPathD = (pts: { x: number; y: number }[]): string => {
+        if (pts.length === 0) return '';
+        let s = 'M' + pts[0].x + ',' + pts[0].y;
+        for (let i = 1; i < pts.length; i++) s += ' L' + pts[i].x + ',' + pts[i].y;
+        return s;
+    };
+
+    const rectIntersectsHSeg = (y: number, x1: number, x2: number, r: Rect, margin: number): boolean => {
+        const yMin = r.y - margin, yMax = r.y + r.height + margin;
+        if (y < yMin || y > yMax) return false;
+        const xMin = Math.min(x1, x2) - margin, xMax = Math.max(x1, x2) + margin;
+        return !(xMax < r.x || xMin > r.x + r.width);
+    };
+
+    const rectIntersectsVSeg = (x: number, y1: number, y2: number, r: Rect, margin: number): boolean => {
+        const xMin = r.x - margin, xMax = r.x + r.width + margin;
+        if (x < xMin || x > xMax) return false;
+        const yMin = Math.min(y1, y2) - margin, yMax = Math.max(y1, y2) + margin;
+        return !(yMax < r.y || yMin > r.y + r.height);
+    };
+
+    const OBSTACLE_MARGIN = 10;
+    const MAX_DETOUR_DEPTH = 4;
+
+    /** Insert detours so no segment crosses a leaf-node obstacle. Containers are not treated as obstacles. */
+    const routeAroundLeafObstacles = (
+        points: { x: number; y: number }[],
+        obstacles: Rect[],
+        depth: number = 0
+    ): { x: number; y: number }[] => {
+        if (points.length < 2 || obstacles.length === 0 || depth >= MAX_DETOUR_DEPTH) return points;
+
+        for (let i = 0; i < points.length - 1; i++) {
+            const a = points[i], b = points[i + 1];
+            const isHoriz = Math.abs(a.y - b.y) < 1e-6;
+            const isVert = Math.abs(a.x - b.x) < 1e-6;
+            if (!isHoriz && !isVert) continue;
+
+            for (const r of obstacles) {
+                const hits = isHoriz ? rectIntersectsHSeg(a.y, a.x, b.x, r, OBSTACLE_MARGIN)
+                    : rectIntersectsVSeg(a.x, a.y, b.y, r, OBSTACLE_MARGIN);
+                if (!hits) continue;
+
+                if (isHoriz) {
+                    const aboveY = r.y - OBSTACLE_MARGIN;
+                    const belowY = r.y + r.height + OBSTACLE_MARGIN;
+                    const above: { x: number; y: number }[] = [a, { x: a.x, y: aboveY }, { x: b.x, y: aboveY }, b];
+                    const below: { x: number; y: number }[] = [a, { x: a.x, y: belowY }, { x: b.x, y: belowY }, b];
+                    const newObs = obstacles.filter((o) => o !== r);
+                    const mergedAbove = [...points.slice(0, i), ...above, ...points.slice(i + 2)];
+                    const mergedBelow = [...points.slice(0, i), ...below, ...points.slice(i + 2)];
+                    const resultAbove = routeAroundLeafObstacles(mergedAbove, newObs, depth + 1);
+                    const resultBelow = routeAroundLeafObstacles(mergedBelow, newObs, depth + 1);
+                    const lenAbove = resultAbove.reduce((sum, p, j) => {
+                        if (j === 0) return 0;
+                        return sum + Math.abs(resultAbove[j].x - resultAbove[j - 1].x) + Math.abs(resultAbove[j].y - resultAbove[j - 1].y);
+                    }, 0);
+                    const lenBelow = resultBelow.reduce((sum, p, j) => {
+                        if (j === 0) return 0;
+                        return sum + Math.abs(resultBelow[j].x - resultBelow[j - 1].x) + Math.abs(resultBelow[j].y - resultBelow[j - 1].y);
+                    }, 0);
+                    return lenAbove <= lenBelow ? resultAbove : resultBelow;
+                } else {
+                    const leftX = r.x - OBSTACLE_MARGIN;
+                    const rightX = r.x + r.width + OBSTACLE_MARGIN;
+                    const left: { x: number; y: number }[] = [a, { x: leftX, y: a.y }, { x: leftX, y: b.y }, b];
+                    const right: { x: number; y: number }[] = [a, { x: rightX, y: a.y }, { x: rightX, y: b.y }, b];
+                    const newObs = obstacles.filter((o) => o !== r);
+                    const mergedLeft = [...points.slice(0, i), ...left, ...points.slice(i + 2)];
+                    const mergedRight = [...points.slice(0, i), ...right, ...points.slice(i + 2)];
+                    const resultLeft = routeAroundLeafObstacles(mergedLeft, newObs, depth + 1);
+                    const resultRight = routeAroundLeafObstacles(mergedRight, newObs, depth + 1);
+                    const lenLeft = resultLeft.reduce((sum, p, j) => {
+                        if (j === 0) return 0;
+                        return sum + Math.abs(resultLeft[j].x - resultLeft[j - 1].x) + Math.abs(resultLeft[j].y - resultLeft[j - 1].y);
+                    }, 0);
+                    const lenRight = resultRight.reduce((sum, p, j) => {
+                        if (j === 0) return 0;
+                        return sum + Math.abs(resultRight[j].x - resultRight[j - 1].x) + Math.abs(resultRight[j].y - resultRight[j - 1].y);
+                    }, 0);
+                    return lenLeft <= lenRight ? resultLeft : resultRight;
+                }
+            }
+        }
+        return points;
+    };
+
+    /** Build path from ELK edge sections, using port positions for endpoints. Returns null if invalid. */
+    const pathFromElkSectionsWithPorts = (
+        sections: Array<{ startPoint?: { x: number; y: number }; endPoint?: { x: number; y: number }; bendPoints?: Array<{ x: number; y: number }> }> | undefined,
+        srcX: number, srcY: number, tgtX: number, tgtY: number
+    ): string | null => {
+        if (!sections || sections.length === 0) return null;
+        const sec = sections[0];
+        if (!sec?.startPoint || !sec?.endPoint) return null;
+        const bp = sec.bendPoints || [];
+        const px = (x: number) => x + padding;
+        const parts = ['M' + srcX + ',' + srcY];
+        for (const p of bp) {
+            parts.push('L' + px(p.x) + ',' + px(p.y));
+        }
+        parts.push('L' + tgtX + ',' + tgtY);
+        return parts.join(' ');
+    };
 
     const findPartPos = (qualifiedName: string) => {
         if (!qualifiedName) return null;
@@ -288,7 +524,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
         g.selectAll('.ibd-connectors').remove();
         g.selectAll('.ibd-connector-labels').remove();
 
-        connectorGroup = g.insert('g', '.ibd-parts').attr('class', 'ibd-connectors');
+        connectorGroup = g.append('g').attr('class', 'ibd-connectors');
         usedLabelPositions = [];
         pendingLabels = [];
 
@@ -319,6 +555,30 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
             portConnections.get(portKey)!.push({ connector, idx });
         });
 
+        const collectElkEdges = (node: any, acc: any[]): void => {
+            if (node?.edges) acc.push(...node.edges);
+            (node?.children ?? []).forEach((c: any) => collectElkEdges(c, acc));
+        };
+        const allElkEdges: any[] = [];
+        if (elkLaidOut) collectElkEdges(elkLaidOut, allElkEdges);
+
+        /** Leaf-node rectangles as obstacles (exclude containers). Built once per connector. */
+        const getLeafObstaclesExcluding = (srcPartName: string, tgtPartName: string): Rect[] => {
+            const rects: Rect[] = [];
+            partPositions.forEach((pos, key) => {
+                if (key !== pos.part.name) return;
+                if (pos.isContainer) return;
+                if (pos.part.name === srcPartName || pos.part.name === tgtPartName) return;
+                rects.push({
+                    x: pos.x,
+                    y: pos.y,
+                    width: pos.width ?? partWidth,
+                    height: pos.height
+                });
+            });
+            return rects;
+        };
+
         const connectorOffsets = new Map<number, { offset: number; groupIndex: number; groupCount: number }>();
         nodePairConnectors.forEach((group) => {
             const count = group.length;
@@ -332,7 +592,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
         partPositions.forEach((pos, partName) => {
             if (partName !== pos.part.name) return;
             const part = pos.part;
-            const partPorts = ports.filter((p: any) => p && (p.parentId === part.name || p.parentId === part.id));
+            const partPorts = ports.filter((p: any) => p && (p.parentId === part.name || p.parentId === part.id || p.parentId === part.qualifiedName));
             const portStartY = (part.attributes && (part.attributes.get && (part.attributes.get('partType') || part.attributes.get('type')))) ? 70 : 58;
 
             partPorts.forEach((p: any, i: number) => {
@@ -346,7 +606,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
             if (!partPos || !portName) return null;
 
             const part = partPos.part;
-            const partPorts = ports.filter((p: any) => p && (p.parentId === part.name || p.parentId === part.id));
+            const partPorts = ports.filter((p: any) => p && (p.parentId === part.name || p.parentId === part.id || p.parentId === part.qualifiedName));
 
             const portNameLower = portName.toLowerCase();
             const port = partPorts.find((p: any) => p && p.name &&
@@ -430,37 +690,52 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
             let labelX: number, labelY: number;
             const standoff = 40;
 
-            if (srcPortPos && tgtPortPos) {
+            const elkEdge = allElkEdges.find((e: any) => e.id === 'edge-' + connIdx);
+            const elkPath = elkEdge?.sections && srcPortPos && tgtPortPos
+                ? pathFromElkSectionsWithPorts(elkEdge.sections, srcX, srcY, tgtX, tgtY)
+                : null;
+
+            if (elkPath) {
+                pathD = elkPath;
+                const sec = elkEdge?.sections?.[0];
+                const bp = sec?.bendPoints || [];
+                if (bp.length > 0) {
+                    const mid = bp[Math.floor(bp.length / 2)];
+                    labelX = mid.x + padding;
+                    labelY = mid.y + padding;
+                } else {
+                    labelX = (srcX + tgtX) / 2;
+                    labelY = (srcY + tgtY) / 2;
+                }
+            } else if (srcPortPos && tgtPortPos) {
                 const srcIsLeft = srcPortPos.isLeft;
                 const tgtIsLeft = tgtPortPos.isLeft;
-
-                const offsetSrcY = srcY + baseOffset * 0.5;
-                const offsetTgtY = tgtY + baseOffset * 0.5;
+                const routeXOffset = baseOffset;
 
                 if (srcIsLeft && tgtIsLeft) {
-                    const routeX = Math.min(srcPos.x, tgtPos.x) - standoff - baseOffset;
-                    pathD = 'M' + srcX + ',' + offsetSrcY +
-                            ' L' + routeX + ',' + offsetSrcY +
-                            ' L' + routeX + ',' + offsetTgtY +
-                            ' L' + tgtX + ',' + offsetTgtY;
+                    const routeX = Math.min(srcPos.x, tgtPos.x) - standoff - routeXOffset;
+                    pathD = 'M' + srcX + ',' + srcY +
+                            ' L' + routeX + ',' + srcY +
+                            ' L' + routeX + ',' + tgtY +
+                            ' L' + tgtX + ',' + tgtY;
                     labelX = routeX;
-                    labelY = (offsetSrcY + offsetTgtY) / 2;
+                    labelY = (srcY + tgtY) / 2;
                 } else if (!srcIsLeft && !tgtIsLeft) {
-                    const routeX = Math.max(srcPos.x + partWidth, tgtPos.x + partWidth) + standoff + baseOffset;
-                    pathD = 'M' + srcX + ',' + offsetSrcY +
-                            ' L' + routeX + ',' + offsetSrcY +
-                            ' L' + routeX + ',' + offsetTgtY +
-                            ' L' + tgtX + ',' + offsetTgtY;
+                    const routeX = Math.max(srcPos.x + partWidth, tgtPos.x + partWidth) + standoff + routeXOffset;
+                    pathD = 'M' + srcX + ',' + srcY +
+                            ' L' + routeX + ',' + srcY +
+                            ' L' + routeX + ',' + tgtY +
+                            ' L' + tgtX + ',' + tgtY;
                     labelX = routeX;
-                    labelY = (offsetSrcY + offsetTgtY) / 2;
+                    labelY = (srcY + tgtY) / 2;
                 } else {
-                    const midX = (srcX + tgtX) / 2 + baseOffset;
-                    pathD = 'M' + srcX + ',' + offsetSrcY +
-                            ' L' + midX + ',' + offsetSrcY +
-                            ' L' + midX + ',' + offsetTgtY +
-                            ' L' + tgtX + ',' + offsetTgtY;
+                    const midX = (srcX + tgtX) / 2 + routeXOffset;
+                    pathD = 'M' + srcX + ',' + srcY +
+                            ' L' + midX + ',' + srcY +
+                            ' L' + midX + ',' + tgtY +
+                            ' L' + tgtX + ',' + tgtY;
                     labelX = midX;
-                    labelY = (offsetSrcY + offsetTgtY) / 2;
+                    labelY = (srcY + tgtY) / 2;
                 }
             } else {
                 const srcCx = srcPos.x + partWidth / 2;
@@ -495,6 +770,13 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
                     labelX = (x1 + x2) / 2;
                     labelY = midY;
                 }
+            }
+
+            const obstacles = getLeafObstaclesExcluding(srcPos.part.name, tgtPos.part.name);
+            if (obstacles.length > 0) {
+                const pts = parsePathToPoints(pathD);
+                const routed = routeAroundLeafObstacles(pts, obstacles);
+                if (routed.length >= 2) pathD = pointsToPathD(routed);
             }
 
             const connTypeLower = (connector.type || '').toLowerCase();
@@ -681,8 +963,6 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
         });
     }
 
-    drawIbdConnectors();
-
     const partGroup = g.append('g').attr('class', 'ibd-parts');
 
     const drawnPartIds = new Set<string>();
@@ -718,7 +998,7 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
         }
         if (!typedByName && part.partType) typedByName = part.partType;
 
-        const partPorts = ports.filter((p: any) => p && (p.parentId === part.name || p.parentId === part.id));
+        const partPorts = ports.filter((p: any) => p && (p.parentId === part.name || p.parentId === part.id || p.parentId === part.qualifiedName));
         const partChildren = part.children || [];
 
         const contentLines: string[] = [];
@@ -1086,4 +1366,6 @@ export function renderIbdView(ctx: RenderContext, data: any): void {
             });
         partG.call(ibdDrag);
     });
+
+    drawIbdConnectors();
 }

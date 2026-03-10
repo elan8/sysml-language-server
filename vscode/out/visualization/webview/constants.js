@@ -10,8 +10,8 @@ exports.MAX_CANVAS_ZOOM = 5;
 exports.MIN_SYSML_ZOOM = 0.04;
 exports.MAX_SYSML_ZOOM = 5;
 exports.STRUCTURAL_VIEWS = new Set(['general-view']);
-/** Views enabled for the current release. Disabled: action-flow-view, state-transition-view, sequence-view */
-exports.ENABLED_VIEWS = new Set(['general-view', 'interconnection-view']);
+/** Views enabled for the current release. Disabled: interconnection-view (routing quality), action-flow-view, state-transition-view, sequence-view */
+exports.ENABLED_VIEWS = new Set(['general-view']);
 exports.ORIENTATION_LABELS = {
     horizontal: 'Horizontal',
     linear: 'Linear (Top-Down)',
