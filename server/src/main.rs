@@ -271,6 +271,7 @@ fn range_to_dto(r: Range) -> RangeDto {
     }
 }
 
+#[allow(dead_code)]
 fn semantic_node_to_dto(
     node: &semantic_model::SemanticNode,
     graph: &semantic_model::SemanticGraph,
@@ -356,6 +357,7 @@ fn model_element_to_dto(el: &language::ModelElement) -> SysmlElementDto {
     }
 }
 
+#[allow(dead_code)]
 fn count_elements(elements: &[SysmlElementDto]) -> u32 {
     fn rec(e: &SysmlElementDto) -> u32 {
         1 + e.children.iter().map(rec).sum::<u32>()

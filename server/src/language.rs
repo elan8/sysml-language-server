@@ -410,6 +410,7 @@ pub fn find_reference_ranges(source: &str, name: &str) -> Vec<Range> {
 }
 
 /// Relationship for sysml/model (connection, flow, specializes, bind, allocate).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ModelRelationship {
     pub rel_type: String,
@@ -429,6 +430,7 @@ pub struct ModelElement {
 }
 
 /// Collects relationships (connection, bind, allocate, specializes) from the AST.
+#[allow(dead_code)]
 pub fn collect_relationships(doc: &SysMLDocument) -> Vec<ModelRelationship> {
     let mut out = Vec::new();
     for pkg in &doc.packages {
@@ -437,6 +439,7 @@ pub fn collect_relationships(doc: &SysMLDocument) -> Vec<ModelRelationship> {
     out
 }
 
+#[allow(dead_code)]
 fn relationships_from_package(
     pkg: &kerml_parser::ast::Package,
     container_prefix: Option<&str>,
@@ -456,6 +459,7 @@ fn relationships_from_package(
     }
 }
 
+#[allow(dead_code)]
 fn relationships_from_member(
     member: &Member,
     container_prefix: Option<&str>,
@@ -604,6 +608,7 @@ fn relationships_from_member(
     }
 }
 
+#[allow(dead_code)]
 fn relationships_from_package_contents(
     members: &[Member],
     container_prefix: Option<&str>,
@@ -622,6 +627,7 @@ fn relationships_from_package_contents(
 }
 
 /// Collects model elements with attributes for sysml/model (partType, portType, multiplicity, etc.).
+#[allow(dead_code)]
 pub fn collect_model_elements(doc: &SysMLDocument) -> Vec<ModelElement> {
     let mut out = Vec::new();
     for pkg in &doc.packages {
@@ -632,6 +638,7 @@ pub fn collect_model_elements(doc: &SysMLDocument) -> Vec<ModelElement> {
     out
 }
 
+#[allow(dead_code)]
 fn model_element_from_package(pkg: &kerml_parser::ast::Package) -> Option<ModelElement> {
     let name = if pkg.name.is_empty() {
         "(top level)"
@@ -658,6 +665,7 @@ fn model_element_from_package(pkg: &kerml_parser::ast::Package) -> Option<ModelE
     })
 }
 
+#[allow(dead_code)]
 fn model_elements_from_members(members: &[Member]) -> Vec<ModelElement> {
     let mut out = Vec::new();
     for m in members {
@@ -668,6 +676,7 @@ fn model_elements_from_members(members: &[Member]) -> Vec<ModelElement> {
     out
 }
 
+#[allow(dead_code)]
 fn model_element_from_member(member: &Member) -> Option<ModelElement> {
     use kerml_parser::ast::Member as M;
     match member {
@@ -905,6 +914,7 @@ fn model_element_from_member(member: &Member) -> Option<ModelElement> {
     }
 }
 
+#[allow(dead_code)]
 fn member_range(
     range: Option<&SourceRange>,
     name_position: Option<&SourcePosition>,
@@ -1020,6 +1030,7 @@ pub struct SymbolEntry {
 }
 
 /// Collects a flat list of symbol entries from a parsed document for the symbol table.
+#[allow(dead_code)]
 pub fn collect_symbol_entries(doc: &SysMLDocument, uri: &Url) -> Vec<SymbolEntry> {
     let mut out = Vec::new();
     for pkg in &doc.packages {
@@ -1028,6 +1039,7 @@ pub fn collect_symbol_entries(doc: &SysMLDocument, uri: &Url) -> Vec<SymbolEntry
     out
 }
 
+#[allow(dead_code)]
 fn symbol_entries_from_package(
     pkg: &kerml_parser::ast::Package,
     uri: &Url,
@@ -1074,6 +1086,7 @@ fn symbol_entries_from_package(
     }
 }
 
+#[allow(dead_code)]
 fn symbol_entries_from_member(
     member: &Member,
     uri: &Url,

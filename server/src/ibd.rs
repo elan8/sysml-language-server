@@ -39,6 +39,7 @@ fn part_tree_size(graph: &SemanticGraph, node: &SemanticNode, _uri: &Url) -> usi
 }
 
 /// Strip package prefix from qualified name (after last "::") for client path resolution.
+#[allow(dead_code)]
 fn strip_package_prefix(qn: &str) -> &str {
     if let Some(i) = qn.rfind("::") {
         &qn[i + 2..]

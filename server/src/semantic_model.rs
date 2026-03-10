@@ -165,6 +165,7 @@ impl SemanticGraph {
     }
 
     /// Returns root nodes (no parent) for the given URI. Typically top-level packages.
+    #[allow(dead_code)]
     pub fn root_nodes_for_uri(&self, uri: &Url) -> Vec<&SemanticNode> {
         self.nodes_for_uri(uri)
             .into_iter()
@@ -241,6 +242,7 @@ impl SemanticGraph {
     }
 
     /// Finds nodes with the given qualified name (may exist in multiple URIs).
+    #[allow(dead_code)]
     pub fn find_nodes_by_qualified_name(&self, qualified_name: &str) -> Vec<&SemanticNode> {
         let qn = qualified_name.replace('.', "::");
         self.nodes_by_uri
