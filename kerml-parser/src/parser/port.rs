@@ -46,7 +46,7 @@ fn process_port_def_pair<P: MemberParser>(
             } else if acc.next_is_type {
                 acc.type_ref = Some(text.to_string());
                 let span_len = pair.as_span().end() - pair.as_span().start();
-                if span_len <= text.len() + 3 {
+                if span_len <= text.len() + 1 {
                     acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
                 }
                 acc.next_is_type = false;
@@ -166,7 +166,7 @@ fn process_port_usage_pair<P: MemberParser>(
             } else if acc.next_is_type {
                 acc.type_ref = Some(text.to_string());
                 let span_len = pair.as_span().end() - pair.as_span().start();
-                if span_len <= text.len() + 3 {
+                if span_len <= text.len() + 1 {
                     acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
                 }
                 acc.next_is_type = false;

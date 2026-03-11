@@ -255,7 +255,7 @@ pub(super) fn parse_in_statement(pairs: Pairs<'_, Rule>, source: &str, span: pes
                     *type_ref = Some(text.to_string());
                     // Only use this pair's span if it actually matches the type name (avoid parent span bug).
                     let span_len = pair.as_span().end() - pair.as_span().start();
-                    if span_len <= text.len() + 3 {
+                    if span_len <= text.len() + 1 {
                         *type_ref_position = Some(span_to_position(pair.as_span(), source));
                     }
                     *next_is_type = false;
@@ -327,7 +327,7 @@ pub(super) fn parse_end_statement(pairs: Pairs<'_, Rule>, source: &str, span: pe
                 } else if *next_is_type {
                     *type_ref = Some(text.to_string());
                     let span_len = pair.as_span().end() - pair.as_span().start();
-                    if span_len <= text.len() + 3 {
+                    if span_len <= text.len() + 1 {
                         *type_ref_position = Some(span_to_position(pair.as_span(), source));
                     }
                     *next_is_type = false;

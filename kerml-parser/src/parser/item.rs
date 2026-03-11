@@ -82,7 +82,7 @@ pub(super) fn parse_item_usage(pairs: Pairs<'_, Rule>, source: &str, span: pest:
                 } else if next_is_type {
                     type_ref = Some(text.to_string());
                     let span_len = pair.as_span().end() - pair.as_span().start();
-                    if span_len <= text.len() + 3 {
+                    if span_len <= text.len() + 1 {
                         type_ref_position = Some(span_to_position(pair.as_span(), source));
                     }
                     next_is_type = false;
@@ -150,7 +150,7 @@ fn process_item_usage_pair(
             } else if *next_is_type {
                 *type_ref = Some(text.to_string());
                 let span_len = pair.as_span().end() - pair.as_span().start();
-                if span_len <= text.len() + 3 {
+                if span_len <= text.len() + 1 {
                     *type_ref_position = Some(span_to_position(pair.as_span(), source));
                 }
                 *next_is_type = false;
@@ -271,7 +271,7 @@ pub(super) fn parse_ref_item(pairs: Pairs<'_, Rule>, source: &str, span: pest::S
                 } else if next_is_type {
                     type_ref = Some(text.to_string());
                     let span_len = pair.as_span().end() - pair.as_span().start();
-                    if span_len <= text.len() + 3 {
+                    if span_len <= text.len() + 1 {
                         type_ref_position = Some(span_to_position(pair.as_span(), source));
                     }
                     next_is_type = false;

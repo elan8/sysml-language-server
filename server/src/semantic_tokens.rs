@@ -454,6 +454,11 @@ fn apply_ast_semantic_ranges(
                 if span_len > 2 * *len {
                     continue;
                 }
+                // Never override VARIABLE -> TYPE: wrong parser type_ref spans often cover the
+                // property name (e.g. " current " or "out velocity :"), so keep VARIABLE for names.
+                if *type_idx == TYPE_VARIABLE && ast_type == TYPE_TYPE {
+                    continue;
+                }
                 if let Some(log) = log_out.as_mut() {
                     let token_text: String = lines
                         .get(*line as usize)
