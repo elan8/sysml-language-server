@@ -459,6 +459,11 @@ fn apply_ast_semantic_ranges(
                 if *type_idx == TYPE_VARIABLE && ast_type == TYPE_TYPE {
                     continue;
                 }
+                // Never override KEYWORD -> PROPERTY or KEYWORD -> TYPE: language keywords (e.g.
+                // "attribute", "def") must stay KEYWORD; wrong AST spans sometimes cover them.
+                if *type_idx == TYPE_KEYWORD && (ast_type == TYPE_PROPERTY || ast_type == TYPE_TYPE) {
+                    continue;
+                }
                 if let Some(log) = log_out.as_mut() {
                     let token_text: String = lines
                         .get(*line as usize)
