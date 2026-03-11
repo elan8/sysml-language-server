@@ -61,23 +61,43 @@ pub(super) fn parse_part_def<P: MemberParser>(
             Rule::name | Rule::identifier | Rule::qualified_name | Rule::string_literal => {
                 let text = pair.as_str().trim_matches('\'');
                 if !seen_name {
+                    let span_str = pair.as_span().as_str().trim();
+                    if span_str == "def" {
+                        log::debug!("parse_part_def: Skipping keyword 'def' as name");
+                        continue;
+                    }
                     name = text.to_string();
                     name_position = Some(span_to_position(pair.as_span(), source));
                     seen_name = true;
                     log::debug!("parse_part_def: Set name to: {}", name);
                 } else if next_is_specialization {
-                    specializes = Some(text.to_string());
-                    specializes_position = Some(span_to_position(pair.as_span(), source));
+                    let span_str = pair.as_span().as_str().trim();
+                    if span_str != "def" {
+                        specializes = Some(text.to_string());
+                        if span_str == text.trim() {
+                            specializes_position = Some(span_to_position(pair.as_span(), source));
+                        }
+                    }
                     log::debug!("parse_part_def: Set specializes to: {:?}", specializes);
                     next_is_specialization = false;
                 } else if seen_colon {
-                    type_ref = Some(text.to_string());
-                    type_ref_position = Some(span_to_position(pair.as_span(), source));
+                    let span_str = pair.as_span().as_str().trim();
+                    if span_str != "def" {
+                        type_ref = Some(text.to_string());
+                        if span_str == text.trim() {
+                            type_ref_position = Some(span_to_position(pair.as_span(), source));
+                        }
+                    }
                     log::debug!("parse_part_def: Set type_ref to: {:?}", type_ref);
                     seen_colon = false;
                 } else if specializes.is_none() && type_ref.is_none() {
-                    specializes = Some(text.to_string());
-                    specializes_position = Some(span_to_position(pair.as_span(), source));
+                    let span_str = pair.as_span().as_str().trim();
+                    if span_str != "def" {
+                        specializes = Some(text.to_string());
+                        if span_str == text.trim() {
+                            specializes_position = Some(span_to_position(pair.as_span(), source));
+                        }
+                    }
                     log::debug!("parse_part_def: Inferred specializes from second identifier: {:?}", specializes);
                 } else {
                     log::debug!(

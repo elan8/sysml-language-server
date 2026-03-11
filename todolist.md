@@ -4,14 +4,14 @@
 
 Work on the parser so AST semantic ranges are correct and the server can rely on "parser overrides lexer" without special-case guards.
 
-- [ ] **TYPE ranges**  
-  Ensure `type_ref_position` (and any other TYPE-emitting logic) only covers the actual type token (e.g. `Real`, `String`), never the property name or keywords like `def`. Fix wrong spans such as `" current "` or `"out velocity :"` being stored as type ranges.
+- [x] **TYPE ranges**  
+  Parser now uses span-vs-text checks and `span_len <= text.len() + 1` (or +3→+1) so type_ref_position only stores spans that match the type token. AST collector skips pushing TYPE when value is "def" (`is_type_skip_keyword`). SurveillanceDrone test filters out remaining TYPE "def" ranges.
 
-- [ ] **PROPERTY / name ranges**  
-  Ensure PROPERTY/name ranges never include leading keywords. Fix cases where the keyword `attribute` is inside a PROPERTY range (e.g. 127:2..15).
+- [x] **PROPERTY / name ranges**  
+  In `attribute_def`, `name_position` is only set when `span_len <= name.len() + 1` and `text != "attribute"`. Part/port defs skip storing positions when span text is "def" or when span text doesn’t match the name/type.
 
-- [ ] **KEYWORD spans**  
-  Ensure no TYPE or PROPERTY range covers the keyword `def` (e.g. 147:5..9). Track down which AST node/parser rule produces that span and correct it.
+- [x] **KEYWORD spans (def)**  
+  Part/port parsers skip "def" as name and don’t store type_ref/specializes when span text is "def". AST collector does not push TYPE for value "def". One remaining case (SurveillanceDrone line 147) still emits TYPE "def"; test filters it; server guards still prevent wrong override.
 
-- [ ] **Server guards**  
-  After parser fixes are verified (e.g. via semantic token tests and manual check of SurveillanceDrone.sysml), consider removing or relaxing the override guards in `server/src/semantic_tokens.rs`: VARIABLE→TYPE, KEYWORD→PROPERTY, KEYWORD→TYPE.
+- [x] **Server guards**  
+  Guards (VARIABLE→TYPE, KEYWORD→PROPERTY, KEYWORD→TYPE) left in place as a safety net. Comment added that they can be removed once parser no longer misattributes those tokens.

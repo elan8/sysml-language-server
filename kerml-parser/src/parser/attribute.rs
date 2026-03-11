@@ -40,8 +40,11 @@ pub(super) fn parse_attribute_def<P: MemberParser>(
                 let text = pair.as_str().trim_matches('\'');
                 if name.is_empty() {
                     name = text.to_string();
-                    name_position = Some(span_to_position(pair.as_span(), source));
-                    log::debug!("parse_attribute_def: Set name to: '{}' at line {}", name, name_position.as_ref().unwrap().line);
+                    let span_len = pair.as_span().end() - pair.as_span().start();
+                    if span_len <= name.len() + 1 && text != "attribute" {
+                        name_position = Some(span_to_position(pair.as_span(), source));
+                    }
+                    log::debug!("parse_attribute_def: Set name to: '{}' at line {}", name, name_position.as_ref().map(|p| p.line).unwrap_or(0));
                 } else if next_is_specialization {
                     specializes = Some(text.to_string());
                     specializes_position = Some(span_to_position(pair.as_span(), source));

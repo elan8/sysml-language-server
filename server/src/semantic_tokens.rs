@@ -8,7 +8,14 @@
 //! the AST. When the parse fails, we fall back to lexer-only heuristics (e.g. identifier after
 //! `:` → type, identifier after `package` → namespace).
 
-use kerml_parser::ast::{SemanticRole, SourceRange};
+use crate::ast_util::{span_to_source_range, SourceRange};
+use sysml_parser::ast::{
+    ActionDefBody, ActionUsageBody, ActionUsageBodyElement, InterfaceDefBody,
+    InterfaceDefBodyElement, PackageBody, PackageBodyElement, PartDefBody,
+    PartDefBodyElement, PartUsageBody, PartUsageBodyElement, PortDefBody,
+    PortDefBodyElement,
+};
+use sysml_parser::RootNamespace;
 use tower_lsp::lsp_types::{
     SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
 };
@@ -47,24 +54,171 @@ const TYPE_INTERFACE: u32 = 9;
 const TYPE_PROPERTY: u32 = 10;
 const TYPE_FUNCTION: u32 = 11;
 
-/// Map parser SemanticRole to legend index for use with apply_ast_semantic_ranges.
-pub fn semantic_role_to_type_index(role: SemanticRole) -> u32 {
-    match role {
-        SemanticRole::Type => TYPE_TYPE,
-        SemanticRole::Namespace => TYPE_NAMESPACE,
-        SemanticRole::Class => TYPE_CLASS,
-        SemanticRole::Interface => TYPE_INTERFACE,
-        SemanticRole::Property => TYPE_PROPERTY,
-        SemanticRole::Function => TYPE_FUNCTION,
+/// Build (SourceRange, token_type_index) from AST for semantic_tokens_full/range.
+pub fn ast_semantic_ranges(root: &RootNamespace) -> Vec<(SourceRange, u32)> {
+    let mut out = Vec::new();
+    for node in &root.elements {
+        collect_semantic_ranges_package_body_element(node, &mut out);
+    }
+    out
+}
+
+fn collect_semantic_ranges_package_body_element(
+    node: &sysml_parser::Node<PackageBodyElement>,
+    out: &mut Vec<(SourceRange, u32)>,
+) {
+    use sysml_parser::ast::PackageBodyElement as PBE;
+    match &node.value {
+        PBE::Package(pkg_node) => {
+            let name = crate::ast_util::identification_name(&pkg_node.identification);
+            if !name.is_empty() {
+                out.push((span_to_source_range(&pkg_node.span), TYPE_NAMESPACE));
+            }
+            match &pkg_node.body {
+                PackageBody::Brace { elements } => {
+                    for n in elements {
+                        collect_semantic_ranges_package_body_element(n, out);
+                    }
+                }
+                PackageBody::Semicolon => {}
+            }
+        }
+        PBE::Import(imp_node) => {
+            out.push((span_to_source_range(&imp_node.span), TYPE_NAMESPACE));
+        }
+        PBE::PartDef(pd_node) => {
+            out.push((span_to_source_range(&pd_node.span), TYPE_CLASS));
+            match &pd_node.body {
+                PartDefBody::Brace { elements } => {
+                    for n in elements {
+                        collect_semantic_ranges_part_def_body_element(n, out);
+                    }
+                }
+                PartDefBody::Semicolon => {}
+            }
+        }
+        PBE::PartUsage(pu_node) => {
+            out.push((span_to_source_range(&pu_node.span), TYPE_PROPERTY));
+            match &pu_node.body {
+                PartUsageBody::Brace { elements } => {
+                    for n in elements {
+                        collect_semantic_ranges_part_usage_body_element(n, out);
+                    }
+                }
+                PartUsageBody::Semicolon => {}
+            }
+        }
+        PBE::PortDef(pd_node) => {
+            out.push((span_to_source_range(&pd_node.span), TYPE_TYPE));
+            match &pd_node.body {
+                PortDefBody::Brace { elements } => {
+                    for n in elements {
+                        collect_semantic_ranges_port_def_body_element(n, out);
+                    }
+                }
+                PortDefBody::Semicolon => {}
+            }
+        }
+        PBE::InterfaceDef(id_node) => {
+            out.push((span_to_source_range(&id_node.span), TYPE_INTERFACE));
+            match &id_node.body {
+                InterfaceDefBody::Brace { elements } => {
+                    for n in elements {
+                        collect_semantic_ranges_interface_def_body_element(n, out);
+                    }
+                }
+                InterfaceDefBody::Semicolon => {}
+            }
+        }
+        PBE::AttributeDef(ad_node) => {
+            out.push((span_to_source_range(&ad_node.span), TYPE_PROPERTY));
+        }
+        PBE::ActionDef(ad_node) => {
+            out.push((span_to_source_range(&ad_node.span), TYPE_FUNCTION));
+            match &ad_node.body {
+                ActionDefBody::Brace { elements: _ } => {}
+                ActionDefBody::Semicolon => {}
+            }
+        }
+        PBE::ActionUsage(au_node) => {
+            out.push((span_to_source_range(&au_node.span), TYPE_PROPERTY));
+            match &au_node.body {
+                ActionUsageBody::Brace { elements } => {
+                    for n in elements {
+                        collect_semantic_ranges_action_usage_body_element(n, out);
+                    }
+                }
+                ActionUsageBody::Semicolon => {}
+            }
+        }
+        PBE::AliasDef(ad_node) => {
+            out.push((span_to_source_range(&ad_node.span), TYPE_NAMESPACE));
+        }
     }
 }
 
-/// Build (SourceRange, token_type_index) from AST for semantic_tokens_full/range.
-pub fn ast_semantic_ranges(doc: &kerml_parser::ast::SysMLDocument) -> Vec<(SourceRange, u32)> {
-    kerml_parser::collect_semantic_ranges(doc)
-        .into_iter()
-        .map(|(r, role)| (r, semantic_role_to_type_index(role)))
-        .collect()
+fn collect_semantic_ranges_part_def_body_element(
+    node: &sysml_parser::Node<PartDefBodyElement>,
+    out: &mut Vec<(SourceRange, u32)>,
+) {
+    use sysml_parser::ast::PartDefBodyElement as PDBE;
+    match &node.value {
+        PDBE::AttributeDef(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        PDBE::PortUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+    }
+}
+
+fn collect_semantic_ranges_part_usage_body_element(
+    node: &sysml_parser::Node<PartUsageBodyElement>,
+    out: &mut Vec<(SourceRange, u32)>,
+) {
+    use sysml_parser::ast::PartUsageBodyElement as PUBE;
+    match &node.value {
+        PUBE::AttributeUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        PUBE::PartUsage(n) => {
+            out.push((span_to_source_range(&n.span), TYPE_PROPERTY));
+            if let sysml_parser::ast::PartUsageBody::Brace { elements } = &n.body {
+                for child in elements {
+                    collect_semantic_ranges_part_usage_body_element(child, out);
+                }
+            }
+        }
+        PUBE::PortUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        PUBE::Bind(_) | PUBE::InterfaceUsage(_) | PUBE::Connect(_) | PUBE::Perform(_) => {}
+    }
+}
+
+fn collect_semantic_ranges_port_def_body_element(
+    node: &sysml_parser::Node<PortDefBodyElement>,
+    out: &mut Vec<(SourceRange, u32)>,
+) {
+    use sysml_parser::ast::PortDefBodyElement as PDBE;
+    match &node.value {
+        PDBE::PortUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+    }
+}
+
+fn collect_semantic_ranges_interface_def_body_element(
+    node: &sysml_parser::Node<InterfaceDefBodyElement>,
+    out: &mut Vec<(SourceRange, u32)>,
+) {
+    use sysml_parser::ast::InterfaceDefBodyElement as IDBE;
+    match &node.value {
+        IDBE::EndDecl(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        IDBE::RefDecl(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        IDBE::ConnectStmt(_) => {}
+    }
+}
+
+fn collect_semantic_ranges_action_usage_body_element(
+    node: &sysml_parser::Node<ActionUsageBodyElement>,
+    out: &mut Vec<(SourceRange, u32)>,
+) {
+    use sysml_parser::ast::ActionUsageBodyElement as AUBE;
+    match &node.value {
+        AUBE::InOutDecl(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        AUBE::Bind(_) | AUBE::Flow(_) | AUBE::FirstStmt(_) | AUBE::MergeStmt(_) | AUBE::ActionUsage(_) => {}
+    }
 }
 
 fn is_keyword(w: &str) -> bool {
@@ -461,6 +615,7 @@ fn apply_ast_semantic_ranges(
                 }
                 // Never override KEYWORD -> PROPERTY or KEYWORD -> TYPE: language keywords (e.g.
                 // "attribute", "def") must stay KEYWORD; wrong AST spans sometimes cover them.
+                // Can be removed/relaxed once parser semantic ranges no longer misattribute these.
                 if *type_idx == TYPE_KEYWORD && (ast_type == TYPE_PROPERTY || ast_type == TYPE_TYPE) {
                     continue;
                 }

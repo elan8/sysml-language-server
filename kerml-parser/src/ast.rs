@@ -41,6 +41,11 @@ pub struct SourceRange {
     pub end_character: u32,
 }
 
+/// Keyword that must never get a TYPE semantic range (parser sometimes misattributes it).
+fn is_type_skip_keyword(s: &str) -> bool {
+    s.trim() == "def"
+}
+
 /// For a qualified type ref (e.g. "ISQ::mass"), returns (namespace range, type range) so the first
 /// segment is namespace and the last segment is type. Positions use the same byte-offset convention as the parser.
 fn type_ref_segment_ranges(
@@ -786,21 +791,25 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                     out.push((pos.to_range(), SemanticRole::Class));
                 }
                 if let (Some(ref spec), Some(ref pos)) = (&p.specializes, &p.specializes_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(spec) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 if let (Some(ref ty), Some(ref pos)) = (&p.type_ref, &p.type_ref_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(ty) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 collect_semantic_ranges_members(&p.members, out);
@@ -810,21 +819,25 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
                 if let (Some(ref spec), Some(ref pos)) = (&p.specializes, &p.specializes_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(spec) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 if let (Some(ref ty), Some(ref pos)) = (&p.type_ref, &p.type_ref_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(ty) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 collect_semantic_ranges_members(&p.members, out);
@@ -834,21 +847,25 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
                 if let (Some(ref ty), Some(ref pos)) = (&a.type_ref, &a.type_ref_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(ty) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 if let (Some(ref spec), Some(ref pos)) = (&a.specializes, &a.specializes_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(spec) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 collect_semantic_ranges_members(&a.members, out);
@@ -860,25 +877,31 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                 collect_semantic_ranges_members(&a.members, out);
             }
             Member::PortDef(p) => {
-                if let Some(ref pos) = p.name_position {
-                    out.push((pos.to_range(), SemanticRole::Type));
+                if !is_type_skip_keyword(&p.name) {
+                    if let Some(ref pos) = p.name_position {
+                        out.push((pos.to_range(), SemanticRole::Type));
+                    }
                 }
                 if let (Some(ref spec), Some(ref pos)) = (&p.specializes, &p.specializes_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(spec) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 if let (Some(ref ty), Some(ref pos)) = (&p.type_ref, &p.type_ref_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(ty) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 collect_semantic_ranges_members(&p.members, out);
@@ -888,12 +911,14 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
                 if let (Some(ref ty), Some(ref pos)) = (&p.type_ref, &p.type_ref_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(ty) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 collect_semantic_ranges_members(&p.members, out);
@@ -909,21 +934,25 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
                 if let (Some(ref spec), Some(ref pos)) = (&i.specializes, &i.specializes_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(spec) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(spec, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
                 if let (Some(ref ty), Some(ref pos)) = (&i.type_ref, &i.type_ref_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(ty) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
             }
@@ -932,12 +961,14 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
                 if let (Some(ref ty), Some(ref pos)) = (&e.type_ref, &e.type_ref_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(ty) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
             }
@@ -957,12 +988,14 @@ fn collect_semantic_ranges_members(members: &[Member], out: &mut Vec<(SourceRang
                     out.push((pos.to_range(), SemanticRole::Property));
                 }
                 if let (Some(ref ty), Some(ref pos)) = (&i.type_ref, &i.type_ref_position) {
-                    let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
-                    if let Some(r) = ns_range {
-                        out.push((r, SemanticRole::Namespace));
-                    }
-                    if let Some(r) = type_range {
-                        out.push((r, SemanticRole::Type));
+                    if !is_type_skip_keyword(ty) {
+                        let (ns_range, type_range) = type_ref_segment_ranges(ty, pos);
+                        if let Some(r) = ns_range {
+                            out.push((r, SemanticRole::Namespace));
+                        }
+                        if let Some(r) = type_range {
+                            out.push((r, SemanticRole::Type));
+                        }
                     }
                 }
             }

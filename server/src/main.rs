@@ -1,13 +1,14 @@
 //! SysML v2 language server (LSP over stdio).
 #![allow(deprecated)] // LSP deprecated field in SymbolInformation; use tags in future
 
+mod ast_util;
 mod ibd;
 mod language;
 mod model;
 mod semantic_model;
 mod semantic_tokens;
 
-use kerml_parser::ast::SysMLDocument;
+use sysml_parser::RootNamespace;
 use std::sync::Arc;
 use std::time::Instant;
 use tower_lsp::lsp_types::Range;
@@ -69,7 +70,7 @@ use language::{
 #[derive(Debug)]
 struct IndexEntry {
     content: String,
-    parsed: Option<SysMLDocument>,
+    parsed: Option<RootNamespace>,
 }
 
 #[derive(Debug, Default)]
@@ -386,7 +387,7 @@ fn remove_symbol_table_entries_for_uri(state: &mut ServerState, uri: &Url) {
 fn update_semantic_graph_for_uri(
     state: &mut ServerState,
     uri: &Url,
-    doc: Option<&SysMLDocument>,
+    doc: Option<&RootNamespace>,
 ) {
     state.semantic_graph.remove_nodes_for_uri(uri);
     if let Some(d) = doc {
@@ -567,7 +568,7 @@ impl LanguageServer for Backend {
             let mut st = state.write().await;
             let mut uris_loaded = Vec::new();
             for (uri, content) in entries {
-                let parsed = kerml_parser::parse_sysml(&content).ok();
+                let parsed = sysml_parser::parse(&content).ok();
                 update_semantic_graph_for_uri(&mut st, &uri, parsed.as_ref());
                 uris_loaded.push(uri.clone());
                 st.index.insert(
@@ -593,7 +594,7 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         let text = params.text_document.text;
-        let parsed = kerml_parser::parse_sysml(&text).ok();
+        let parsed = sysml_parser::parse(&text).ok();
         {
             let mut state = self.state.write().await;
             update_semantic_graph_for_uri(&mut state, &uri, parsed.as_ref());
@@ -626,7 +627,7 @@ impl LanguageServer for Backend {
                         entry.content = change.text;
                     }
                 }
-                entry.parsed = kerml_parser::parse_sysml(&entry.content).ok();
+                entry.parsed = sysml_parser::parse(&entry.content).ok();
                 true
             } else {
                 false
@@ -636,7 +637,7 @@ impl LanguageServer for Backend {
                     .index
                     .get(&uri)
                     .and_then(|e| e.parsed.as_ref())
-                    .map(|d| semantic_model::build_graph_from_doc(d, &uri));
+                    .map(|root| semantic_model::build_graph_from_doc(root, &uri));
                 if let Some(new_graph) = doc_for_graph {
                     state.semantic_graph.remove_nodes_for_uri(&uri);
                     state.semantic_graph.merge(new_graph);
@@ -679,7 +680,7 @@ impl LanguageServer for Backend {
             if event.typ == FileChangeType::CREATED || event.typ == FileChangeType::CHANGED {
                 if let Ok(path) = event.uri.to_file_path() {
                     if let Ok(content) = tokio::fs::read_to_string(&path).await {
-                        let parsed = kerml_parser::parse_sysml(&content).ok();
+                        let parsed = sysml_parser::parse(&content).ok();
                         update_semantic_graph_for_uri(
                             &mut state,
                             &event.uri,
@@ -768,7 +769,7 @@ impl LanguageServer for Backend {
             let mut st = state.write().await;
             let mut uris_loaded = Vec::new();
             for (uri, content) in entries {
-                let parsed = kerml_parser::parse_sysml(&content).ok();
+                let parsed = sysml_parser::parse(&content).ok();
                 update_semantic_graph_for_uri(&mut st, &uri, parsed.as_ref());
                 uris_loaded.push(uri.clone());
                 st.index.insert(
@@ -1428,19 +1429,26 @@ impl Backend {
         text: &str,
     ) {
         let mut diagnostics = Vec::new();
-        let (_result, errors) = kerml_parser::parse_sysml_collect_errors(text);
-        for e in errors {
-            let (line, character) = e.position().unwrap_or((0, 0));
+        let result = sysml_parser::parse_with_diagnostics(text);
+        for e in result.errors {
+            let range = e.to_lsp_range().map(|(sl, sc, el, ec)| Range {
+                start: Position::new(sl, sc),
+                end: Position::new(el, ec),
+            }).unwrap_or_else(|| Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 0),
+            });
+            let severity = e.severity.map(|s| match s {
+                sysml_parser::DiagnosticSeverity::Error => DiagnosticSeverity::ERROR,
+                sysml_parser::DiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
+            }).unwrap_or(DiagnosticSeverity::ERROR);
             diagnostics.push(Diagnostic {
-                range: Range {
-                    start: Position::new(line, character),
-                    end: Position::new(line, character),
-                },
-                severity: Some(DiagnosticSeverity::ERROR),
-                code: None,
+                range,
+                severity: Some(severity),
+                code: e.code.map(tower_lsp::lsp_types::NumberOrString::String),
                 code_description: None,
                 source: Some("sysml".to_string()),
-                message: e.to_string(),
+                message: e.message.clone(),
                 related_information: None,
                 tags: None,
                 data: None,

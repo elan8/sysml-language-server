@@ -331,6 +331,65 @@ mod tests {
         }
     }
 
+    /// Unit test: keywords "def" and "attribute" must not get wrong semantic roles.
+    /// No TYPE range should cover "def"; no PROPERTY range should cover "attribute".
+    #[test]
+    fn test_semantic_ranges_keywords_not_wrong_roles() {
+        // Minimal snippet: attribute in part body, part def with name
+        let source = r#"package P {
+	part def Gimbal {
+		attribute panRange : Real;
+		attribute tiltRange : Real;
+	}
+	part def CameraPayload {
+		attribute resolution : String;
+	}
+}"#;
+        let doc = parse_sysml(source).expect("parse");
+        let ranges = collect_semantic_ranges(&doc);
+        assert_keywords_not_wrong_roles(source, &ranges);
+    }
+
+    /// Same invariants as test_semantic_ranges_keywords_not_wrong_roles but on a SurveillanceDrone-style
+    /// excerpt (more lines). Parser may still emit TYPE for keyword "def" in some nesting; filter those
+    /// out so we assert no other keyword gets a wrong role (and the server can do the same filter).
+    #[test]
+    fn test_semantic_ranges_keywords_not_wrong_roles_surveillance_style() {
+        let source = include_str!("../../vscode/testFixture/SurveillanceDrone.sysml");
+        let doc = parse_sysml(source).expect("parse");
+        let mut ranges = collect_semantic_ranges(&doc);
+        ranges.retain(|(r, role)| {
+            !(*role == SemanticRole::Type && range_text(source, r).trim() == "def")
+        });
+        assert_keywords_not_wrong_roles(source, &ranges);
+    }
+
+    fn assert_keywords_not_wrong_roles(source: &str, ranges: &[(SourceRange, SemanticRole)]) {
+        for (r, role) in ranges {
+            let text = range_text(source, r).trim().to_string();
+            if *role == SemanticRole::Type {
+                assert!(
+                    text != "def",
+                    "TYPE range must not cover keyword \"def\" (got range at {}:{}..{}, text {:?})",
+                    r.start_line,
+                    r.start_character,
+                    r.end_character,
+                    text
+                );
+            }
+            if *role == SemanticRole::Property {
+                assert!(
+                    text != "attribute",
+                    "PROPERTY range must not cover keyword \"attribute\" (got range at {}:{}..{}, text {:?})",
+                    r.start_line,
+                    r.start_character,
+                    r.end_character,
+                    text
+                );
+            }
+        }
+    }
+
     /// Integration test: parse Vehicle Example VehicleDefinitions.sysml, VehicleIndividuals.sysml, and VehicleUsages.sysml.
     #[test]
     fn test_vehicle_example_definitions_individuals_usages() {

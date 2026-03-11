@@ -37,17 +37,27 @@ fn process_port_def_pair<P: MemberParser>(
         Rule::name | Rule::identifier | Rule::qualified_name | Rule::string_literal => {
             let text = pair.as_str().trim_matches('\'').trim_matches('"');
             if acc.name.is_empty() {
+                let span_str = pair.as_span().as_str().trim();
+                if span_str == "def" {
+                    return;
+                }
                 acc.name = text.to_string();
-                acc.name_position = Some(span_to_position(pair.as_span(), source));
+                if span_str == text.trim() {
+                    acc.name_position = Some(span_to_position(pair.as_span(), source));
+                }
             } else if acc.next_is_specialization {
-                acc.specializes = Some(text.to_string());
-                acc.specializes_position = Some(span_to_position(pair.as_span(), source));
+                if text != "def" {
+                    acc.specializes = Some(text.to_string());
+                    acc.specializes_position = Some(span_to_position(pair.as_span(), source));
+                }
                 acc.next_is_specialization = false;
             } else if acc.next_is_type {
-                acc.type_ref = Some(text.to_string());
-                let span_len = pair.as_span().end() - pair.as_span().start();
-                if span_len <= text.len() + 1 {
-                    acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
+                if text != "def" {
+                    acc.type_ref = Some(text.to_string());
+                    let span_len = pair.as_span().end() - pair.as_span().start();
+                    if span_len <= text.len() + 1 {
+                        acc.type_ref_position = Some(span_to_position(pair.as_span(), source));
+                    }
                 }
                 acc.next_is_type = false;
             }
