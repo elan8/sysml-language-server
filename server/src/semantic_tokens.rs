@@ -110,7 +110,12 @@ fn collect_semantic_ranges_package_body_element(
             }
         }
         PBE::PartUsage(pu_node) => {
-            out.push((span_to_source_range(&pu_node.span), TYPE_PROPERTY));
+            if let Some(ref s) = pu_node.value.name_span {
+                out.push((span_to_source_range(s), TYPE_PROPERTY));
+            }
+            if let Some(ref s) = pu_node.value.type_ref_span {
+                out.push((span_to_source_range(s), TYPE_TYPE));
+            }
             match &pu_node.body {
                 PartUsageBody::Brace { elements } => {
                     for n in elements {
@@ -153,7 +158,12 @@ fn collect_semantic_ranges_package_body_element(
             }
         }
         PBE::ActionUsage(au_node) => {
-            out.push((span_to_source_range(&au_node.span), TYPE_PROPERTY));
+            if let Some(ref s) = au_node.value.name_span {
+                out.push((span_to_source_range(s), TYPE_PROPERTY));
+            }
+            if let Some(ref s) = au_node.value.type_ref_span {
+                out.push((span_to_source_range(s), TYPE_TYPE));
+            }
             match &au_node.body {
                 ActionUsageBody::Brace { elements } => {
                     for n in elements {
@@ -177,7 +187,14 @@ fn collect_semantic_ranges_part_def_body_element(
     use sysml_parser::ast::PartDefBodyElement as PDBE;
     match &node.value {
         PDBE::AttributeDef(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
-        PDBE::PortUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        PDBE::PortUsage(n) => {
+            if let Some(ref s) = n.value.name_span {
+                out.push((span_to_source_range(s), TYPE_PROPERTY));
+            }
+            if let Some(ref s) = n.value.type_ref_span {
+                out.push((span_to_source_range(s), TYPE_TYPE));
+            }
+        }
         _ => {}
     }
 }
@@ -188,16 +205,32 @@ fn collect_semantic_ranges_part_usage_body_element(
 ) {
     use sysml_parser::ast::PartUsageBodyElement as PUBE;
     match &node.value {
-        PUBE::AttributeUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        PUBE::AttributeUsage(n) => {
+            if let Some(ref s) = n.value.name_span {
+                out.push((span_to_source_range(s), TYPE_PROPERTY));
+            }
+        }
         PUBE::PartUsage(n) => {
-            out.push((span_to_source_range(&n.span), TYPE_PROPERTY));
+            if let Some(ref s) = n.value.name_span {
+                out.push((span_to_source_range(s), TYPE_PROPERTY));
+            }
+            if let Some(ref s) = n.value.type_ref_span {
+                out.push((span_to_source_range(s), TYPE_TYPE));
+            }
             if let sysml_parser::ast::PartUsageBody::Brace { elements } = &n.body {
                 for child in elements {
                     collect_semantic_ranges_part_usage_body_element(child, out);
                 }
             }
         }
-        PUBE::PortUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        PUBE::PortUsage(n) => {
+            if let Some(ref s) = n.value.name_span {
+                out.push((span_to_source_range(s), TYPE_PROPERTY));
+            }
+            if let Some(ref s) = n.value.type_ref_span {
+                out.push((span_to_source_range(s), TYPE_TYPE));
+            }
+        }
         PUBE::Bind(_) | PUBE::InterfaceUsage(_) | PUBE::Connect(_) | PUBE::Perform(_) => {}
         _ => {}
     }
@@ -209,7 +242,14 @@ fn collect_semantic_ranges_port_def_body_element(
 ) {
     use sysml_parser::ast::PortDefBodyElement as PDBE;
     match &node.value {
-        PDBE::PortUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        PDBE::PortUsage(n) => {
+            if let Some(ref s) = n.value.name_span {
+                out.push((span_to_source_range(s), TYPE_PROPERTY));
+            }
+            if let Some(ref s) = n.value.type_ref_span {
+                out.push((span_to_source_range(s), TYPE_TYPE));
+            }
+        }
         _ => {}
     }
 }
@@ -627,6 +667,13 @@ fn apply_ast_semantic_ranges(
                 // Never override VARIABLE -> TYPE: wrong parser type_ref spans often cover the
                 // property name (e.g. " current " or "out velocity :"), so keep VARIABLE for names.
                 if *type_idx == TYPE_VARIABLE && ast_type == TYPE_TYPE {
+                    continue;
+                }
+                // Never override TYPE -> PROPERTY: PartUsage/PortUsage AST ranges use the whole
+                // declaration span (e.g. "cmd : MotorCommandPort {") as PROPERTY, so the type name
+                // is contained in that span and would be wrongly overridden. Keep TYPE for type
+                // references (e.g. after ":" in port/part usages).
+                if *type_idx == TYPE_TYPE && ast_type == TYPE_PROPERTY {
                     continue;
                 }
                 // Never override KEYWORD -> PROPERTY or KEYWORD -> TYPE: language keywords (e.g.
