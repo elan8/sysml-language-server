@@ -6,6 +6,7 @@
 
 import type { RenderContext } from '../types';
 import { GENERAL_VIEW_PALETTE } from '../constants';
+import { postJumpToElement } from '../jumpToElement';
 import { formatSysMLStereotype } from '../shared';
 import { getTypeColor } from '../shared';
 import {
@@ -171,9 +172,30 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
         nodeDataMap.set(d.id, { compartments, height: Math.max(NODE_HEIGHT_BASE, nodeHeight) });
     });
 
+    // Build per-node port indices: each edge gets its own connection point to avoid overlap.
+    const outgoingByNode = new Map<string, { edge: any; idx: number }[]>();
+    const incomingByNode = new Map<string, { edge: any; idx: number }[]>();
+    cyEdges.forEach((edge: any, idx: number) => {
+        const src = edge.data.source;
+        const tgt = edge.data.target;
+        if (!outgoingByNode.has(src)) outgoingByNode.set(src, []);
+        outgoingByNode.get(src)!.push({ edge, idx });
+        if (!incomingByNode.has(tgt)) incomingByNode.set(tgt, []);
+        incomingByNode.get(tgt)!.push({ edge, idx });
+    });
+    const getOutgoingPortIndex = (nodeId: string, edge: any) => {
+        const list = outgoingByNode.get(nodeId) || [];
+        const i = list.findIndex((x) => x.edge === edge);
+        return i >= 0 ? i : 0;
+    };
+    const getIncomingPortIndex = (nodeId: string, edge: any) => {
+        const list = incomingByNode.get(nodeId) || [];
+        const i = list.findIndex((x) => x.edge === edge);
+        return i >= 0 ? i : 0;
+    };
+
     // Layout uses ALL edges (hierarchy + typing) so ELK positions the full tree correctly.
-    // Both edge types define parent→child in our synthetic tree; skipping typing causes
-    // PartDefs to be placed far from their parts and edges to cross nodes.
+    // Multiple ports per side (north_0..north_k, south_0..south_m) distribute edges and reduce overlap.
     const elkGraph = {
         id: 'root',
         layoutOptions: {
@@ -189,26 +211,46 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
             'elk.aspectRatio': '1.4',
             'elk.padding': '[top=100,left=100,bottom=100,right=100]',
             'org.eclipse.elk.portConstraints': 'FIXED_SIDE',
+            'org.eclipse.elk.spacing.portPort': '15',
             'org.eclipse.elk.json.edgeCoords': 'ROOT'
         },
         children: cyNodes.map((el: any) => {
-            const nd = nodeDataMap.get(el.data.id);
+            const nodeId = el.data.id;
+            const nd = nodeDataMap.get(nodeId);
             const nodeHeight = nd?.height ?? NODE_HEIGHT_BASE;
+            const outCount = outgoingByNode.get(nodeId)?.length ?? 0;
+            const inCount = incomingByNode.get(nodeId)?.length ?? 0;
+            const ports: { id: string; layoutOptions: Record<string, string> }[] = [];
+            for (let i = 0; i < Math.max(outCount, 1); i++) {
+                ports.push({
+                    id: nodeId + '_south_' + i,
+                    layoutOptions: { 'org.eclipse.elk.port.side': 'SOUTH' }
+                });
+            }
+            for (let i = 0; i < Math.max(inCount, 1); i++) {
+                ports.push({
+                    id: nodeId + '_north_' + i,
+                    layoutOptions: { 'org.eclipse.elk.port.side': 'NORTH' }
+                });
+            }
             return {
-                id: el.data.id,
+                id: nodeId,
                 width: nodeWidth,
                 height: nodeHeight,
-                ports: [
-                    { id: el.data.id + '_south', layoutOptions: { 'org.eclipse.elk.port.side': 'SOUTH' } },
-                    { id: el.data.id + '_north', layoutOptions: { 'org.eclipse.elk.port.side': 'NORTH' } }
-                ]
+                ports
             };
         }),
-        edges: cyEdges.map((el: any, idx: number) => ({
-            id: el.data.id || ('edge-' + idx),
-            sources: [el.data.source + '_south'],
-            targets: [el.data.target + '_north']
-        }))
+        edges: cyEdges.map((el: any, idx: number) => {
+            const src = el.data.source;
+            const tgt = el.data.target;
+            const srcPort = src + '_south_' + getOutgoingPortIndex(src, el);
+            const tgtPort = tgt + '_north_' + getIncomingPortIndex(tgt, el);
+            return {
+                id: el.data.id || ('edge-' + idx),
+                sources: [srcPort],
+                targets: [tgtPort]
+            };
+        })
     };
 
     let laidOut: any;
@@ -410,13 +452,14 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
             if (statusEl) statusEl.textContent = (d.label || d.elementName) + ' [' + (d.sysmlType || 'element') + ']';
 
             const elementName = d.elementName;
+            const elementQualifiedName = d.elementQualifiedName || elementName;
             const nodeId = d.id;
             if (elementName) {
                 if (lastTappedId === nodeId && tapTimeout) {
                     clearTimeout(tapTimeout);
                     tapTimeout = null;
                     lastTappedId = null;
-                    postMessage({ command: 'jumpToElement', elementName });
+                    postJumpToElement(postMessage, { name: elementName, id: elementQualifiedName || undefined });
                 } else {
                     lastTappedId = nodeId;
                     tapTimeout = setTimeout(() => {

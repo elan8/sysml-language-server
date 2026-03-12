@@ -4,6 +4,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type { RenderContext } from '../types';
+import { postJumpToElement } from '../jumpToElement';
 
 declare const d3: any;
 
@@ -611,10 +612,7 @@ export function renderStateView(ctx: RenderContext, data: any): void {
             stateElement.style('cursor', 'pointer');
             stateElement.on('click', function(event: any) {
                 event.stopPropagation();
-                postMessage({
-                    command: 'jumpToElement',
-                    elementName: state.name
-                });
+                postJumpToElement(postMessage, { name: state.name, id: state.id });
             })
             .on('dblclick', function(event: any) {
                 event.stopPropagation();

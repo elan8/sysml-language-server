@@ -8,7 +8,7 @@
 
 export interface ExportHandlerOpts {
     getCurrentData: () => any;
-    getViewState: () => { currentView: string; cy: any };
+    getViewState: () => { currentView: string };
     postMessage: (msg: unknown) => void;
 }
 
@@ -227,22 +227,6 @@ export function createExportHandler(opts: ExportHandlerOpts) {
 
     function exportPNG(scale?: number): void {
         const scaleFactor = scale || 2;
-        const { currentView, cy } = getViewState();
-
-        if (currentView === 'sysml' && cy) {
-            const pngData = cy.png({
-                output: 'base64uri',
-                full: true,
-                scale: scaleFactor,
-                bg: getComputedStyle(document.body).backgroundColor || '#1e1e1e'
-            });
-            postMessage({
-                command: 'export',
-                format: 'png',
-                data: pngData
-            });
-            return;
-        }
 
         const svgElement = document.querySelector('#visualization svg') as SVGSVGElement | null;
         if (!svgElement) {
@@ -287,13 +271,7 @@ export function createExportHandler(opts: ExportHandlerOpts) {
     function exportSVG(): void {
         const svgString = getSvgStringForExport();
         if (!svgString) {
-            // Fallback to PNG for Cytoscape when svg() is not available
-            const { currentView, cy } = getViewState();
-            if (currentView === 'sysml' && cy) {
-                exportPNG();
-            } else {
-                console.error('No SVG available for export');
-            }
+            console.error('No SVG available for export');
             return;
         }
         const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
@@ -313,15 +291,6 @@ export function createExportHandler(opts: ExportHandlerOpts) {
      * Returns null if no SVG is available (e.g. placeholder or loading).
      */
     function getSvgStringForExport(): string | null {
-        const { currentView, cy } = getViewState();
-
-        if (currentView === 'sysml' && cy) {
-            if (typeof (cy as any).svg === 'function') {
-                return (cy as any).svg({ scale: 1, full: true });
-            }
-            return null;
-        }
-
         const svgElement = document.querySelector('#visualization svg') as SVGSVGElement | null;
         if (!svgElement) return null;
 

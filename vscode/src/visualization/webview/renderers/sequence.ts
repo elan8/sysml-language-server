@@ -5,6 +5,7 @@
 
 import type { RenderContext } from '../types';
 import { isLibraryValidated, isActorElement, renderActorGlyph } from '../shared';
+import { postJumpToElement } from '../jumpToElement';
 
 declare const d3: any;
 
@@ -52,7 +53,7 @@ export function renderSequenceView(ctx: RenderContext, data: any): void {
             .style('font-weight', 'bold')
             .style('fill', 'var(--vscode-editor-foreground)')
             .on('click', () => {
-                postMessage({ command: 'jumpToElement', elementName: diagram.name });
+                postJumpToElement(postMessage, { name: diagram.name, id: diagram.id });
             })
             .style('cursor', 'pointer');
 
@@ -130,7 +131,7 @@ export function renderSequenceView(ctx: RenderContext, data: any): void {
 
             participantGroup.on('click', function (event: any) {
                 event.stopPropagation();
-                postMessage({ command: 'jumpToElement', elementName: participant.name });
+                postJumpToElement(postMessage, { name: participant.name, id: participant.id || participant.element?.id });
             })
                 .on('dblclick', function (event: any) {
                     event.stopPropagation();
@@ -166,7 +167,7 @@ export function renderSequenceView(ctx: RenderContext, data: any): void {
             const messageGroup = diagramGroup.append('g')
                 .attr('class', 'sequence-message')
                 .on('click', () => {
-                    postMessage({ command: 'jumpToElement', elementName: message.name });
+                    postJumpToElement(postMessage, { name: message.name, id: message.id });
                 })
                 .style('cursor', 'pointer');
 

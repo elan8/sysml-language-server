@@ -36,7 +36,10 @@ export function createMessageDispatcher(ctx: MessageHandlerContext): (msg: Webvi
                 handlers.logWebviewMessage(message.level, message.args ?? []);
                 break;
             case 'jumpToElement':
-                handlers.jumpToElement(message.elementName, message.skipCentering, message.parentContext);
+                getOutputChannel().appendLine(
+                    `[jumpToElement] elementName="${message.elementName}" elementQualifiedName="${message.elementQualifiedName ?? "(none)"}"`
+                );
+                handlers.jumpToElement(message.elementName, message.skipCentering, message.parentContext, message.elementQualifiedName);
                 break;
             case 'renameElement':
                 handlers.renameElement(message.oldName, message.newName);
@@ -130,7 +133,7 @@ export function createMessageHandlers(context: MessageHandlerContext) {
         }
     }
 
-    async function jumpToElement(elementName: string, skipCentering: boolean = false, parentContext?: string) {
+    async function jumpToElement(elementName: string, skipCentering: boolean = false, parentContext?: string, elementQualifiedName?: string) {
         setNavigating(true);
 
         let element: SysMLElement | undefined;
@@ -139,6 +142,7 @@ export function createMessageHandlers(context: MessageHandlerContext) {
             document.uri.toString(),
             elementName,
             parentContext,
+            elementQualifiedName,
         );
         if (dto) {
             element = {

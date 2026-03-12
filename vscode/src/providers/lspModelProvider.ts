@@ -132,13 +132,15 @@ export class LspModelProvider {
   }
 
   /**
-   * Find an element by name in the model. Searches graph.nodes and optionally
-   * scopes by parentContext (qualified name or name of parent).
+   * Find an element by name in the model. When elementQualifiedName is provided,
+   * looks up by id directly (disambiguates package vs part def with same name).
+   * Otherwise searches by name and optionally scopes by parentContext.
    */
   async findElement(
     uri: string,
     elementName: string,
     parentContext?: string,
+    elementQualifiedName?: string,
     token?: vscode.CancellationToken
   ): Promise<SysMLElementDTO | undefined> {
     const result = await this.getModel(uri, ["graph"], token);
@@ -146,6 +148,28 @@ export class LspModelProvider {
       return undefined;
     }
     const nodes = result.graph.nodes;
+
+    if (elementQualifiedName) {
+      const byId = nodes.find((n) => (n.id || "").toLowerCase() === elementQualifiedName.toLowerCase());
+      if (byId) {
+        log("findElement: found by id", elementQualifiedName);
+        return graphNodeToElementDTO(byId, result.graph);
+      }
+      const matchingByName = nodes.filter((n) => (n.name || "").toLowerCase() === (elementName || "").toLowerCase());
+      log(
+        "findElement: no match for id",
+        JSON.stringify(elementQualifiedName),
+        "graph has",
+        nodes.length,
+        "nodes;",
+        matchingByName.length,
+        "with name",
+        elementName,
+        "-> ids:",
+        matchingByName.slice(0, 5).map((n) => n.id)
+      );
+    }
+
     const byName = new Map<string, typeof nodes>();
     for (const n of nodes) {
       const key = (n.name || "").toLowerCase();

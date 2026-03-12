@@ -519,9 +519,5 @@ export function getVisualizerStyles(): string {
         opacity: 0.5;
     }
 
-    #sysml-cytoscape {
-        width: 100%;
-        height: 100%;
-    }
 `;
 }

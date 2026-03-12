@@ -20,7 +20,7 @@ async function build() {
             define: {
                 'process.env.NODE_ENV': '"production"',
             },
-            // d3, cytoscape, elk are loaded via <script> tags before this bundle; webview code uses them as globals
+            // d3, elk are loaded via <script> tags before this bundle; webview code uses them as globals
         });
         console.log(`Webview bundle written to ${outFile}`);
     } catch (err) {

@@ -901,27 +901,32 @@ impl LanguageServer for Backend {
             }));
         }
 
-        // Look up in symbol table: current file first, then others.
-        if let Some(entry) = state
+        // Look up in symbol table: collect all matches (same file first) to handle name collisions.
+        let same_file: Vec<_> = state
             .symbol_table
             .iter()
-            .find(|e| e.name == word && e.uri == uri_norm)
-        {
-            let value = symbol_hover_markdown(entry, false);
-            return Ok(Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value,
-                }),
-                range: Some(range),
-            }));
-        }
-        if let Some(entry) = state
+            .filter(|e| e.name == word && e.uri == uri_norm)
+            .collect();
+        let other_files: Vec<_> = state
             .symbol_table
             .iter()
-            .find(|e| e.name == word && e.uri != uri_norm)
-        {
-            let value = symbol_hover_markdown(entry, true);
+            .filter(|e| e.name == word && e.uri != uri_norm)
+            .collect();
+        let all_matches = if same_file.is_empty() { &other_files } else { &same_file };
+        if let Some(entry) = all_matches.first() {
+            let value = if all_matches.len() > 1 {
+                let mut md = format!("**{}** — {} definitions (use Go to Definition to choose):\n\n", word, all_matches.len());
+                for e in all_matches.iter() {
+                    let kind = e.detail.as_deref().unwrap_or("element");
+                    let container = e.container_name.as_deref().unwrap_or("(top level)");
+                    md.push_str(&format!("• `{}` in `{}`\n", kind, container));
+                }
+                md.push_str("\n");
+                md.push_str(&symbol_hover_markdown(entry, entry.uri != uri_norm));
+                md
+            } else {
+                symbol_hover_markdown(entry, entry.uri != uri_norm)
+            };
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -1008,26 +1013,25 @@ impl LanguageServer for Backend {
             }
         }
 
-        // Fall back to symbol table (same file first, then rest of workspace).
-        if let Some(entry) = state
+        // Fall back to symbol table: collect all matches to handle name collisions (e.g. package and part def same name).
+        let same_file: Vec<_> = state
             .symbol_table
             .iter()
-            .find(|e| e.name == word && e.uri == uri_norm)
-        {
-            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                uri: entry.uri.clone(),
-                range: entry.range,
-            })));
+            .filter(|e| e.name == word && e.uri == uri_norm)
+            .map(|e| Location { uri: e.uri.clone(), range: e.range })
+            .collect();
+        let other_files: Vec<_> = state
+            .symbol_table
+            .iter()
+            .filter(|e| e.name == word && e.uri != uri_norm)
+            .map(|e| Location { uri: e.uri.clone(), range: e.range })
+            .collect();
+        let locations = if same_file.is_empty() { other_files } else { same_file };
+        if locations.len() == 1 {
+            return Ok(Some(GotoDefinitionResponse::Scalar(locations.into_iter().next().unwrap())));
         }
-        if let Some(entry) = state
-            .symbol_table
-            .iter()
-            .find(|e| e.name == word && e.uri != uri_norm)
-        {
-            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                uri: entry.uri.clone(),
-                range: entry.range,
-            })));
+        if !locations.is_empty() {
+            return Ok(Some(GotoDefinitionResponse::Array(locations)));
         }
         Ok(None)
     }
@@ -1047,15 +1051,13 @@ impl LanguageServer for Backend {
             None => return Ok(None),
         };
 
-        let mut def_location: Option<(Url, Range)> = None;
+        let mut def_locations: Vec<(Url, Range)> = Vec::new();
         for (u, entry) in state.index.iter() {
             if let Some(ref doc) = entry.parsed {
-                if let Some((_, range)) = collect_definition_ranges(doc)
-                    .into_iter()
-                    .find(|(name, _)| name == &word)
-                {
-                    def_location = Some((u.clone(), range));
-                    break;
+                for (name, range) in collect_definition_ranges(doc) {
+                    if name == word {
+                        def_locations.push((u.clone(), range));
+                    }
                 }
             }
         }
@@ -1071,7 +1073,7 @@ impl LanguageServer for Backend {
         }
 
         if !include_declaration {
-            if let Some((def_uri, def_range)) = &def_location {
+            for (def_uri, def_range) in &def_locations {
                 locations.retain(|loc| !(loc.uri == *def_uri && loc.range == *def_range));
             }
         }

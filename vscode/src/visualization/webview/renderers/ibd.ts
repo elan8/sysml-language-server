@@ -6,6 +6,7 @@
 
 import type { RenderContext } from '../types';
 import { GENERAL_VIEW_PALETTE } from '../constants';
+import { postJumpToElement } from '../jumpToElement';
 import { getTypeColor, isLibraryValidated } from '../shared';
 
 declare const d3: any;
@@ -1342,7 +1343,7 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
             clickedPart.select('rect')
                 .style('stroke', '#FFD700')
                 .style('stroke-width', '3px');
-            postMessage({ command: 'jumpToElement', elementName: part.name, skipCentering: true });
+            postJumpToElement(postMessage, { name: part.name, id: part.qualifiedName || part.id }, { skipCentering: true });
         })
         .on('dblclick', function(event: any) {
             event.stopPropagation();

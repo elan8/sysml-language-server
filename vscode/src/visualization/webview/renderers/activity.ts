@@ -4,6 +4,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type { RenderContext } from '../types';
+import { postJumpToElement } from '../jumpToElement';
 
 declare const d3: any;
 
@@ -390,11 +391,7 @@ export function renderActivityView(ctx: RenderContext, data: any): void {
 
     function handleActionClick(action: any) {
         if (action && action.name) {
-            postMessage({
-                command: 'jumpToElement',
-                elementName: action.name,
-                parentContext: diagram.name
-            });
+            postJumpToElement(postMessage, { name: action.name, id: action.id }, { parentContext: diagram.name });
         }
     }
 
