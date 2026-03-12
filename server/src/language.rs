@@ -288,16 +288,29 @@ pub(crate) fn selection_contained_in(mut selection: Range, full: Range) -> Range
 pub fn collect_definition_ranges(root: &RootNamespace) -> Vec<(String, Range)> {
     let mut out = Vec::new();
     for node in &root.elements {
-        let elements = match &node.value {
-            RootElement::Package(p) => match &p.body {
-                PackageBody::Brace { elements } => elements,
-                _ => continue,
-            },
-            RootElement::Namespace(n) => match &n.body {
-                PackageBody::Brace { elements } => elements,
-                _ => continue,
-            },
+        let (name, range, elements) = match &node.value {
+            RootElement::Package(p) => {
+                let name = identification_name(&p.identification);
+                let range = span_to_range(&p.span);
+                let elements = match &p.body {
+                    PackageBody::Brace { elements } => elements,
+                    _ => continue,
+                };
+                (name, range, elements)
+            }
+            RootElement::Namespace(n) => {
+                let name = identification_name(&n.identification);
+                let range = span_to_range(&n.span);
+                let elements = match &n.body {
+                    PackageBody::Brace { elements } => elements,
+                    _ => continue,
+                };
+                (name, range, elements)
+            }
         };
+        if !name.is_empty() {
+            out.push((name, range));
+        }
         for el in elements {
             collect_definition_ranges_from_element(el, &mut out);
         }
@@ -490,20 +503,60 @@ pub fn collect_model_elements(_root: &RootNamespace) -> Vec<ModelElement> {
 pub fn collect_document_symbols(root: &RootNamespace) -> Vec<DocumentSymbol> {
     let mut out = Vec::new();
     for node in &root.elements {
-        let elements = match &node.value {
-            RootElement::Package(p) => match &p.body {
-                PackageBody::Brace { elements } => elements,
-                _ => continue,
-            },
-            RootElement::Namespace(n) => match &n.body {
-                PackageBody::Brace { elements } => elements,
-                _ => continue,
-            },
-        };
-        for el in elements {
-            if let Some(sym) = document_symbol_from_element(el) {
-                out.push(sym);
+        let sym = match &node.value {
+            RootElement::Package(p) => {
+                let name = identification_name(&p.identification);
+                let name = if name.is_empty() {
+                    "(top level)".to_string()
+                } else {
+                    name
+                };
+                let range = span_to_range(&p.span);
+                let children = match &p.body {
+                    PackageBody::Brace { elements } => {
+                        elements.iter().filter_map(document_symbol_from_element).collect()
+                    }
+                    _ => vec![],
+                };
+                Some(DocumentSymbol {
+                    name,
+                    detail: Some("package".to_string()),
+                    kind: SymbolKind::MODULE,
+                    tags: None,
+                    deprecated: None,
+                    range,
+                    selection_range: range,
+                    children: Some(children),
+                })
             }
+            RootElement::Namespace(n) => {
+                let name = identification_name(&n.identification);
+                let name = if name.is_empty() {
+                    "(top level)".to_string()
+                } else {
+                    name
+                };
+                let range = span_to_range(&n.span);
+                let children = match &n.body {
+                    PackageBody::Brace { elements } => {
+                        elements.iter().filter_map(document_symbol_from_element).collect()
+                    }
+                    _ => vec![],
+                };
+                Some(DocumentSymbol {
+                    name,
+                    detail: Some("namespace".to_string()),
+                    kind: SymbolKind::MODULE,
+                    tags: None,
+                    deprecated: None,
+                    range,
+                    selection_range: range,
+                    children: Some(children),
+                })
+            }
+        };
+        if let Some(s) = sym {
+            out.push(s);
         }
     }
     out
@@ -961,16 +1014,27 @@ pub fn suggest_wrap_in_package(source: &str, uri: &Url) -> Option<CodeAction> {
 pub fn collect_named_elements(root: &RootNamespace) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for node in &root.elements {
-        let elements = match &node.value {
-            RootElement::Package(p) => match &p.body {
-                PackageBody::Brace { elements } => elements,
-                _ => continue,
-            },
-            RootElement::Namespace(n) => match &n.body {
-                PackageBody::Brace { elements } => elements,
-                _ => continue,
-            },
+        let (name, elements) = match &node.value {
+            RootElement::Package(p) => {
+                let name = identification_name(&p.identification);
+                let elements = match &p.body {
+                    PackageBody::Brace { elements } => elements,
+                    _ => continue,
+                };
+                (name, elements)
+            }
+            RootElement::Namespace(n) => {
+                let name = identification_name(&n.identification);
+                let elements = match &n.body {
+                    PackageBody::Brace { elements } => elements,
+                    _ => continue,
+                };
+                (name, elements)
+            }
         };
+        if !name.is_empty() {
+            out.push((name.clone(), format!("package '{}'", name)));
+        }
         for el in elements {
             collect_named_from_element(el, &mut out);
         }
@@ -1227,11 +1291,13 @@ mod tests {
 
     #[test]
     fn test_collect_definition_ranges_part_def() {
-        let text = "part def Engine { }";
+        // sysml-parser requires package/namespace at root; part def must be nested
+        let text = "package P { part def Engine { } }";
         let root = sysml_parser::parse(text).expect("parse");
         let ranges = collect_definition_ranges(&root);
-        assert_eq!(ranges.len(), 1);
-        assert_eq!(ranges[0].0, "Engine");
+        assert_eq!(ranges.len(), 2); // package P + part Engine
+        assert_eq!(ranges[0].0, "P");
+        assert_eq!(ranges[1].0, "Engine");
     }
 
     #[test]

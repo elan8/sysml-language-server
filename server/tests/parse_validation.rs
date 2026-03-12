@@ -74,3 +74,26 @@ fn parse_with_diagnostics_surveillance_drone_has_no_errors() {
         "expected at least one root element (package)"
     );
 }
+
+#[test]
+fn parse_with_diagnostics_invalid_returns_errors() {
+    // Try several invalid inputs - sysml-parser's parse_with_diagnostics may not report
+    // errors for all invalid cases (e.g. incomplete "part def X " can parse partially).
+    let invalid_inputs = [
+        "package P { } }",           // extra closing brace
+        "package P { xyz }",         // invalid keyword
+        "package P { part def }",     // part def without name
+    ];
+    let mut any_has_errors = false;
+    for content in invalid_inputs {
+        let result = sysml_parser::parse_with_diagnostics(content);
+        if !result.errors.is_empty() {
+            any_has_errors = true;
+            break;
+        }
+    }
+    assert!(
+        any_has_errors,
+        "at least one invalid SysML input should produce diagnostics"
+    );
+}

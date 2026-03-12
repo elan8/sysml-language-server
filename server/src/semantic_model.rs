@@ -1223,7 +1223,7 @@ mod tests {
             "expected cmd port node"
         );
 
-        let _edges = g.edges_for_uri_as_strings(&uri);
+        let edges = g.edges_for_uri_as_strings(&uri);
         let conn_edges: Vec<_> = edges
             .iter()
             .filter(|(_, _, kind, _)| *kind == RelationshipKind::Connection)
