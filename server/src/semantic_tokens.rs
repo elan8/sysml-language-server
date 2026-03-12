@@ -100,6 +100,9 @@ fn collect_semantic_ranges_package_body_element(
         }
         PBE::PartDef(pd_node) => {
             out.push((span_to_source_range(&pd_node.span), TYPE_CLASS));
+            if let Some(ref s) = pd_node.value.specializes_span {
+                out.push((span_to_source_range(s), TYPE_TYPE));
+            }
             match &pd_node.body {
                 PartDefBody::Brace { elements } => {
                     for n in elements {
@@ -664,11 +667,8 @@ fn apply_ast_semantic_ranges(
                 if span_len > 2 * *len {
                     continue;
                 }
-                // Never override VARIABLE -> TYPE: wrong parser type_ref spans often cover the
-                // property name (e.g. " current " or "out velocity :"), so keep VARIABLE for names.
-                if *type_idx == TYPE_VARIABLE && ast_type == TYPE_TYPE {
-                    continue;
-                }
+                // Allow VARIABLE -> TYPE when the AST range is tight (e.g. specializes_span,
+                // type_ref_span); the span_len check above already skips wrong coarse spans.
                 // Never override TYPE -> PROPERTY: PartUsage/PortUsage AST ranges use the whole
                 // declaration span (e.g. "cmd : MotorCommandPort {") as PROPERTY, so the type name
                 // is contained in that span and would be wrongly overridden. Keep TYPE for type
