@@ -35,6 +35,15 @@ pub fn collect_definition_ranges(root: &RootNamespace) -> Vec<(String, Range)> {
                 };
                 (name, range, elements)
             }
+            RootElement::LibraryPackage(lp) => {
+                let name = identification_name(&lp.identification);
+                let range = span_to_range(&lp.span);
+                let elements = match &lp.body {
+                    PackageBody::Brace { elements } => elements,
+                    _ => continue,
+                };
+                (name, range, elements)
+            }
             RootElement::Import(_) => continue,
         };
         if !name.is_empty() {
@@ -264,6 +273,31 @@ pub fn collect_document_symbols(root: &RootNamespace) -> Vec<DocumentSymbol> {
                 Some(DocumentSymbol {
                     name,
                     detail: Some("namespace".to_string()),
+                    kind: SymbolKind::MODULE,
+                    tags: None,
+                    deprecated: None,
+                    range,
+                    selection_range: range,
+                    children: Some(children),
+                })
+            }
+            RootElement::LibraryPackage(lp) => {
+                let name = identification_name(&lp.identification);
+                let name = if name.is_empty() {
+                    "(top level)".to_string()
+                } else {
+                    name
+                };
+                let range = span_to_range(&lp.span);
+                let children = match &lp.body {
+                    PackageBody::Brace { elements } => {
+                        elements.iter().filter_map(document_symbol_from_element).collect()
+                    }
+                    _ => vec![],
+                };
+                Some(DocumentSymbol {
+                    name,
+                    detail: Some("library package".to_string()),
                     kind: SymbolKind::MODULE,
                     tags: None,
                     deprecated: None,
@@ -718,6 +752,14 @@ pub fn collect_named_elements(root: &RootNamespace) -> Vec<(String, String)> {
             RootElement::Namespace(n) => {
                 let name = identification_name(&n.identification);
                 let elements = match &n.body {
+                    PackageBody::Brace { elements } => elements,
+                    _ => continue,
+                };
+                (name, elements)
+            }
+            RootElement::LibraryPackage(lp) => {
+                let name = identification_name(&lp.identification);
+                let elements = match &lp.body {
                     PackageBody::Brace { elements } => elements,
                     _ => continue,
                 };

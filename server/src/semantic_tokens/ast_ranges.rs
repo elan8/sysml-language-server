@@ -24,6 +24,10 @@ pub fn ast_semantic_ranges(root: &RootNamespace) -> Vec<(SourceRange, u32)> {
                 PackageBody::Brace { elements } => elements,
                 _ => continue,
             },
+            RootElement::LibraryPackage(lp) => match &lp.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
             RootElement::Import(_) => continue,
         };
         for el in elements {

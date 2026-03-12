@@ -171,6 +171,10 @@ pub fn extract_activity_diagrams(root: &RootNamespace) -> Vec<ActivityDiagramDto
                 PackageBody::Brace { elements } => elements,
                 _ => continue,
             },
+            RootElement::LibraryPackage(lp) => match &lp.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
             RootElement::Import(_) => continue,
         };
         for action in collect_action_defs_from_elements(elements) {
@@ -245,6 +249,10 @@ pub fn extract_sequence_diagrams(root: &RootNamespace) -> Vec<SequenceDiagramDto
                 _ => continue,
             },
             RootElement::Namespace(n) => match &n.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+            RootElement::LibraryPackage(lp) => match &lp.body {
                 PackageBody::Brace { elements } => elements,
                 _ => continue,
             },
