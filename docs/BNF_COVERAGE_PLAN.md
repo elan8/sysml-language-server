@@ -124,20 +124,19 @@ A phased plan to implement full SysML v2 BNF coverage in sysml-parser, enabling 
 
 ---
 
-## Phase 5: Metadata Annotations
+## Phase 5: Metadata Annotations ✅
 
 **BNF:** `PrefixMetadataAnnotation`, `MetadataUsage`, `MetadataBody` (Clause 8.2.2.27)
 
-**Current gap:** Parser does not handle `@MetadataName { ... }` on usages (e.g. `part seatBelt[2] {@Safety{isMandatory = true;}}`).
+**Completed:**
+1. **MetadataUsage** — Parse `@` Identification (`:` Type)? MetadataBody. Added as `MetadataAnnotation` in `PartUsageBodyElement`.
+2. **MetadataBody** — `;` or `{` ConnectBody `}` (reuses connect_body for `;` or `{ ... }`).
+3. **Wire annotations** — Metadata annotations on part usages via `part_usage_body_element`.
+4. **Filter expressions** — `@MetadataName` in expressions (e.g. `filter @Safety;`), plus `or`/`and` keywords for logical operators.
 
-**Tasks:**
-1. **MetadataUsage** — Parse `@` Identification (`:` Type)? MetadataBody. Add as optional suffix on PartUsage, AttributeUsage, etc.
-2. **MetadataBody** — `;` or `{` DefinitionMember | MetadataBodyUsageMember | AliasMember | Import `}`.
-3. **Wire annotations** — Allow metadata annotations on part/port/attribute usages per BNF.
+**Validation files:** 13b-Safety and Security Features Element Group.sysml passes. 13b-1, 13b-2 still need Phase 2 (metadata def) and Phase 6 (filter chains `**`, `::`, import filter `**[@Safety]`).
 
-**Validation files unlocked:** 11b, 13b-1, 13b-2 (and improves 11a).
-
-**Files:** `sysml-parser/src/parser/` (new `metadata_annotation.rs` or extend `lex.rs`), `part.rs`, `attribute.rs`
+**Files:** `sysml-parser/src/ast.rs`, `sysml-parser/src/parser/metadata_annotation.rs`, `sysml-parser/src/parser/part.rs`, `sysml-parser/src/parser/expr.rs`
 
 ---
 
