@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-12
+
+### Changed
+
+- **New sysml-parser** — Switched to a new sysml-parser dependency for improved parsing and alignment with SysML v2.
+
 ## [0.3.0] - 2026-03-10
 
 ### Added
@@ -58,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parser is aligned with the SysML v2 Release validation suite; it does not claim full OMG spec compliance.
 - Some constructs may have incomplete semantic token or outline coverage.
 
+[0.4.0]: https://github.com/elan8/sysml-language-server/releases/tag/v0.4.0
 [0.3.0]: https://github.com/elan8/sysml-language-server/releases/tag/v0.3.0
 [0.2.2]: https://github.com/elan8/sysml-language-server/releases/tag/v0.2.2
 [0.2.1]: https://github.com/elan8/sysml-language-server/releases/tag/v0.2.1
