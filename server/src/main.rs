@@ -1396,7 +1396,7 @@ impl Backend {
         })
     }
 
-    async fn sysml_server_stats(&self, _params: serde_json::Value) -> Result<SysmlServerStatsDto> {
+    async fn sysml_server_stats(&self) -> Result<SysmlServerStatsDto> {
         let state = self.state.read().await;
         Ok(SysmlServerStatsDto {
             uptime: self.start_time.elapsed().as_secs(),
@@ -1409,7 +1409,7 @@ impl Backend {
         })
     }
 
-    async fn sysml_clear_cache(&self, _params: serde_json::Value) -> Result<SysmlClearCacheResultDto> {
+    async fn sysml_clear_cache(&self) -> Result<SysmlClearCacheResultDto> {
         let mut state = self.state.write().await;
         let docs = state.index.len();
         let syms = state.symbol_table.len();

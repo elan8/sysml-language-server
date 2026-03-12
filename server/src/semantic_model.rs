@@ -11,8 +11,7 @@ use petgraph::Directed;
 use std::collections::HashMap;
 use sysml_parser::ast::{
     PackageBodyElement, PackageBody, PartDefBody, PartDefBodyElement, PartUsageBody,
-    PartUsageBodyElement, PortDefBody, PortDefBodyElement, PortBody, InterfaceDefBody,
-    InterfaceDefBodyElement, ActionDefBody, ActionUsageBody, Connect, Bind,
+    PartUsageBodyElement, PortDefBody, PortDefBodyElement, InterfaceDefBody, RootElement,
 };
 use sysml_parser::RootNamespace;
 use tower_lsp::lsp_types::{Position, Range, Url};
@@ -20,7 +19,7 @@ use tower_lsp::lsp_types::{Position, Range, Url};
 use tower_lsp::lsp_types::SymbolKind;
 
 use crate::ast_util::{identification_name, span_to_range};
-use crate::language::{selection_contained_in, SymbolEntry};
+use crate::language::SymbolEntry;
 
 /// Unique identifier for a node in the semantic graph.
 /// Combines document URI and qualified name for workspace-wide uniqueness.
@@ -305,7 +304,19 @@ impl SemanticGraph {
 pub fn build_graph_from_doc(root: &RootNamespace, uri: &Url) -> SemanticGraph {
     let mut g = SemanticGraph::new();
     for node in &root.elements {
-        build_from_package_body_element(node, uri, None, None, root, &mut g);
+        let elements = match &node.value {
+            RootElement::Package(p) => match &p.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+            RootElement::Namespace(n) => match &n.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+        };
+        for el in elements {
+            build_from_package_body_element(el, uri, None, None, root, &mut g);
+        }
     }
     g
 }
@@ -423,7 +434,7 @@ fn build_from_package_body_element(
             let qualified = qualified_name(container_prefix, &name);
             let range = span_to_range(&id_node.span);
             add_node_and_recurse(g, uri, &qualified, "interface", name.clone(), range, HashMap::new(), parent_id);
-            let node_id = NodeId::new(uri, &qualified);
+            let _node_id = NodeId::new(uri, &qualified);
             if let InterfaceDefBody::Brace { elements } = &id_node.body {
                 for _ in elements {
                     // EndDecl, RefDecl, ConnectStmt - we don't add graph nodes for them for now
@@ -453,6 +464,7 @@ fn build_from_package_body_element(
             add_node_and_recurse(g, uri, &qualified, "action", name.clone(), range, HashMap::new(), parent_id);
         }
         PBE::Import(_) | PBE::AliasDef(_) => {}
+        _ => {}
     }
 }
 
@@ -486,6 +498,7 @@ fn build_from_part_def_body_element(
             }
             add_node_and_recurse(g, uri, &qualified, "port", name.clone(), range, attrs, Some(parent_id));
         }
+        _ => {}
     }
 }
 
@@ -554,6 +567,7 @@ fn build_from_part_usage_body_element(
             add_edge_if_both_exist(g, uri, &src, &tgt, RelationshipKind::Bind);
         }
         PUBE::InterfaceUsage(_) | PUBE::Perform(_) => {}
+        _ => {}
     }
 }
 
@@ -585,6 +599,7 @@ fn build_from_port_def_body_element(
             }
             add_node_and_recurse(g, uri, &qualified, "port", name.clone(), range, attrs, Some(parent_id));
         }
+        _ => {}
     }
 }
 
@@ -638,7 +653,22 @@ fn find_part_def_in_root<'a>(
     qualified: &str,
 ) -> Option<(&'a sysml_parser::Node<sysml_parser::PartDef>, String)> {
     let mut prefix = String::new();
-    find_part_def_in_elements(&root.elements, &mut prefix, qualified)
+    for node in &root.elements {
+        let elements = match &node.value {
+            RootElement::Package(p) => match &p.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+            RootElement::Namespace(n) => match &n.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+        };
+        if let Some(found) = find_part_def_in_elements(elements, &mut prefix, qualified) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn find_part_def_in_elements<'a>(
@@ -686,7 +716,7 @@ fn expand_typed_part_usage(
     uri: &Url,
     usage_qualified: &str,
     type_ref: &str,
-    container_prefix: Option<&str>,
+    _container_prefix: Option<&str>,
     parent_id: &NodeId,
     g: &mut SemanticGraph,
 ) {
@@ -729,6 +759,7 @@ fn expand_part_def_members(
                     let qualified = format!("{}::{}", container_qualified, n.name);
                     add_node_if_not_exists(g, uri, &qualified, "port", n.name.clone(), parent_id);
                 }
+                _ => {}
             }
         }
     }

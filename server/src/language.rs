@@ -4,8 +4,7 @@
 
 use sysml_parser::ast::{
     PackageBodyElement, PackageBody, PartDefBody, PartDefBodyElement, PartUsageBody,
-    PartUsageBodyElement, PortDefBody, PortDefBodyElement, PortBody, InterfaceDefBody,
-    InterfaceDefBodyElement, ActionDefBody, ActionUsageBody,
+    PartUsageBodyElement, PortDefBody, PortDefBodyElement, RootElement,
 };
 use sysml_parser::RootNamespace;
 use crate::ast_util::{identification_name, span_to_range};
@@ -289,7 +288,19 @@ pub(crate) fn selection_contained_in(mut selection: Range, full: Range) -> Range
 pub fn collect_definition_ranges(root: &RootNamespace) -> Vec<(String, Range)> {
     let mut out = Vec::new();
     for node in &root.elements {
-        collect_definition_ranges_from_element(node, &mut out);
+        let elements = match &node.value {
+            RootElement::Package(p) => match &p.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+            RootElement::Namespace(n) => match &n.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+        };
+        for el in elements {
+            collect_definition_ranges_from_element(el, &mut out);
+        }
     }
     out
 }
@@ -360,6 +371,7 @@ fn collect_definition_ranges_from_element(
             out.push((p.name.clone(), span_to_range(&p.span)));
         }
         PBE::Import(_) | PBE::AliasDef(_) => {}
+        _ => {}
     }
 }
 
@@ -371,6 +383,7 @@ fn collect_definition_range_part_def_body(
     match &node.value {
         PDBE::AttributeDef(n) => out.push((n.name.clone(), span_to_range(&n.span))),
         PDBE::PortUsage(n) => out.push((n.name.clone(), span_to_range(&n.span))),
+        _ => {}
     }
 }
 
@@ -401,6 +414,7 @@ fn collect_definition_range_port_def_body(
     use sysml_parser::ast::PortDefBodyElement as PDBE;
     match &node.value {
         PDBE::PortUsage(n) => out.push((n.name.clone(), span_to_range(&n.span))),
+        _ => {}
     }
 }
 
@@ -476,8 +490,20 @@ pub fn collect_model_elements(_root: &RootNamespace) -> Vec<ModelElement> {
 pub fn collect_document_symbols(root: &RootNamespace) -> Vec<DocumentSymbol> {
     let mut out = Vec::new();
     for node in &root.elements {
-        if let Some(sym) = document_symbol_from_element(node) {
-            out.push(sym);
+        let elements = match &node.value {
+            RootElement::Package(p) => match &p.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+            RootElement::Namespace(n) => match &n.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+        };
+        for el in elements {
+            if let Some(sym) = document_symbol_from_element(el) {
+                out.push(sym);
+            }
         }
     }
     out
@@ -719,6 +745,7 @@ fn document_symbol_from_element(node: &sysml_parser::Node<PackageBodyElement>) -
             children: None,
         }),
         PBE::Import(_) | PBE::AliasDef(_) => None,
+        _ => None,
     }
 }
 
@@ -748,6 +775,7 @@ fn document_symbols_from_part_def_body(elements: &[sysml_parser::Node<PartDefBod
                 selection_range: range,
                 children: None,
             }),
+            _ => {}
         }
     }
     out
@@ -817,6 +845,7 @@ fn document_symbols_from_port_def_body(elements: &[sysml_parser::Node<PortDefBod
                 selection_range: range,
                 children: None,
             }),
+            _ => {}
         }
     }
     out
@@ -874,13 +903,12 @@ pub fn format_document(source: &str, options: &FormattingOptions) -> Vec<TextEdi
 
 /// Suggests a "Wrap in package" code action when the document has top-level members (one package with empty name and members).
 pub fn suggest_wrap_in_package(source: &str, uri: &Url) -> Option<CodeAction> {
-    use sysml_parser::ast::PackageBodyElement as PBE;
     let root = sysml_parser::parse(source).ok()?;
     let packages: Vec<_> = root
         .elements
         .iter()
         .filter_map(|n| match &n.value {
-            PBE::Package(p) => Some(p),
+            RootElement::Package(p) => Some(p),
             _ => None,
         })
         .collect();
@@ -933,7 +961,19 @@ pub fn suggest_wrap_in_package(source: &str, uri: &Url) -> Option<CodeAction> {
 pub fn collect_named_elements(root: &RootNamespace) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for node in &root.elements {
-        collect_named_from_element(node, &mut out);
+        let elements = match &node.value {
+            RootElement::Package(p) => match &p.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+            RootElement::Namespace(n) => match &n.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+        };
+        for el in elements {
+            collect_named_from_element(el, &mut out);
+        }
     }
     out
 }
@@ -992,6 +1032,7 @@ fn collect_named_from_element(node: &sysml_parser::Node<PackageBodyElement>, out
         }
         PBE::ActionUsage(p) => out.push((p.name.clone(), format!("action usage '{}'", p.name))),
         PBE::Import(_) | PBE::AliasDef(_) => {}
+        _ => {}
     }
 }
 
@@ -1000,6 +1041,7 @@ fn collect_named_from_part_def_body(node: &sysml_parser::Node<PartDefBodyElement
     match &node.value {
         PDBE::AttributeDef(n) => out.push((n.name.clone(), format!("attribute def '{}'", n.name))),
         PDBE::PortUsage(n) => out.push((n.name.clone(), format!("port usage '{}'", n.name))),
+        _ => {}
     }
 }
 

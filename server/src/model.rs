@@ -1,6 +1,6 @@
 //! Activity and sequence diagram extraction for sysml/model response.
 
-use sysml_parser::ast::{PackageBodyElement, PackageBody, ActionDefBody};
+use sysml_parser::ast::{PackageBodyElement, PackageBody, ActionDefBody, RootElement};
 use sysml_parser::{RootNamespace, Span};
 use crate::ast_util::identification_name;
 use serde::Serialize;
@@ -161,8 +161,20 @@ fn collect_action_defs_from_elements(elements: &[sysml_parser::Node<PackageBodyE
 /// Each ActionDef becomes one ActivityDiagramDto; sysml-parser ActionDefBody has InOutDecl only (no statements).
 pub fn extract_activity_diagrams(root: &RootNamespace) -> Vec<ActivityDiagramDto> {
     let mut out = Vec::new();
-    for action in collect_action_defs_from_elements(&root.elements) {
-        out.push(extract_activity_from_action(action));
+    for node in &root.elements {
+        let elements = match &node.value {
+            RootElement::Package(p) => match &p.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+            RootElement::Namespace(n) => match &n.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+        };
+        for action in collect_action_defs_from_elements(elements) {
+            out.push(extract_activity_from_action(action));
+        }
     }
     out
 }
@@ -225,8 +237,20 @@ fn extract_activity_from_action(node: &sysml_parser::Node<sysml_parser::ast::Act
 /// Extracts sequence diagrams from the document (one per ActionDef; no Call/Perform in sysml-parser action body).
 pub fn extract_sequence_diagrams(root: &RootNamespace) -> Vec<SequenceDiagramDto> {
     let mut out = Vec::new();
-    for action in collect_action_defs_from_elements(&root.elements) {
-        out.push(extract_sequence_from_action(action));
+    for node in &root.elements {
+        let elements = match &node.value {
+            RootElement::Package(p) => match &p.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+            RootElement::Namespace(n) => match &n.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+        };
+        for action in collect_action_defs_from_elements(elements) {
+            out.push(extract_sequence_from_action(action));
+        }
     }
     out
 }

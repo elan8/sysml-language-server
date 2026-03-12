@@ -13,7 +13,7 @@ use sysml_parser::ast::{
     ActionDefBody, ActionUsageBody, ActionUsageBodyElement, InterfaceDefBody,
     InterfaceDefBodyElement, PackageBody, PackageBodyElement, PartDefBody,
     PartDefBodyElement, PartUsageBody, PartUsageBodyElement, PortDefBody,
-    PortDefBodyElement,
+    PortDefBodyElement, RootElement,
 };
 use sysml_parser::RootNamespace;
 use tower_lsp::lsp_types::{
@@ -58,7 +58,19 @@ const TYPE_FUNCTION: u32 = 11;
 pub fn ast_semantic_ranges(root: &RootNamespace) -> Vec<(SourceRange, u32)> {
     let mut out = Vec::new();
     for node in &root.elements {
-        collect_semantic_ranges_package_body_element(node, &mut out);
+        let elements = match &node.value {
+            RootElement::Package(p) => match &p.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+            RootElement::Namespace(n) => match &n.body {
+                PackageBody::Brace { elements } => elements,
+                _ => continue,
+            },
+        };
+        for el in elements {
+            collect_semantic_ranges_package_body_element(el, &mut out);
+        }
     }
     out
 }
@@ -154,6 +166,7 @@ fn collect_semantic_ranges_package_body_element(
         PBE::AliasDef(ad_node) => {
             out.push((span_to_source_range(&ad_node.span), TYPE_NAMESPACE));
         }
+        _ => {}
     }
 }
 
@@ -165,6 +178,7 @@ fn collect_semantic_ranges_part_def_body_element(
     match &node.value {
         PDBE::AttributeDef(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
         PDBE::PortUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        _ => {}
     }
 }
 
@@ -185,6 +199,7 @@ fn collect_semantic_ranges_part_usage_body_element(
         }
         PUBE::PortUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
         PUBE::Bind(_) | PUBE::InterfaceUsage(_) | PUBE::Connect(_) | PUBE::Perform(_) => {}
+        _ => {}
     }
 }
 
@@ -195,6 +210,7 @@ fn collect_semantic_ranges_port_def_body_element(
     use sysml_parser::ast::PortDefBodyElement as PDBE;
     match &node.value {
         PDBE::PortUsage(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
+        _ => {}
     }
 }
 
