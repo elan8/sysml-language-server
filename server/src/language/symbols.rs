@@ -111,6 +111,27 @@ fn collect_definition_ranges_from_element(
         PBE::ActionUsage(p) => {
             out.push((p.name.clone(), span_to_range(&p.span)));
         }
+        PBE::ViewDef(p) => {
+            let name = identification_name(&p.identification);
+            if !name.is_empty() {
+                out.push((name, span_to_range(&p.span)));
+            }
+        }
+        PBE::ViewpointDef(p) => {
+            let name = identification_name(&p.identification);
+            if !name.is_empty() {
+                out.push((name, span_to_range(&p.span)));
+            }
+        }
+        PBE::RenderingDef(p) => {
+            let name = identification_name(&p.identification);
+            if !name.is_empty() {
+                out.push((name, span_to_range(&p.span)));
+            }
+        }
+        PBE::ViewUsage(p) => out.push((p.name.clone(), span_to_range(&p.span))),
+        PBE::ViewpointUsage(p) => out.push((p.name.clone(), span_to_range(&p.span))),
+        PBE::RenderingUsage(p) => out.push((p.name.clone(), span_to_range(&p.span))),
         PBE::Import(_) | PBE::AliasDef(_) => {}
         _ => {}
     }
@@ -493,6 +514,84 @@ fn document_symbol_from_element(node: &sysml_parser::Node<PackageBodyElement>) -
             selection_range: range,
             children: None,
         }),
+        PBE::ViewDef(p) => {
+            let name = identification_name(&p.identification);
+            if name.is_empty() {
+                return None;
+            }
+            Some(DocumentSymbol {
+                name,
+                detail: Some("view def".to_string()),
+                kind: SymbolKind::NAMESPACE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            })
+        }
+        PBE::ViewpointDef(p) => {
+            let name = identification_name(&p.identification);
+            if name.is_empty() {
+                return None;
+            }
+            Some(DocumentSymbol {
+                name,
+                detail: Some("viewpoint def".to_string()),
+                kind: SymbolKind::NAMESPACE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            })
+        }
+        PBE::RenderingDef(p) => {
+            let name = identification_name(&p.identification);
+            if name.is_empty() {
+                return None;
+            }
+            Some(DocumentSymbol {
+                name,
+                detail: Some("rendering def".to_string()),
+                kind: SymbolKind::NAMESPACE,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            })
+        }
+        PBE::ViewUsage(p) => Some(DocumentSymbol {
+            name: p.name.clone(),
+            detail: Some("view".to_string()),
+            kind: SymbolKind::NAMESPACE,
+            tags: None,
+            deprecated: None,
+            range,
+            selection_range: range,
+            children: None,
+        }),
+        PBE::ViewpointUsage(p) => Some(DocumentSymbol {
+            name: p.name.clone(),
+            detail: Some("viewpoint".to_string()),
+            kind: SymbolKind::NAMESPACE,
+            tags: None,
+            deprecated: None,
+            range,
+            selection_range: range,
+            children: None,
+        }),
+        PBE::RenderingUsage(p) => Some(DocumentSymbol {
+            name: p.name.clone(),
+            detail: Some("rendering".to_string()),
+            kind: SymbolKind::NAMESPACE,
+            tags: None,
+            deprecated: None,
+            range,
+            selection_range: range,
+            children: None,
+        }),
         PBE::Import(_) | PBE::AliasDef(_) => None,
         _ => None,
     }
@@ -686,6 +785,27 @@ fn collect_named_from_element(node: &sysml_parser::Node<PackageBodyElement>, out
             }
         }
         PBE::ActionUsage(p) => out.push((p.name.clone(), format!("action usage '{}'", p.name))),
+        PBE::ViewDef(p) => {
+            let name = identification_name(&p.identification);
+            if !name.is_empty() {
+                out.push((name.clone(), format!("view def '{}'", name)));
+            }
+        }
+        PBE::ViewpointDef(p) => {
+            let name = identification_name(&p.identification);
+            if !name.is_empty() {
+                out.push((name.clone(), format!("viewpoint def '{}'", name)));
+            }
+        }
+        PBE::RenderingDef(p) => {
+            let name = identification_name(&p.identification);
+            if !name.is_empty() {
+                out.push((name.clone(), format!("rendering def '{}'", name)));
+            }
+        }
+        PBE::ViewUsage(p) => out.push((p.name.clone(), format!("view usage '{}'", p.name))),
+        PBE::ViewpointUsage(p) => out.push((p.name.clone(), format!("viewpoint usage '{}'", p.name))),
+        PBE::RenderingUsage(p) => out.push((p.name.clone(), format!("rendering usage '{}'", p.name))),
         PBE::Import(_) | PBE::AliasDef(_) => {}
         _ => {}
     }

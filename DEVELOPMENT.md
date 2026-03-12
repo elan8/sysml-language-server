@@ -27,15 +27,15 @@ npm run compile
 The parser runs a full validation suite over all `.sysml` files in the official [SysML v2 Release](https://github.com/Systems-Modeling/SysML-v2-Release) `sysml/src/validation` directory. The test expects zero parser errors.
 
 - **Standard `cargo test`**: The full validation suite is `#[ignore]`d (slow). It does not run by default.
-- **CI**: The validation job clones the release and runs `cargo test -p kerml-parser -- --include-ignored`.
-- **Locally**: Clone the release and run the ignored tests when you want to validate:
+- **CI**: When sysml-parser is used as a standalone repo, its own CI (sysml-parser/.github/workflows/ci.yml) clones the release and runs `cargo test -- --include-ignored`. When sysml-parser is part of this workspace, run the validation locally (see below).
+- **Locally**: The sysml-parser crate has a sysml-v2-release submodule. Initialize it and run the ignored tests:
 
   ```bash
-  git clone --depth 1 https://github.com/Systems-Modeling/SysML-v2-Release.git -b 2026-01 temp/SysML-v2-Release-2026-01
-  cargo test -p kerml-parser -- test_full_validation_suite -- --ignored
+  cd sysml-parser && git submodule update --init sysml-v2-release
+  cargo test -p sysml-parser -- test_full_validation_suite -- --ignored
   ```
 
-  Or set `SYSML_V2_RELEASE_DIR` to the clone root. If the validation directory is not present, the test returns early without failing.
+  Or set `SYSML_V2_RELEASE_DIR` to a SysML-v2-Release clone root. If the validation directory is not present, the test returns early without failing.
 
 ## Running tests
 
@@ -45,7 +45,7 @@ The parser runs a full validation suite over all `.sysml` files in the official 
 cargo test
 ```
 
-This runs workspace tests including kerml-parser unit/validation tests and sysml-language-server LSP integration tests.
+This runs workspace tests including sysml-parser unit/validation tests and sysml-language-server LSP integration tests.
 
 To run only LSP integration tests:
 

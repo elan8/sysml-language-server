@@ -213,6 +213,42 @@ fn build_from_package_body_element(
             let range = span_to_range(&au_node.span);
             add_node_and_recurse(g, uri, &qualified, "action", name.clone(), range, HashMap::new(), parent_id);
         }
+        PBE::ViewDef(vd_node) => {
+            let name = identification_name(&vd_node.identification);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "view def");
+            let range = span_to_range(&vd_node.span);
+            add_node_and_recurse(g, uri, &qualified, "view def", name.clone(), range, HashMap::new(), parent_id);
+        }
+        PBE::ViewpointDef(vpd_node) => {
+            let name = identification_name(&vpd_node.identification);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "viewpoint def");
+            let range = span_to_range(&vpd_node.span);
+            add_node_and_recurse(g, uri, &qualified, "viewpoint def", name.clone(), range, HashMap::new(), parent_id);
+        }
+        PBE::RenderingDef(rd_node) => {
+            let name = identification_name(&rd_node.identification);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "rendering def");
+            let range = span_to_range(&rd_node.span);
+            add_node_and_recurse(g, uri, &qualified, "rendering def", name.clone(), range, HashMap::new(), parent_id);
+        }
+        PBE::ViewUsage(vu_node) => {
+            let name = &vu_node.name;
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "view");
+            let range = span_to_range(&vu_node.span);
+            add_node_and_recurse(g, uri, &qualified, "view", name.clone(), range, HashMap::new(), parent_id);
+        }
+        PBE::ViewpointUsage(vpu_node) => {
+            let name = &vpu_node.name;
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "viewpoint");
+            let range = span_to_range(&vpu_node.span);
+            add_node_and_recurse(g, uri, &qualified, "viewpoint", name.clone(), range, HashMap::new(), parent_id);
+        }
+        PBE::RenderingUsage(ru_node) => {
+            let name = &ru_node.name;
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "rendering");
+            let range = span_to_range(&ru_node.span);
+            add_node_and_recurse(g, uri, &qualified, "rendering", name.clone(), range, HashMap::new(), parent_id);
+        }
         PBE::Import(_) | PBE::AliasDef(_) => {}
         _ => {}
     }

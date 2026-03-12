@@ -136,6 +136,24 @@ fn collect_semantic_ranges_package_body_element(
         PBE::AliasDef(ad_node) => {
             out.push((span_to_source_range(&ad_node.span), TYPE_NAMESPACE));
         }
+        PBE::ViewDef(vd_node) => {
+            out.push((span_to_source_range(&vd_node.span), TYPE_NAMESPACE));
+        }
+        PBE::ViewpointDef(vpd_node) => {
+            out.push((span_to_source_range(&vpd_node.span), TYPE_NAMESPACE));
+        }
+        PBE::RenderingDef(rd_node) => {
+            out.push((span_to_source_range(&rd_node.span), TYPE_NAMESPACE));
+        }
+        PBE::ViewUsage(vu_node) => {
+            out.push((span_to_source_range(&vu_node.span), TYPE_PROPERTY));
+        }
+        PBE::ViewpointUsage(vpu_node) => {
+            out.push((span_to_source_range(&vpu_node.span), TYPE_PROPERTY));
+        }
+        PBE::RenderingUsage(ru_node) => {
+            out.push((span_to_source_range(&ru_node.span), TYPE_PROPERTY));
+        }
         _ => {}
     }
 }

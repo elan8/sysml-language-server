@@ -1,6 +1,8 @@
 # Gap Analysis: Replacing kerml-parser with elan8/sysml-parser
 
-This document compares the in-repo **kerml-parser** with the external **[elan8/sysml-parser](https://github.com/elan8/sysml-parser)** and outlines what would need to change to make the replacement feasible.
+> **Status:** Migration complete. kerml-parser has been removed. The server uses sysml-parser (in-repo at `sysml-parser/`). The validation suite has been migrated to sysml-parser.
+
+This document compares the in-repo **kerml-parser** (removed) with the external **[elan8/sysml-parser](https://github.com/elan8/sysml-parser)** and outlines what would need to change to make the replacement feasible.
 
 ---
 

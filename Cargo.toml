@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["server", "kerml-parser"]
+members = ["server", "sysml-parser"]
 
 [workspace.package]
 version = "0.4.0"

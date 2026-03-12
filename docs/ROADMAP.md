@@ -40,6 +40,7 @@ A roadmap for evolving the sysml-language-server into a full-fledged professiona
 | spec-1 | **Broader parser coverage** — Requirements, states, use cases, allocations, flows, views/viewpoints | High |
 | spec-2 | **Semantic validation** — Multiplicity, typing, redefines, connection semantics | High |
 | spec-3 | **Full validation suite CI** — Run SysML-v2-Release validation suite in CI | Medium |
+| spec-4 | **Full BNF coverage** — Phased plan in [BNF_COVERAGE_PLAN.md](BNF_COVERAGE_PLAN.md) | Medium |
 
 ---
 
