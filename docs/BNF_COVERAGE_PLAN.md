@@ -140,27 +140,24 @@ A phased plan to implement full SysML v2 BNF coverage in sysml-parser, enabling 
 
 ---
 
-## Phase 6: Expressions & Advanced Features
+## Phase 6: Expressions & Advanced Features (partial) ✅
 
 **BNF:** `LiteralExpression`, `FeatureReferenceExpression`, `OwnedFeatureChain`, filter expressions (Clauses 8.2.2.6.6, expression grammar)
 
-**Current gap:** Parser lacks:
+**Completed:**
+1. **:: qualified member access** — Added `::` postfix in expressions (e.g. `Safety::isMandatory`).
+2. **Import filter after ::** — Parse optional `[ expr ]` after `vehicle::**` (e.g. `import vehicle::**[@Safety];`).
+3. **Abstract/variation on part def** — Parse `abstract part def`, `variation part def` (DefinitionPrefix).
+
+**Validation files unlocked:** 13b-1, 13b-2 (now pass).
+
+**Remaining (Phase 6 continued):**
 - Unit literals `2500[SI::kg]`, `[kg]` (also Phase 1)
-- Feature chains `SystemModel::vehicle::**`
-- Filter expressions `**[@SysML::PartUsage]`
-- Short-name identification `<'N/mm²'> 'newton per square'`
-- `abstract` / `variation` on part def
+- Feature chains `SystemModel::vehicle::**` in expose
+- `abstract part` usage (not just `abstract part def`) — 7a fails on `abstract part anyVehicleConfig`
+- Short-name in identification, other definition types (occurrence, port, etc.)
 
-**Tasks:**
-1. **Unit literals** — Complete `LiteralWithUnit`, `Bracket` in expression parser.
-2. **Feature chains** — Parse `QualifiedName :: QualifiedName :: ...` for references, expose.
-3. **Filter expressions** — Parse `**` and `[@...]` in expose/filter contexts.
-4. **Short-name in identification** — Ensure `< shortName >` is parsed for attributes (e.g. `attribute <'N/mm²'> 'newton per square'`).
-5. **Abstract/variation** — Parse `abstract part def`, `variation part def` (OccurrenceDefinitionPrefix).
-
-**Validation files unlocked:** 15_01, 15_05, 15_19, 15_19a, 7a, 7a1, 7b, 10d, 09, 06, 3d, 05-State (state def/usage), 3a-2, 3a-3.
-
-**Files:** `sysml-parser/src/parser/expr.rs`, `sysml-parser/src/parser/lex.rs`, `sysml-parser/src/parser/part.rs`
+**Files:** `sysml-parser/src/ast.rs`, `sysml-parser/src/parser/expr.rs`, `sysml-parser/src/parser/import.rs`, `sysml-parser/src/parser/part.rs`
 
 ---
 
