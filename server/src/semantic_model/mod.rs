@@ -26,6 +26,7 @@ pub(crate) fn root_element_body<'a>(
     let (ident, body, span) = match re {
         RootElement::Package(p) => (&p.identification, &p.body, &p.span),
         RootElement::Namespace(n) => (&n.identification, &n.body, &n.span),
+        RootElement::Import(_) => return None,
     };
     let name = identification_name(ident);
     let qualified = if name.is_empty() {

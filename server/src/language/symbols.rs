@@ -35,6 +35,7 @@ pub fn collect_definition_ranges(root: &RootNamespace) -> Vec<(String, Range)> {
                 };
                 (name, range, elements)
             }
+            RootElement::Import(_) => continue,
         };
         if !name.is_empty() {
             out.push((name, range));
@@ -271,6 +272,7 @@ pub fn collect_document_symbols(root: &RootNamespace) -> Vec<DocumentSymbol> {
                     children: Some(children),
                 })
             }
+            RootElement::Import(_) => None,
         };
         if let Some(s) = sym {
             out.push(s);
@@ -721,6 +723,7 @@ pub fn collect_named_elements(root: &RootNamespace) -> Vec<(String, String)> {
                 };
                 (name, elements)
             }
+            RootElement::Import(_) => continue,
         };
         if !name.is_empty() {
             out.push((name.clone(), format!("package '{}'", name)));

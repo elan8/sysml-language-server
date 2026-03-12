@@ -21,17 +21,15 @@ A phased plan to implement full SysML v2 BNF coverage in sysml-parser, enabling 
 
 ---
 
-## Phase 0: Root Namespace & Error Reporting
+## Phase 0: Root Namespace & Error Reporting ✅
 
 **BNF:** `RootNamespace = PackageBodyElement*` (Clause 8.2.2.5.2)
 
-**Current gap:** Parser expects `package` or `namespace` at root. BNF allows `PackageBodyElement*`, which includes `Import`, `PackageMember`, `ElementFilterMember`, `AliasMember`.
+**Completed:**
+1. **Top-level imports** — Allow `Import` at root before any package. Added `RootElement::Import`. Parser now accepts `private import Views::*;` followed by `package P { }`. (11b still fails on `metadata def` inside—Phase 2.)
+2. **Error context** — Updated expected context to `'package', 'namespace', or 'import' at top level; or valid element in package body`.
 
-**Tasks:**
-1. **Top-level imports** — Allow `Import` (visibility `import` …) at root before any package. Unlocks: `11b-Safety and Security Feature Views.sysml`.
-2. **Error context** — Improve `parse_root` so errors from `package_body_element` report context (e.g. "in package body") instead of always "at top level".
-
-**Files:** `sysml-parser/src/parser/mod.rs`, `sysml-parser/src/parser/package.rs`
+**Files:** `sysml-parser/src/ast.rs`, `sysml-parser/src/parser/mod.rs`, `sysml-parser/src/parser/package.rs`, server (symbols, semantic_tokens, model, semantic_model)
 
 ---
 
