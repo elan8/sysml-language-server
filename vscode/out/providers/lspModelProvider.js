@@ -85,7 +85,8 @@ class LspModelProvider {
                 await new Promise((r) => setTimeout(r, 300));
                 result = await doRequest();
             }
-            (0, logger_1.log)("getModel result:", result.graph?.nodes?.length ?? 0, "nodes,", result.graph?.edges?.length ?? 0, "edges");
+            const containsCount = result.graph?.edges?.filter((e) => (e.type || e.rel_type || "").toLowerCase() === "contains").length ?? 0;
+            (0, logger_1.log)("getModel result:", result.graph?.nodes?.length ?? 0, "nodes,", result.graph?.edges?.length ?? 0, "edges,", containsCount, "contains");
             return result;
         }
         catch (e) {

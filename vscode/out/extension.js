@@ -33,6 +33,7 @@ const lspModelProvider_1 = require("./providers/lspModelProvider");
 const modelExplorerProvider_1 = require("./explorer/modelExplorerProvider");
 const logger_1 = require("./logger");
 const semanticTokensDump_1 = require("./semanticTokensDump");
+const graphDump_1 = require("./graphDump");
 const visualizationPanel_1 = require("./visualization/visualizationPanel");
 const constants_1 = require("./visualization/webview/constants");
 const htmlBuilder_1 = require("./visualization/htmlBuilder");
@@ -127,17 +128,10 @@ function activate(context) {
         }
     }
     (0, logger_1.log)("Server command:", serverCommand, "libraryPaths:", libraryPaths);
-    const logOverrides = config.get("debug.logSemanticTokenOverrides") ?? false;
     const serverOptions = {
         command: serverCommand,
         args: [],
         transport: node_1.TransportKind.stdio,
-        options: {
-            env: {
-                ...process.env,
-                ...(logOverrides && { SYSML_DEBUG_SEMANTIC_TOKENS: "1" }),
-            },
-        },
     };
     const clientOptions = {
         documentSelector: [
@@ -470,6 +464,29 @@ function activate(context) {
         }
         catch (err) {
             (0, logger_1.logError)("Debug semantic token failed", err);
+            vscode.window.showErrorMessage(`Debug failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }), vscode.commands.registerCommand("sysml.debugDumpGraphForGeneralView", async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || !isSysmlDoc(editor.document)) {
+            vscode.window.showWarningMessage("Open a SysML/KerML file first (e.g. SurveillanceDrone.sysml).");
+            return;
+        }
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!workspaceFolder) {
+            vscode.window.showWarningMessage("No workspace folder open.");
+            return;
+        }
+        try {
+            const result = await lspModelProvider.getModel(editor.document.uri.toString(), ["graph"]);
+            const outPath = path.join(workspaceFolder, "graph_general_view_dump.txt");
+            await (0, graphDump_1.dumpGraphForGeneralView)(result.graph, outPath);
+            const jsonPath = outPath.replace(/\.txt$/, ".json");
+            vscode.window.showInformationMessage(`Graph dump written to ${path.basename(outPath)} and ${path.basename(jsonPath)}`);
+            (0, logger_1.log)(`Graph dump: ${outPath}`);
+        }
+        catch (err) {
+            (0, logger_1.logError)("Debug graph dump failed", err);
             vscode.window.showErrorMessage(`Debug failed: ${err instanceof Error ? err.message : String(err)}`);
         }
     }));

@@ -179,6 +179,11 @@
         "command": "sysml.debugSemanticTokenAtCursor",
         "title": "Debug: Semantic Token at Cursor",
         "category": "SysML"
+      },
+      {
+        "command": "sysml.debugDumpGraphForGeneralView",
+        "title": "Debug: Dump Graph for General View",
+        "category": "SysML"
       }
     ],
     "menus": {

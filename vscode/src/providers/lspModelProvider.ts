@@ -94,12 +94,17 @@ export class LspModelProvider {
         result = await doRequest();
       }
 
+      const containsCount = result.graph?.edges?.filter(
+        (e: { type?: string; rel_type?: string }) => (e.type || e.rel_type || "").toLowerCase() === "contains"
+      ).length ?? 0;
       log(
         "getModel result:",
         result.graph?.nodes?.length ?? 0,
         "nodes,",
         result.graph?.edges?.length ?? 0,
-        "edges"
+        "edges,",
+        containsCount,
+        "contains"
       );
       return result;
     } catch (e) {

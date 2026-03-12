@@ -301,21 +301,67 @@ impl SemanticGraph {
 }
 
 /// Builds a semantic graph from a parsed RootNamespace (sysml-parser AST).
+/// Adds the root package/namespace as a node and sets parent_id on its direct children
+/// so that contains edges are emitted for the General View.
 pub fn build_graph_from_doc(root: &RootNamespace, uri: &Url) -> SemanticGraph {
     let mut g = SemanticGraph::new();
     for node in &root.elements {
-        let elements = match &node.value {
-            RootElement::Package(p) => match &p.body {
-                PackageBody::Brace { elements } => elements,
-                _ => continue,
-            },
-            RootElement::Namespace(n) => match &n.body {
-                PackageBody::Brace { elements } => elements,
-                _ => continue,
-            },
+        let (elements, pkg_qualified, pkg_name_display, pkg_span) = match &node.value {
+            RootElement::Package(p) => {
+                let name = identification_name(&p.identification);
+                let qualified = if name.is_empty() {
+                    "(top level)".to_string()
+                } else {
+                    name.clone()
+                };
+                let name_display = if name.is_empty() {
+                    "(top level)".to_string()
+                } else {
+                    name
+                };
+                match &p.body {
+                    PackageBody::Brace { elements } => (elements, qualified, name_display, &p.span),
+                    _ => continue,
+                }
+            }
+            RootElement::Namespace(n) => {
+                let name = identification_name(&n.identification);
+                let qualified = if name.is_empty() {
+                    "(top level)".to_string()
+                } else {
+                    name.clone()
+                };
+                let name_display = if name.is_empty() {
+                    "(top level)".to_string()
+                } else {
+                    name
+                };
+                match &n.body {
+                    PackageBody::Brace { elements } => (elements, qualified, name_display, &n.span),
+                    _ => continue,
+                }
+            }
         };
+        add_node_and_recurse(
+            &mut g,
+            uri,
+            &pkg_qualified,
+            "package",
+            pkg_name_display,
+            span_to_range(pkg_span),
+            HashMap::new(),
+            None,
+        );
+        let package_node_id = NodeId::new(uri, &pkg_qualified);
         for el in elements {
-            build_from_package_body_element(el, uri, None, None, root, &mut g);
+            build_from_package_body_element(
+                el,
+                uri,
+                None,
+                Some(&package_node_id),
+                root,
+                &mut g,
+            );
         }
     }
     g
@@ -473,7 +519,7 @@ fn build_from_part_def_body_element(
     uri: &Url,
     container_prefix: Option<&str>,
     parent_id: &NodeId,
-    _root: &RootNamespace,
+    root: &RootNamespace,
     g: &mut SemanticGraph,
 ) {
     use sysml_parser::ast::PartDefBodyElement as PDBE;
@@ -497,6 +543,25 @@ fn build_from_part_def_body_element(
                 attrs.insert("portType".to_string(), serde_json::json!(t));
             }
             add_node_and_recurse(g, uri, &qualified, "port", name.clone(), range, attrs, Some(parent_id));
+        }
+        PDBE::PartUsage(n) => {
+            let name = &n.name;
+            let qualified = qualified_name(container_prefix, name);
+            let range = span_to_range(&n.span);
+            let mut attrs = HashMap::new();
+            attrs.insert("partType".to_string(), serde_json::json!(&n.type_name));
+            if let Some(ref m) = n.multiplicity {
+                attrs.insert("multiplicity".to_string(), serde_json::json!(m));
+            }
+            add_node_and_recurse(g, uri, &qualified, "part", name.clone(), range, attrs, Some(parent_id));
+            let node_id = NodeId::new(uri, &qualified);
+            add_typing_edge_if_exists(g, uri, &qualified, &n.type_name, container_prefix);
+            if let PartUsageBody::Brace { elements } = &n.body {
+                for child in elements {
+                    build_from_part_usage_body_element(child, uri, Some(&qualified), &node_id, root, g);
+                }
+            }
+            expand_typed_part_usage(root, uri, &qualified, &n.type_name, container_prefix, &node_id, g);
         }
         _ => {}
     }
@@ -1037,9 +1102,43 @@ mod tests {
         let root = parse(input).expect("parse");
         let uri = Url::parse("file:///test.sysml").unwrap();
         let g = build_graph_from_doc(&root, &uri);
-        let edges = g.edges_for_uri_as_strings(&uri);
+        let _edges = g.edges_for_uri_as_strings(&uri);
         // Graph builds without panic; transition edges depend on sysml-parser state/transition support
         assert!(g.node_index_by_id.len() >= 2, "expected at least package and part def nodes: {:?}", g.node_index_by_id.len());
+    }
+
+    /// General View fix: root package is a node and its direct children have parent_id set
+    /// so that contains edges are emitted for the diagram.
+    #[test]
+    fn root_package_node_and_contains_edges_for_children() {
+        let input = r#"
+            package SurveillanceDrone {
+                part def Airframe { }
+                part def PropulsionUnit { }
+            }
+        "#;
+        let root = parse(input).expect("parse");
+        let uri = Url::parse("file:///test.sysml").unwrap();
+        let g = build_graph_from_doc(&root, &uri);
+        let pkg_id = NodeId::new(&uri, "SurveillanceDrone");
+        assert!(
+            g.node_index_by_id.contains_key(&pkg_id),
+            "root package SurveillanceDrone must be a node; nodes: {:?}",
+            g.nodes_by_uri.get(&uri).map(|v| v.iter().map(|id| id.qualified_name.as_str()).collect::<Vec<_>>())
+        );
+        let nodes_with_parent: Vec<_> = g
+            .nodes_for_uri(&uri)
+            .into_iter()
+            .filter(|n| n.parent_id.as_ref() == Some(&pkg_id))
+            .collect();
+        assert!(
+            nodes_with_parent.len() >= 2,
+            "expected at least 2 direct children of package (Airframe, PropulsionUnit); got {}",
+            nodes_with_parent.len()
+        );
+        let names: Vec<_> = nodes_with_parent.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"Airframe"), "expected Airframe in children: {:?}", names);
+        assert!(names.contains(&"PropulsionUnit"), "expected PropulsionUnit in children: {:?}", names);
     }
 
     #[test]
@@ -1124,7 +1223,7 @@ mod tests {
             "expected cmd port node"
         );
 
-        let edges = g.edges_for_uri_as_strings(&uri);
+        let _edges = g.edges_for_uri_as_strings(&uri);
         let conn_edges: Vec<_> = edges
             .iter()
             .filter(|(_, _, kind, _)| *kind == RelationshipKind::Connection)

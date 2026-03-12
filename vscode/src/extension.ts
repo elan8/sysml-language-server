@@ -19,6 +19,7 @@ import {
   getTokenAtPosition,
   SEMANTIC_TYPE_NAMES,
 } from "./semanticTokensDump";
+import { dumpGraphForGeneralView } from "./graphDump";
 import {
   RESTORE_STATE_KEY,
   VisualizationPanel,
@@ -596,6 +597,39 @@ export function activate(context: vscode.ExtensionContext): void {
         log(msg, "→ Use Developer: Inspect Editor Tokens and Scopes to compare with VS Code's rendering");
       } catch (err) {
         logError("Debug semantic token failed", err);
+        vscode.window.showErrorMessage(
+          `Debug failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }),
+
+    vscode.commands.registerCommand("sysml.debugDumpGraphForGeneralView", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || !isSysmlDoc(editor.document)) {
+        vscode.window.showWarningMessage(
+          "Open a SysML/KerML file first (e.g. SurveillanceDrone.sysml)."
+        );
+        return;
+      }
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceFolder) {
+        vscode.window.showWarningMessage("No workspace folder open.");
+        return;
+      }
+      try {
+        const result = await lspModelProvider.getModel(
+          editor.document.uri.toString(),
+          ["graph"]
+        );
+        const outPath = path.join(workspaceFolder, "graph_general_view_dump.txt");
+        await dumpGraphForGeneralView(result.graph, outPath);
+        const jsonPath = outPath.replace(/\.txt$/, ".json");
+        vscode.window.showInformationMessage(
+          `Graph dump written to ${path.basename(outPath)} and ${path.basename(jsonPath)}`
+        );
+        log(`Graph dump: ${outPath}`);
+      } catch (err) {
+        logError("Debug graph dump failed", err);
         vscode.window.showErrorMessage(
           `Debug failed: ${err instanceof Error ? err.message : String(err)}`
         );

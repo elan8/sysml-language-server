@@ -10,7 +10,7 @@
       nodeMap.set(n.id, {
         id: n.id,
         name: n.name,
-        type: n.type,
+        type: n.type || n.element_type,
         range: n.range,
         attributes: n.attributes || {},
         relationships: [],
@@ -4157,7 +4157,14 @@
       }
     });
     const hasNoParent = (id) => !containsList.some((e) => e.target === id);
-    const candidateRoots = partDefsWithParts.filter(([pid]) => containedByPackageOrRoot.has(pid) || hasNoParent(pid)).map(([pid]) => pid);
+    let candidateRoots = partDefsWithParts.filter(([pid]) => containedByPackageOrRoot.has(pid) || hasNoParent(pid)).map(([pid]) => pid);
+    if (candidateRoots.length === 0) {
+      const typingTargetPartDefs = new Set(typingList.map((e) => e.target).filter((tid) => nodeById.get(tid) && isPartDef(nodeById.get(tid))));
+      candidateRoots = [...typingTargetPartDefs];
+    }
+    if (candidateRoots.length === 0 && partDefIds.size) {
+      candidateRoots = [...partDefIds];
+    }
     const pickRoot = () => {
       const byName = candidateRoots.find((id) => (nodeById.get(id)?.name || "").includes("SurveillanceQuadrotorDrone") || (nodeById.get(id)?.name || "").includes("Drone"));
       if (byName) return byName;
@@ -4165,7 +4172,6 @@
       return byPartCount[0];
     };
     const rootId = candidateRoots.length ? pickRoot() : partDefIds.size ? [...partDefIds][0] : null;
-    if (!rootId) return { edges: [], rootId: null };
     const out = [];
     const seen = /* @__PURE__ */ new Set();
     function visitPartDef(partDefId) {
@@ -4183,7 +4189,18 @@
         }
       });
     }
-    visitPartDef(rootId);
+    candidateRoots.forEach((pid) => visitPartDef(pid));
+    if (candidateRoots.length === 0 && partDefIds.size) {
+      [...partDefIds].forEach((pid) => visitPartDef(pid));
+    }
+    typingList.forEach((e) => {
+      const src = nodeById.get(e.source);
+      const tgt = nodeById.get(e.target);
+      if (src && tgt && isPartUsage(src) && isPartDef(tgt) && !out.some((x) => x.source === e.source && x.target === e.target && x.type === "typing")) {
+        out.push({ source: e.source, target: e.target, type: "typing" });
+      }
+    });
+    console.log("[GV] buildSyntheticTreeEdges", "containsList", containsList.length, "candidateRoots", candidateRoots.length, "syntheticEdges", out.length);
     return { edges: out, rootId };
   }
   function graphToCytoscapeElementsForGeneralView(graph) {
@@ -4207,23 +4224,45 @@
     }
     indexByKey(elementTree);
     const { edges: syntheticEdges, rootId } = buildSyntheticTreeEdgesForGeneralView(nodes, edges);
-    const nodeIdsInTree = /* @__PURE__ */ new Set();
-    syntheticEdges.forEach((e) => {
-      nodeIdsInTree.add(e.source);
-      nodeIdsInTree.add(e.target);
+    const nodeType = (n) => (n?.type || n?.element_type || "").toLowerCase();
+    const isPartDef = (n) => n && nodeType(n).includes("part def");
+    const isPartUsage = (n) => n && (nodeType(n) === "part" || nodeType(n).includes("part usage"));
+    const isPartOrPartDef = (n) => isPartDef(n) || isPartUsage(n);
+    const nodeById = /* @__PURE__ */ new Map();
+    nodes.forEach((n) => {
+      if (n && n.id) nodeById.set(n.id, n);
     });
-    if (rootId) nodeIdsInTree.add(rootId);
-    const typingTargetPartDefIds = new Set(syntheticEdges.filter((e) => e.type === "typing").map((e) => e.target));
-    const useSyntheticTree = syntheticEdges.length > 0;
+    const rawContainsTypingSpecializes = edges.filter((e) => {
+      const t = (e.type || e.rel_type || "").toLowerCase();
+      return t === "contains" || t === "typing" || t === "specializes";
+    });
+    const getEdgeType = (e) => (e.type || e.rel_type || "").toLowerCase();
+    const rawPartEdges = rawContainsTypingSpecializes.filter((e) => {
+      const src = nodeById.get(e.source);
+      const tgt = nodeById.get(e.target);
+      return src && tgt && isPartOrPartDef(src) && isPartOrPartDef(tgt);
+    }).map((e) => {
+      const t = getEdgeType(e);
+      const type = t === "contains" ? "hierarchy" : t === "typing" ? "typing" : t === "specializes" ? "specializes" : "hierarchy";
+      return { source: e.source, target: e.target, type };
+    });
+    const syntheticNodeCount = new Set(syntheticEdges.flatMap((e) => [e.source, e.target])).size;
+    const useSyntheticTree = syntheticEdges.length > 0 && syntheticNodeCount >= 5;
+    const specializesEdges = rawPartEdges.filter((e) => e.type === "specializes");
+    const edgesToUse = useSyntheticTree ? [...syntheticEdges, ...specializesEdges] : rawPartEdges;
+    const edgeEndpointIds = /* @__PURE__ */ new Set();
+    edgesToUse.forEach((e) => {
+      edgeEndpointIds.add(e.source);
+      edgeEndpointIds.add(e.target);
+    });
     const filteredNodes = nodes.filter((node) => {
       if (!node || isMetadataElement(node.type)) return false;
+      if (!isPartOrPartDef(node)) return false;
       const typeLower = (node.type || "").toLowerCase().trim();
-      const isPackage = PACKAGE_TYPES.has(typeLower);
       const category = getCategoryForType(typeLower);
-      const matchesCategory = isPackage ? expandedGeneralCategories.has("packages") : expandedGeneralCategories.has(category);
-      const isPartDefTypingTarget = typingTargetPartDefIds.has(node.id);
-      const inSyntheticTree = nodeIdsInTree.has(node.id);
-      return (matchesCategory || isPartDefTypingTarget) && (!useSyntheticTree || inSyntheticTree);
+      const matchesCategory = (category === "partDefs" || category === "parts") && expandedGeneralCategories.has(category);
+      const isEdgeEndpoint = edgeEndpointIds.has(node.id);
+      return matchesCategory || isEdgeEndpoint;
     });
     const categoryOrder = new Map(GENERAL_VIEW_CATEGORIES.map((c, i) => [c.id, i]));
     filteredNodes.sort((a, b) => {
@@ -4275,19 +4314,14 @@
     const validNodeIds = new Set(cyElements.filter((el) => el.group === "nodes").map((el) => el.data.id));
     const hierarchyEdgeIds = /* @__PURE__ */ new Set();
     const typingEdgeIds = /* @__PURE__ */ new Set();
+    const specializesEdgeIds = /* @__PURE__ */ new Set();
     const resolveCyId = (backendId) => idToCyId.get(backendId) || null;
-    const edgesToUse = syntheticEdges.length ? syntheticEdges : edges.filter((e) => {
-      const t = (e.type || e.rel_type || "").toLowerCase();
-      return t === "contains" || t === "typing";
-    }).map((e) => ({
-      source: e.source,
-      target: e.target,
-      type: (e.type || e.rel_type || "").toLowerCase() === "contains" ? "hierarchy" : "typing"
-    }));
+    let edgesResolved = 0;
     edgesToUse.forEach((edge) => {
       const sourceCyId = resolveCyId(edge.source);
       const targetCyId = resolveCyId(edge.target);
       if (!sourceCyId || !targetCyId || sourceCyId === targetCyId || !validNodeIds.has(sourceCyId) || !validNodeIds.has(targetCyId)) return;
+      edgesResolved++;
       const edgeType = edge.type || "hierarchy";
       if (edgeType === "hierarchy") {
         const edgeId = "hier-" + sourceCyId + "-" + targetCyId;
@@ -4314,8 +4348,25 @@
             }
           });
         }
+      } else if (edgeType === "specializes") {
+        const edgeId = "rel-specializes-" + sourceCyId + "-" + targetCyId;
+        if (!specializesEdgeIds.has(edgeId)) {
+          specializesEdgeIds.add(edgeId);
+          cyElements.push({
+            group: "edges",
+            data: {
+              id: edgeId,
+              source: sourceCyId,
+              target: targetCyId,
+              type: "relationship",
+              relType: "specializes",
+              label: ":> " + (nodes.find((n) => n && n.id === edge.target)?.name || edge.target.split(/[.::]+/).pop() || edge.target)
+            }
+          });
+        }
       }
     });
+    console.log("[GV] graphToCytoscapeElements", "syntheticEdges", syntheticEdges.length, "filteredNodes", filteredNodes.length, "edgesToUse", edgesToUse.length, "edgesResolved", edgesResolved);
     return { elements: cyElements, typeStats };
   }
   function graphToCytoscapeElementsForSysML(graph, useHierarchicalNesting = false) {
@@ -4451,6 +4502,8 @@
   function buildGeneralViewGraph(dataOrElements, relationships = []) {
     const graph = dataOrElements?.graph;
     if (graph) {
+      const containsCount = (graph.edges || []).filter((e) => (e.type || e.rel_type || "").toLowerCase() === "contains").length;
+      console.log("[GV] graph", graph.nodes?.length, "nodes", graph.edges?.length, "edges", containsCount, "contains");
       return graphToCytoscapeElementsForGeneralView(graph);
     }
     const elements = Array.isArray(dataOrElements) ? dataOrElements : dataOrElements?.elements ?? [];

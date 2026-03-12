@@ -19,7 +19,7 @@ export function graphToElementTree(graph: any): any[] {
         nodeMap.set(n.id, {
             id: n.id,
             name: n.name,
-            type: n.type,
+            type: n.type || n.element_type,
             range: n.range,
             attributes: n.attributes || {},
             relationships: [] as any[],
