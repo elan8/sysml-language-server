@@ -127,6 +127,7 @@ fn parse_sysml_model_params(v: &serde_json::Value) -> Result<(Url, Vec<String>)>
     let uri = Url::parse(uri).map_err(|_| {
         tower_lsp::jsonrpc::Error::invalid_params("sysml/model: invalid URI")
     })?;
+    let uri = normalize_file_uri(&uri);
 
     let scope: Vec<String> = scope_value
         .and_then(|s| serde_json::from_value(s.clone()).ok())
@@ -383,6 +384,43 @@ fn remove_symbol_table_entries_for_uri(state: &mut ServerState, uri: &Url) {
     state.symbol_table.retain(|e| e.uri != *uri);
 }
 
+/// Normalize file URIs so that file:///C:/... and file:///c%3A/... (from client) match in the index.
+/// Uses lowercase drive letter and decoded path so both server (from_file_path) and client URIs align.
+fn normalize_file_uri(uri: &Url) -> Url {
+    if uri.scheme() != "file" {
+        return uri.clone();
+    }
+    let path = uri.path();
+    if path.len() >= 3 {
+        let mut chars: Vec<char> = path.chars().collect();
+        if chars[0] == '/' && chars[1].is_ascii_alphabetic() && chars.get(2) == Some(&':') {
+            chars[1] = chars[1].to_lowercase().next().unwrap_or(chars[1]);
+            let new_path: String = chars.into_iter().collect();
+            if let Ok(u) = Url::parse(&format!("file://{}", new_path)) {
+                return u;
+            }
+        }
+    }
+    uri.clone()
+}
+
+/// When parse fails, get diagnostic messages from parse_with_diagnostics for logging.
+fn parse_failure_diagnostics(content: &str, max_errors: usize) -> Vec<String> {
+    let result = sysml_parser::parse_with_diagnostics(content);
+    result
+        .errors
+        .iter()
+        .take(max_errors)
+        .map(|e| {
+            let loc = e
+                .to_lsp_range()
+                .map(|(sl, sc, _, _)| format!("{}:{}", sl, sc))
+                .unwrap_or_else(|| format!("{:?}:{:?}", e.line, e.column));
+            format!("{} {}", loc, e.message)
+        })
+        .collect()
+}
+
 /// Updates the semantic graph for a URI: removes existing nodes, then merges new graph from parsed doc.
 fn update_semantic_graph_for_uri(
     state: &mut ServerState,
@@ -568,22 +606,42 @@ impl LanguageServer for Backend {
             let mut st = state.write().await;
             let mut uris_loaded = Vec::new();
             for (uri, content) in entries {
+                let uri_norm = normalize_file_uri(&uri);
                 let parsed = sysml_parser::parse(&content).ok();
-                update_semantic_graph_for_uri(&mut st, &uri, parsed.as_ref());
-                uris_loaded.push(uri.clone());
+                if parsed.is_none() {
+                    let errs = parse_failure_diagnostics(&content, 5);
+                    eprintln!(
+                        "[sysml-ls] workspace scan: parse failed for {} ({} diagnostics): {:?}",
+                        uri_norm.as_str(),
+                        errs.len(),
+                        errs,
+                    );
+                    if errs.is_empty() {
+                        eprintln!(
+                            "[sysml-ls] parse() returned None but parse_with_diagnostics had 0 errors (parser may fail without filling diagnostics)",
+                        );
+                    }
+                }
+                update_semantic_graph_for_uri(&mut st, &uri_norm, parsed.as_ref());
+                uris_loaded.push(uri_norm.clone());
                 st.index.insert(
-                    uri.clone(),
+                    uri_norm.clone(),
                     IndexEntry {
                         content,
                         parsed,
                     },
                 );
-                let new_entries = semantic_model::symbol_entries_for_uri(&st.semantic_graph, &uri);
-                update_symbol_table_for_uri(&mut st, &uri, Some(&new_entries));
+                let new_entries = semantic_model::symbol_entries_for_uri(&st.semantic_graph, &uri_norm);
+                update_symbol_table_for_uri(&mut st, &uri_norm, Some(&new_entries));
             }
             for u in &uris_loaded {
                 semantic_model::add_cross_document_edges_for_uri(&mut st.semantic_graph, u);
             }
+            eprintln!(
+                "[sysml-ls] workspace scan complete: {} URIs in index. Sample: {:?}",
+                uris_loaded.len(),
+                uris_loaded.iter().take(5).map(|u| u.as_str()).collect::<Vec<_>>(),
+            );
         });
     }
 
@@ -593,29 +651,48 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri.clone();
+        let uri_norm = normalize_file_uri(&uri);
         let text = params.text_document.text;
         let parsed = sysml_parser::parse(&text).ok();
+        if parsed.is_none() {
+            let errs = parse_failure_diagnostics(&text, 5);
+            let msg = if errs.is_empty() {
+                format!(
+                    "sysml parse failed for {} (0 diagnostics; parser returned no AST and no error list)",
+                    uri_norm.as_str(),
+                )
+            } else {
+                format!(
+                    "sysml parse failed for {} ({} error(s)): {}",
+                    uri_norm.as_str(),
+                    errs.len(),
+                    errs.join("; "),
+                )
+            };
+            self.client.log_message(MessageType::WARNING, msg).await;
+        }
         {
             let mut state = self.state.write().await;
-            update_semantic_graph_for_uri(&mut state, &uri, parsed.as_ref());
+            update_semantic_graph_for_uri(&mut state, &uri_norm, parsed.as_ref());
             state.index.insert(
-                uri.clone(),
+                uri_norm.clone(),
                 IndexEntry {
                     content: text.clone(),
                     parsed,
                 },
             );
-            let new_entries = semantic_model::symbol_entries_for_uri(&state.semantic_graph, &uri);
-            update_symbol_table_for_uri(&mut state, &uri, Some(&new_entries));
+            let new_entries = semantic_model::symbol_entries_for_uri(&state.semantic_graph, &uri_norm);
+            update_symbol_table_for_uri(&mut state, &uri_norm, Some(&new_entries));
         }
         self.publish_diagnostics_for_document(uri, &text).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
+        let uri_norm = normalize_file_uri(&uri);
         {
             let mut state = self.state.write().await;
-            let should_update = if let Some(entry) = state.index.get_mut(&uri) {
+            let should_update = if let Some(entry) = state.index.get_mut(&uri_norm) {
                 for change in params.content_changes {
                     if let Some(range) = change.range {
                         if let Some(new_text) =
@@ -635,27 +712,27 @@ impl LanguageServer for Backend {
             if should_update {
                 let doc_for_graph = state
                     .index
-                    .get(&uri)
+                    .get(&uri_norm)
                     .and_then(|e| e.parsed.as_ref())
-                    .map(|root| semantic_model::build_graph_from_doc(root, &uri));
+                    .map(|root| semantic_model::build_graph_from_doc(root, &uri_norm));
                 if let Some(new_graph) = doc_for_graph {
-                    state.semantic_graph.remove_nodes_for_uri(&uri);
+                    state.semantic_graph.remove_nodes_for_uri(&uri_norm);
                     state.semantic_graph.merge(new_graph);
                     semantic_model::add_cross_document_edges_for_uri(
                         &mut state.semantic_graph,
-                        &uri,
+                        &uri_norm,
                     );
                 } else {
-                    state.semantic_graph.remove_nodes_for_uri(&uri);
+                    state.semantic_graph.remove_nodes_for_uri(&uri_norm);
                 }
-                let new_entries = semantic_model::symbol_entries_for_uri(&state.semantic_graph, &uri);
-                update_symbol_table_for_uri(&mut state, &uri, Some(&new_entries));
+                let new_entries = semantic_model::symbol_entries_for_uri(&state.semantic_graph, &uri_norm);
+                update_symbol_table_for_uri(&mut state, &uri_norm, Some(&new_entries));
             }
         }
         let state = self.state.read().await;
         let text = state
             .index
-            .get(&uri)
+            .get(&uri_norm)
             .map(|e| e.content.as_str())
             .unwrap_or("");
         let text = text.to_string();
@@ -677,34 +754,35 @@ impl LanguageServer for Backend {
         use tower_lsp::lsp_types::FileChangeType;
         let mut state = self.state.write().await;
         for event in params.changes {
+            let uri_norm = normalize_file_uri(&event.uri);
             if event.typ == FileChangeType::CREATED || event.typ == FileChangeType::CHANGED {
                 if let Ok(path) = event.uri.to_file_path() {
                     if let Ok(content) = tokio::fs::read_to_string(&path).await {
                         let parsed = sysml_parser::parse(&content).ok();
                         update_semantic_graph_for_uri(
                             &mut state,
-                            &event.uri,
+                            &uri_norm,
                             parsed.as_ref(),
                         );
                         state.index.insert(
-                            event.uri.clone(),
+                            uri_norm.clone(),
                             IndexEntry { content, parsed },
                         );
                         let new_entries = semantic_model::symbol_entries_for_uri(
                             &state.semantic_graph,
-                            &event.uri,
+                            &uri_norm,
                         );
                         update_symbol_table_for_uri(
                             &mut state,
-                            &event.uri,
+                            &uri_norm,
                             Some(&new_entries),
                         );
                     }
                 }
             } else if event.typ == FileChangeType::DELETED {
-                state.index.remove(&event.uri);
-                remove_symbol_table_entries_for_uri(&mut state, &event.uri);
-                state.semantic_graph.remove_nodes_for_uri(&event.uri);
+                state.index.remove(&uri_norm);
+                remove_symbol_table_entries_for_uri(&mut state, &uri_norm);
+                state.semantic_graph.remove_nodes_for_uri(&uri_norm);
             }
         }
     }
@@ -769,18 +847,19 @@ impl LanguageServer for Backend {
             let mut st = state.write().await;
             let mut uris_loaded = Vec::new();
             for (uri, content) in entries {
+                let uri_norm = normalize_file_uri(&uri);
                 let parsed = sysml_parser::parse(&content).ok();
-                update_semantic_graph_for_uri(&mut st, &uri, parsed.as_ref());
-                uris_loaded.push(uri.clone());
+                update_semantic_graph_for_uri(&mut st, &uri_norm, parsed.as_ref());
+                uris_loaded.push(uri_norm.clone());
                 st.index.insert(
-                    uri.clone(),
+                    uri_norm.clone(),
                     IndexEntry {
                         content,
                         parsed,
                     },
                 );
-                let new_entries = semantic_model::symbol_entries_for_uri(&st.semantic_graph, &uri);
-                update_symbol_table_for_uri(&mut st, &uri, Some(&new_entries));
+                let new_entries = semantic_model::symbol_entries_for_uri(&st.semantic_graph, &uri_norm);
+                update_symbol_table_for_uri(&mut st, &uri_norm, Some(&new_entries));
             }
             for u in &uris_loaded {
                 semantic_model::add_cross_document_edges_for_uri(&mut st.semantic_graph, u);
@@ -790,9 +869,10 @@ impl LanguageServer for Backend {
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri.clone();
+        let uri_norm = normalize_file_uri(&uri);
         let pos = params.text_document_position_params.position;
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+        let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
             None => return Ok(None),
         };
@@ -825,7 +905,7 @@ impl LanguageServer for Backend {
         if let Some(entry) = state
             .symbol_table
             .iter()
-            .find(|e| e.name == word && e.uri == uri)
+            .find(|e| e.name == word && e.uri == uri_norm)
         {
             let value = symbol_hover_markdown(entry, false);
             return Ok(Some(Hover {
@@ -839,7 +919,7 @@ impl LanguageServer for Backend {
         if let Some(entry) = state
             .symbol_table
             .iter()
-            .find(|e| e.name == word && e.uri != uri)
+            .find(|e| e.name == word && e.uri != uri_norm)
         {
             let value = symbol_hover_markdown(entry, true);
             return Ok(Some(Hover {
@@ -856,9 +936,10 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
+        let uri_norm = normalize_file_uri(&uri);
         let pos = params.text_document_position.position;
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+        let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
             None => return Ok(None),
         };
@@ -898,9 +979,10 @@ impl LanguageServer for Backend {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri.clone();
+        let uri_norm = normalize_file_uri(&uri);
         let pos = params.text_document_position_params.position;
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+        let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
             None => return Ok(None),
         };
@@ -914,7 +996,7 @@ impl LanguageServer for Backend {
         }
 
         // 2.2: Try graph-based resolution via typing/specializes edges (works cross-file).
-        if let Some(node) = state.semantic_graph.find_node_at_position(&uri, pos) {
+        if let Some(node) = state.semantic_graph.find_node_at_position(&uri_norm, pos) {
             for target in state.semantic_graph.outgoing_typing_or_specializes_targets(node) {
                 if target.name == word || target.id.qualified_name.ends_with(&format!("::{}", word))
                 {
@@ -930,7 +1012,7 @@ impl LanguageServer for Backend {
         if let Some(entry) = state
             .symbol_table
             .iter()
-            .find(|e| e.name == word && e.uri == uri)
+            .find(|e| e.name == word && e.uri == uri_norm)
         {
             return Ok(Some(GotoDefinitionResponse::Scalar(Location {
                 uri: entry.uri.clone(),
@@ -940,7 +1022,7 @@ impl LanguageServer for Backend {
         if let Some(entry) = state
             .symbol_table
             .iter()
-            .find(|e| e.name == word && e.uri != uri)
+            .find(|e| e.name == word && e.uri != uri_norm)
         {
             return Ok(Some(GotoDefinitionResponse::Scalar(Location {
                 uri: entry.uri.clone(),
@@ -952,10 +1034,11 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri.clone();
+        let uri_norm = normalize_file_uri(&uri);
         let pos = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+        let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
             None => return Ok(None),
         };
@@ -1001,9 +1084,10 @@ impl LanguageServer for Backend {
         params: TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
         let uri = params.text_document.uri;
+        let uri_norm = normalize_file_uri(&uri);
         let pos = params.position;
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+        let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
             None => return Ok(None),
         };
@@ -1023,10 +1107,11 @@ impl LanguageServer for Backend {
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = params.text_document_position.text_document.uri.clone();
+        let uri_norm = normalize_file_uri(&uri);
         let pos = params.text_document_position.position;
         let new_name = params.new_name;
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+        let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
             None => return Ok(None),
         };
@@ -1074,8 +1159,9 @@ impl LanguageServer for Backend {
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = params.text_document.uri;
+        let uri_norm = normalize_file_uri(&uri);
         let state = self.state.read().await;
-        let entry = match state.index.get(&uri) {
+        let entry = match state.index.get(&uri_norm) {
             Some(e) => e,
             None => return Ok(None),
         };
@@ -1092,8 +1178,9 @@ impl LanguageServer for Backend {
         params: FoldingRangeParams,
     ) -> Result<Option<Vec<FoldingRange>>> {
         let uri = params.text_document.uri;
+        let uri_norm = normalize_file_uri(&uri);
         let state = self.state.read().await;
-        let entry = match state.index.get(&uri) {
+        let entry = match state.index.get(&uri_norm) {
             Some(e) => e,
             None => return Ok(None),
         };
@@ -1134,8 +1221,9 @@ impl LanguageServer for Backend {
         params: CodeActionParams,
     ) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri.clone();
+        let uri_norm = normalize_file_uri(&uri);
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+        let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
             None => return Ok(None),
         };
@@ -1153,8 +1241,9 @@ impl LanguageServer for Backend {
         params: DocumentFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
         let uri = params.text_document.uri;
+        let uri_norm = normalize_file_uri(&uri);
         let state = self.state.read().await;
-        let text = match state.index.get(&uri).map(|e| e.content.as_str()) {
+        let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
             None => return Ok(None),
         };
@@ -1167,8 +1256,9 @@ impl LanguageServer for Backend {
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
+        let uri_norm = normalize_file_uri(&uri);
         let state = self.state.read().await;
-        let (text, ast_ranges) = match state.index.get(&uri) {
+        let (text, ast_ranges) = match state.index.get(&uri_norm) {
             Some(e) => (
                 e.content.clone(),
                 e.parsed.as_ref().map(ast_semantic_ranges),
@@ -1190,9 +1280,10 @@ impl LanguageServer for Backend {
         params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
         let uri = params.text_document.uri;
+        let uri_norm = normalize_file_uri(&uri);
         let range = params.range;
         let state = self.state.read().await;
-        let (text, ast_ranges) = match state.index.get(&uri) {
+        let (text, ast_ranges) = match state.index.get(&uri_norm) {
             Some(e) => (
                 e.content.clone(),
                 e.parsed.as_ref().map(ast_semantic_ranges),
@@ -1253,22 +1344,23 @@ impl Backend {
             None => {
                 let uri_display = uri.as_str();
                 let index_len = state.index.len();
+                let indexed_uris: Vec<String> = state
+                    .index
+                    .keys()
+                    .map(|u| u.as_str().to_string())
+                    .collect();
                 self.client
                     .log_message(
                         MessageType::WARNING,
                         format!(
-                            "sysml/model: document not in index (uri not opened via textDocument/didOpen). \
-                            uri={}, index_size={}, indexed_uris=[{}]. \
-                            Open the file in the editor first.",
+                            "sysml/model: document not in index. request_uri={} (len={}) index_size={} \
+                            indexed_uris_count={}. First 5 indexed: {:?}. \
+                            Check URI normalization (e.g. drive letter casing on Windows).",
                             uri_display,
+                            uri_display.len(),
                             index_len,
-                            state
-                                .index
-                                .keys()
-                                .take(3)
-                                .map(|u| u.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", "),
+                            indexed_uris.len(),
+                            indexed_uris.iter().take(5).collect::<Vec<_>>(),
                         ),
                     )
                     .await;
@@ -1280,14 +1372,30 @@ impl Backend {
             let sg_nodes = state.semantic_graph.nodes_for_uri(&uri);
             let node_count = sg_nodes.len();
             let graph_uris = state.semantic_graph.uris_with_nodes();
+            let parsed_ok = entry.parsed.is_some();
+            if !parsed_ok {
+                let errs = parse_failure_diagnostics(&entry.content, 5);
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!(
+                            "sysml/model: document in index but parse failed (parsed_ok=false). uri={} parse_errors={}",
+                            uri.as_str(),
+                            errs.join("; "),
+                        ),
+                    )
+                    .await;
+            }
             self.client
                 .log_message(
                     MessageType::INFO,
                     format!(
-                        "sysml/model: req_uri={} index_ok=true semantic_nodes={} graph_uris={:?}",
+                        "sysml/model: req_uri={} index_ok=true parsed_ok={} semantic_nodes={} graph_uris_count={} graph_uris_sample={:?}",
                         uri.as_str(),
+                        parsed_ok,
                         node_count,
-                        graph_uris,
+                        graph_uris.len(),
+                        graph_uris.iter().take(3).collect::<Vec<_>>(),
                     ),
                 )
                 .await;

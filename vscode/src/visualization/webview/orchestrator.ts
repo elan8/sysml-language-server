@@ -1351,7 +1351,7 @@ let lastPillarStats = {};
                     label: baseLabel,
                     baseLabel: baseLabel,
                     type: 'element',
-                    sysmlType: node.type,
+                    sysmlType: node.type || node.element_type,
                     elementName: node.name,
                     color: borderColor,
                     isDefinition,

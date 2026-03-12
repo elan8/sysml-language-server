@@ -186,7 +186,7 @@ export class ModelExplorerProvider
     fileUris: vscode.Uri[],
     token?: vscode.CancellationToken
   ): Promise<void> {
-    log("loadWorkspaceModel:", fileUris.length, "files");
+    log("loadWorkspaceModel:", fileUris.length, "files. URIs:", fileUris.map((u) => u.toString()));
     this.workspaceMode = true;
     this.workspaceFileUris = fileUris;
     this.lastUri = undefined;
@@ -197,22 +197,26 @@ export class ModelExplorerProvider
     try {
       for (const uri of fileUris) {
         if (token?.isCancellationRequested) break;
+        const uriStr = uri.toString();
         try {
+          log("loadWorkspaceModel: requesting getModel for", uriStr);
           const result = await this.modelProvider.getModel(
-            uri.toString(),
+            uriStr,
             ["graph", "stats"],
             token
           );
           const elements = result.graph ? (graphToElementTree(result.graph) as SysMLElementDTO[]) : [];
           if (elements.length) {
-            log("loadWorkspaceModel: loaded", uri.toString().slice(-50), "->", elements.length, "elements");
-            this.workspaceFileData.set(uri.toString(), {
+            log("loadWorkspaceModel: loaded", uriStr, "->", elements.length, "elements");
+            this.workspaceFileData.set(uriStr, {
               uri,
               elements,
             });
+          } else {
+            log("loadWorkspaceModel: 0 elements for", uriStr, "(graph nodes:", result.graph?.nodes?.length ?? 0, ")");
           }
         } catch (e) {
-          log("loadWorkspaceModel: skip file (failed):", uri.toString().slice(-50), e);
+          log("loadWorkspaceModel: skip file (failed):", uriStr, e);
         }
       }
     } finally {

@@ -73,7 +73,7 @@ export class LspModelProvider {
         graph: { nodes: [], edges: [] },
       };
     }
-    log("getModel:", trimmed.slice(-60), "scopes:", scopes);
+    log("getModel: uri (full)=", trimmed, "scopes:", scopes);
     await this.whenReady;
     const params: SysMLModelParams = {
       textDocument: { uri: trimmed },
@@ -87,9 +87,9 @@ export class LspModelProvider {
       const nodeCount = result.graph?.nodes?.length ?? 0;
       const edgeCount = result.graph?.edges?.length ?? 0;
 
-      // Retry once if empty: server may not have processed didOpen yet
+      // Retry once if empty: server may not have processed didOpen/workspace scan yet
       if (nodeCount === 0 && edgeCount === 0 && scopes?.includes("graph")) {
-        log("getModel: 0 nodes/edges, retrying after 300ms (didOpen may not be processed yet)");
+        log("getModel: 0 nodes/edges for uri=", trimmed, ", retrying after 300ms");
         await new Promise((r) => setTimeout(r, 300));
         result = await doRequest();
       }

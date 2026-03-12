@@ -152,17 +152,23 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
 
     const nodeDataMap = new Map<string, { compartments: SysMLNodeCompartments; height: number }>();
     cyNodes.forEach((el: any) => {
-        const element = el.data.element;
-        const compartments = element ? collectCompartmentsFromElement(element) : {
-            header: { stereotype: 'element', name: 'Unnamed' },
-            typedByName: null,
-            attributes: [],
-            parts: [],
-            ports: [],
-            other: []
-        };
+        const d = el.data;
+        const element = d.element;
+        const compartments = element
+            ? collectCompartmentsFromElement(element)
+            : {
+                header: {
+                    stereotype: (d.sysmlType || 'element').toLowerCase(),
+                    name: (d.elementName || d.label || d.baseLabel || 'Unnamed').toString()
+                },
+                typedByName: null,
+                attributes: [],
+                parts: [],
+                ports: [],
+                other: []
+            };
         const nodeHeight = computeNodeHeightFromCompartments(compartments, GENERAL_VIEW_NODE_CONFIG, NODE_WIDTH);
-        nodeDataMap.set(el.data.id, { compartments, height: Math.max(NODE_HEIGHT_BASE, nodeHeight) });
+        nodeDataMap.set(d.id, { compartments, height: Math.max(NODE_HEIGHT_BASE, nodeHeight) });
     });
 
     // Layout uses ALL edges (hierarchy + typing) so ELK positions the full tree correctly.
