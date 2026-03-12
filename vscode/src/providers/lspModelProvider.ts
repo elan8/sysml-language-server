@@ -13,10 +13,15 @@ import type {
 /** Convert GraphNodeDTO to SysMLElementDTO for findElement compatibility. */
 function graphNodeToElementDTO(
   node: GraphNodeDTO,
-  graph: SysMLGraphDTO
+  graph: SysMLGraphDTO,
+  visited: Set<string> = new Set()
 ): SysMLElementDTO {
+  if (visited.has(node.id)) {
+    return { type: node.type, name: node.name, range: node.range, children: [], attributes: node.attributes || {}, relationships: [] };
+  }
+  visited.add(node.id);
   const children = (graph.nodes || []).filter((n) => n.parentId === node.id);
-  const childDTOs = children.map((c) => graphNodeToElementDTO(c, graph));
+  const childDTOs = children.map((c) => graphNodeToElementDTO(c, graph, visited));
   const edgeType = (e: { type?: string; rel_type?: string }) => e.type || e.rel_type || '';
   const relationships = (graph.edges || [])
     .filter((e) => e.source === node.id && edgeType(e).toLowerCase() !== 'contains')

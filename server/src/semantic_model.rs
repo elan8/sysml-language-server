@@ -342,22 +342,43 @@ pub fn build_graph_from_doc(root: &RootNamespace, uri: &Url) -> SemanticGraph {
                 }
             }
         };
+        let pkg_qualified_disambiguated = qualified_name_for_node(
+            &g,
+            uri,
+            None,
+            if pkg_name_display == "(top level)" {
+                ""
+            } else {
+                &pkg_name_display
+            },
+            "package",
+        );
+        let pkg_qualified_final = if pkg_qualified_disambiguated.is_empty() {
+            pkg_qualified.clone()
+        } else {
+            pkg_qualified_disambiguated
+        };
         add_node_and_recurse(
             &mut g,
             uri,
-            &pkg_qualified,
+            &pkg_qualified_final,
             "package",
             pkg_name_display,
             span_to_range(pkg_span),
             HashMap::new(),
             None,
         );
-        let package_node_id = NodeId::new(uri, &pkg_qualified);
+        let package_node_id = NodeId::new(uri, &pkg_qualified_final);
+        let child_prefix = if pkg_qualified == "(top level)" || pkg_qualified.is_empty() {
+            None
+        } else {
+            Some(pkg_qualified_final.as_str())
+        };
         for el in elements {
             build_from_package_body_element(
                 el,
                 uri,
-                None,
+                child_prefix,
                 Some(&package_node_id),
                 root,
                 &mut g,
@@ -380,7 +401,7 @@ fn build_from_package_body_element(
         PBE::Package(pkg_node) => {
             let name = identification_name(&pkg_node.identification);
             let name_display = if name.is_empty() { "(top level)" } else { name.as_str() };
-            let qualified = qualified_name(container_prefix, name_display);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name_display, "package");
             let node_id = NodeId::new(uri, &qualified);
             let range = span_to_range(&pkg_node.span);
             let sem_node = SemanticNode {
@@ -407,7 +428,7 @@ fn build_from_package_body_element(
         }
         PBE::PartDef(pd_node) => {
             let name = identification_name(&pd_node.identification);
-            let qualified = qualified_name(container_prefix, &name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "part def");
             let range = span_to_range(&pd_node.span);
             let mut attrs = HashMap::new();
             if let Some(ref s) = pd_node.specializes {
@@ -436,7 +457,7 @@ fn build_from_package_body_element(
         }
         PBE::PartUsage(pu_node) => {
             let name = &pu_node.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "part");
             let range = span_to_range(&pu_node.span);
             let mut attrs = HashMap::new();
             attrs.insert("partType".to_string(), serde_json::json!(&pu_node.type_name));
@@ -465,7 +486,7 @@ fn build_from_package_body_element(
         }
         PBE::PortDef(pd_node) => {
             let name = identification_name(&pd_node.identification);
-            let qualified = qualified_name(container_prefix, &name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "port def");
             let range = span_to_range(&pd_node.span);
             add_node_and_recurse(g, uri, &qualified, "port def", name.clone(), range, HashMap::new(), parent_id);
             let node_id = NodeId::new(uri, &qualified);
@@ -477,7 +498,7 @@ fn build_from_package_body_element(
         }
         PBE::InterfaceDef(id_node) => {
             let name = identification_name(&id_node.identification);
-            let qualified = qualified_name(container_prefix, &name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "interface");
             let range = span_to_range(&id_node.span);
             add_node_and_recurse(g, uri, &qualified, "interface", name.clone(), range, HashMap::new(), parent_id);
             let _node_id = NodeId::new(uri, &qualified);
@@ -489,7 +510,7 @@ fn build_from_package_body_element(
         }
         PBE::AttributeDef(ad_node) => {
             let name = &ad_node.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "attribute def");
             let range = span_to_range(&ad_node.span);
             let mut attrs = HashMap::new();
             if let Some(ref t) = ad_node.typing {
@@ -499,13 +520,13 @@ fn build_from_package_body_element(
         }
         PBE::ActionDef(ad_node) => {
             let name = identification_name(&ad_node.identification);
-            let qualified = qualified_name(container_prefix, &name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "action def");
             let range = span_to_range(&ad_node.span);
             add_node_and_recurse(g, uri, &qualified, "action def", name.clone(), range, HashMap::new(), parent_id);
         }
         PBE::ActionUsage(au_node) => {
             let name = &au_node.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "action");
             let range = span_to_range(&au_node.span);
             add_node_and_recurse(g, uri, &qualified, "action", name.clone(), range, HashMap::new(), parent_id);
         }
@@ -526,7 +547,7 @@ fn build_from_part_def_body_element(
     match &node.value {
         PDBE::AttributeDef(n) => {
             let name = &n.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "attribute def");
             let range = span_to_range(&n.span);
             let mut attrs = HashMap::new();
             if let Some(ref t) = n.typing {
@@ -536,7 +557,7 @@ fn build_from_part_def_body_element(
         }
         PDBE::PortUsage(n) => {
             let name = &n.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "port");
             let range = span_to_range(&n.span);
             let mut attrs = HashMap::new();
             if let Some(ref t) = n.type_name {
@@ -546,7 +567,7 @@ fn build_from_part_def_body_element(
         }
         PDBE::PartUsage(n) => {
             let name = &n.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "part");
             let range = span_to_range(&n.span);
             let mut attrs = HashMap::new();
             attrs.insert("partType".to_string(), serde_json::json!(&n.type_name));
@@ -579,13 +600,13 @@ fn build_from_part_usage_body_element(
     match &node.value {
         PUBE::AttributeUsage(n) => {
             let name = &n.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "attribute");
             let range = span_to_range(&n.span);
             add_node_and_recurse(g, uri, &qualified, "attribute", name.clone(), range, HashMap::new(), Some(parent_id));
         }
         PUBE::PartUsage(n) => {
             let name = &n.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "part");
             let range = span_to_range(&n.span);
             let mut attrs = HashMap::new();
             attrs.insert("partType".to_string(), serde_json::json!(&n.type_name));
@@ -603,7 +624,7 @@ fn build_from_part_usage_body_element(
         }
         PUBE::PortUsage(n) => {
             let name = &n.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "port");
             let range = span_to_range(&n.span);
             let mut attrs = HashMap::new();
             if let Some(ref t) = n.type_name {
@@ -656,7 +677,7 @@ fn build_from_port_def_body_element(
     match &node.value {
         PDBE::PortUsage(n) => {
             let name = &n.name;
-            let qualified = qualified_name(container_prefix, name);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "port");
             let range = span_to_range(&n.span);
             let mut attrs = HashMap::new();
             if let Some(ref t) = n.type_name {
@@ -682,6 +703,26 @@ fn qualified_name(container_prefix: Option<&str>, name: &str) -> String {
     match container_prefix {
         Some(p) if !p.is_empty() => format!("{}::{}", p, name),
         _ => name.to_string(),
+    }
+}
+
+/// Returns a qualified name that is unique among siblings. When a node with the same
+/// base qualified name already exists (e.g. package and part def with same name), appends
+/// #kind to disambiguate.
+fn qualified_name_for_node(
+    g: &SemanticGraph,
+    uri: &Url,
+    container_prefix: Option<&str>,
+    name: &str,
+    kind: &str,
+) -> String {
+    let base = qualified_name(container_prefix, name);
+    let kind_suffix = kind.replace(' ', "_");
+    let node_id = NodeId::new(uri, &base);
+    if g.node_index_by_id.contains_key(&node_id) {
+        format!("{}#{}", base, kind_suffix)
+    } else {
+        base
     }
 }
 
@@ -817,11 +858,23 @@ fn expand_part_def_members(
             use sysml_parser::ast::PartDefBodyElement as PDBE;
             match &node.value {
                 PDBE::AttributeDef(n) => {
-                    let qualified = format!("{}::{}", container_qualified, n.name);
+                    let qualified = qualified_name_for_node(
+                        g,
+                        uri,
+                        Some(container_qualified),
+                        &n.name,
+                        "attribute def",
+                    );
                     add_node_if_not_exists(g, uri, &qualified, "attribute def", n.name.clone(), parent_id);
                 }
                 PDBE::PortUsage(n) => {
-                    let qualified = format!("{}::{}", container_qualified, n.name);
+                    let qualified = qualified_name_for_node(
+                        g,
+                        uri,
+                        Some(container_qualified),
+                        &n.name,
+                        "port",
+                    );
                     add_node_if_not_exists(g, uri, &qualified, "port", n.name.clone(), parent_id);
                 }
                 _ => {}
@@ -878,8 +931,28 @@ fn type_ref_candidates(container_prefix: Option<&str>, type_ref: &str) -> Vec<St
     candidates
 }
 
+/// Like type_ref_candidates but also includes #kind-suffixed variants for disambiguated nodes
+/// (e.g. when a package and part def share the same name).
+fn type_ref_candidates_with_kind(
+    container_prefix: Option<&str>,
+    type_ref: &str,
+    kind: &str,
+) -> Vec<String> {
+    let base = type_ref_candidates(container_prefix, type_ref);
+    let kind_suffix = kind.replace(' ', "_");
+    let mut out = base.clone();
+    for c in base {
+        if !c.contains('#') {
+            out.push(format!("{}#{}", c, kind_suffix));
+        }
+    }
+    out
+}
+
 /// Adds a typing edge if source exists and target can be resolved. Tries type_ref as-is,
-/// then qualified with package prefixes from container_prefix.
+/// then qualified with package prefixes, then #kind-suffixed variants for disambiguated nodes.
+/// Only matches targets that are actual types (part def, port def, interface) to avoid
+/// matching a package that shares the same name.
 fn add_typing_edge_if_exists(
     g: &mut SemanticGraph,
     uri: &Url,
@@ -887,9 +960,19 @@ fn add_typing_edge_if_exists(
     type_ref: &str,
     container_prefix: Option<&str>,
 ) {
-    for tgt in type_ref_candidates(container_prefix, type_ref) {
-        if add_edge_if_both_exist(g, uri, source_qualified, &tgt, RelationshipKind::Typing) {
-            break;
+    const TYPING_TARGET_KINDS: &[&str] = &["part def", "port def", "interface"];
+    for kind in ["part_def", "port_def"] {
+        for tgt in type_ref_candidates_with_kind(container_prefix, type_ref, kind) {
+            if add_edge_if_both_exist_opt(
+                g,
+                uri,
+                source_qualified,
+                &tgt,
+                RelationshipKind::Typing,
+                Some(TYPING_TARGET_KINDS),
+            ) {
+                return;
+            }
         }
     }
 }
@@ -897,6 +980,7 @@ fn add_typing_edge_if_exists(
 /// Adds a specializes edge if source exists and target can be resolved. Same resolution as typing:
 /// specializes target may be unqualified (e.g. "SurveillanceQuadrotorDrone") while the node
 /// has qualified name (e.g. "SurveillanceDrone::SurveillanceQuadrotorDrone").
+/// Only matches PartDef targets to avoid matching a package.
 fn add_specializes_edge_if_exists(
     g: &mut SemanticGraph,
     uri: &Url,
@@ -904,8 +988,16 @@ fn add_specializes_edge_if_exists(
     specializes_ref: &str,
     container_prefix: Option<&str>,
 ) {
-    for tgt in type_ref_candidates(container_prefix, specializes_ref) {
-        if add_edge_if_both_exist(g, uri, source_qualified, &tgt, RelationshipKind::Specializes) {
+    const SPECIALIZES_TARGET_KINDS: &[&str] = &["part def"];
+    for tgt in type_ref_candidates_with_kind(container_prefix, specializes_ref, "part_def") {
+        if add_edge_if_both_exist_opt(
+            g,
+            uri,
+            source_qualified,
+            &tgt,
+            RelationshipKind::Specializes,
+            Some(SPECIALIZES_TARGET_KINDS),
+        ) {
             break;
         }
     }
@@ -957,6 +1049,8 @@ pub fn add_cross_document_edges_for_uri(g: &mut SemanticGraph, uri: &Url) {
 }
 
 /// Adds a typing or specializes edge when target may be in a different URI.
+/// Only matches targets that are actual types (part def, port def, interface for typing;
+/// part def only for specializes).
 fn add_typing_edge_cross_document(
     g: &mut SemanticGraph,
     src_id: &NodeId,
@@ -964,17 +1058,31 @@ fn add_typing_edge_cross_document(
     container_prefix: Option<&str>,
     kind: RelationshipKind,
 ) {
+    let target_element_kinds: &[&str] = match kind {
+        RelationshipKind::Typing => &["part def", "port def", "interface"],
+        RelationshipKind::Specializes => &["part def"],
+        _ => &[],
+    };
     let src_idx = match g.node_index_by_id.get(src_id) {
         Some(&idx) => idx,
         None => return,
     };
-    for tgt_qualified in type_ref_candidates(container_prefix, type_ref) {
+    let suffix_kinds = ["part_def", "port_def"];
+    let candidates: Vec<String> = suffix_kinds
+        .iter()
+        .flat_map(|k| type_ref_candidates_with_kind(container_prefix, type_ref, k))
+        .collect();
+    for tgt_qualified in candidates {
         let tgt_qualified = normalize_for_lookup(&tgt_qualified);
         for uri in g.nodes_by_uri.keys() {
             let tgt_id = NodeId::new(uri, &tgt_qualified);
-            if let Some(&tgt_idx) = g.node_index_by_id.get(&tgt_id) {
-                g.graph.add_edge(src_idx, tgt_idx, kind.clone());
-                return;
+            if let Some(tgt_node) = g.get_node(&tgt_id) {
+                if target_element_kinds.contains(&tgt_node.element_kind.as_str()) {
+                    if let Some(&tgt_idx) = g.node_index_by_id.get(&tgt_id) {
+                        g.graph.add_edge(src_idx, tgt_idx, kind.clone());
+                        return;
+                    }
+                }
             }
         }
     }
@@ -1072,16 +1180,36 @@ fn add_edge_if_both_exist(
     target_qualified: &str,
     kind: RelationshipKind,
 ) -> bool {
+    add_edge_if_both_exist_opt(g, uri, source_qualified, target_qualified, kind, None)
+}
+
+/// Like add_edge_if_both_exist but for typing/specializes: only adds when target is a type
+/// (part def, port def, interface). Avoids matching a package that shares the same name.
+fn add_edge_if_both_exist_opt(
+    g: &mut SemanticGraph,
+    uri: &Url,
+    source_qualified: &str,
+    target_qualified: &str,
+    kind: RelationshipKind,
+    target_kinds: Option<&[&str]>,
+) -> bool {
     let src_key = normalize_for_lookup(source_qualified);
     let tgt_key = normalize_for_lookup(target_qualified);
     let src_id = NodeId::new(uri, &src_key);
     let tgt_id = NodeId::new(uri, &tgt_key);
-    let (Some(&src_idx), Some(&tgt_idx)) = (
+    let (Some(&src_idx), Some(tgt_node)) = (
         g.node_index_by_id.get(&src_id),
-        g.node_index_by_id.get(&tgt_id),
+        g.get_node(&tgt_id),
     ) else {
         return false;
     };
+    if let Some(kinds) = target_kinds {
+        let ek = tgt_node.element_kind.as_str();
+        if !kinds.iter().any(|k| ek == *k) {
+            return false;
+        }
+    }
+    let tgt_idx = g.node_index_by_id.get(&tgt_id).copied().unwrap();
     g.graph.add_edge(src_idx, tgt_idx, kind);
     true
 }
