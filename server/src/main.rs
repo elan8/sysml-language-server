@@ -1,63 +1,23 @@
 //! SysML v2 language server (LSP over stdio).
-#![allow(deprecated)] // LSP deprecated field in SymbolInformation; use tags in future
-
 mod ast_util;
+mod dto;
 mod ibd;
 mod language;
 mod model;
 mod semantic_model;
 mod semantic_tokens;
+mod sysml_model;
+mod util;
 
-use sysml_parser::RootNamespace;
 use std::sync::Arc;
 use std::time::Instant;
-use tower_lsp::lsp_types::Range;
-
-/// Applies an incremental content change (range + new text) to the document.
-/// LSP uses line/character; we treat character as byte offset within the line (UTF-8).
-fn apply_incremental_change(text: &str, range: &Range, new_text: &str) -> Option<String> {
-    let lines: Vec<&str> = text.split('\n').collect();
-    let start_line = range.start.line as usize;
-    let start_char = range.start.character as usize;
-    let end_line = range.end.line as usize;
-    let end_char = range.end.character as usize;
-    if start_line >= lines.len() || end_line >= lines.len() {
-        return None;
-    }
-    let mut start_byte = 0usize;
-    for (i, line) in lines.iter().enumerate() {
-        if i < start_line {
-            start_byte += line.len() + 1;
-        } else {
-            start_byte += start_char.min(line.len());
-            break;
-        }
-    }
-    let mut end_byte = 0usize;
-    for (i, line) in lines.iter().enumerate() {
-        if i < end_line {
-            end_byte += line.len() + 1;
-        } else {
-            end_byte += end_char.min(line.len());
-            break;
-        }
-    }
-    if start_byte > text.len() || end_byte > text.len() || start_byte > end_byte {
-        return None;
-    }
-    let mut out = String::with_capacity(text.len() - (end_byte - start_byte) + new_text.len());
-    out.push_str(&text[..start_byte]);
-    out.push_str(new_text);
-    out.push_str(&text[end_byte..]);
-    Some(out)
-}
+use sysml_parser::RootNamespace;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use semantic_tokens::{ast_semantic_ranges, legend, semantic_tokens_full, semantic_tokens_range};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use walkdir::WalkDir;
-use serde::Serialize;
 
 use language::{
     collect_definition_ranges, collect_document_symbols,
@@ -91,282 +51,6 @@ struct ServerState {
 // Custom requests (extension)
 // -------------------------
 
-/// Parse sysml/model params from JSON-RPC value. Accepts both object format
-/// ({"textDocument":{"uri":"..."},"scope":[...]}) and positional array
-/// (for clients that send params as array).
-fn parse_sysml_model_params(v: &serde_json::Value) -> Result<(Url, Vec<String>)> {
-    let (uri_str, scope_value) = if let Some(arr) = v.as_array() {
-        // Positional: [uri_or_text_doc, scope?]
-        let first = arr.get(0).ok_or_else(|| {
-            tower_lsp::jsonrpc::Error::invalid_params("sysml/model params array must have at least one element")
-        })?;
-        let uri_str = if let Some(s) = first.as_str() {
-            Some(s.to_string())
-        } else if let Some(obj) = first.as_object() {
-            obj.get("uri").and_then(|u| u.as_str()).map(String::from)
-                .or_else(|| obj.get("textDocument").and_then(|td| td.get("uri")).and_then(|u| u.as_str()).map(String::from))
-        } else {
-            None
-        };
-        let scope_value = arr.get(1);
-        (uri_str, scope_value)
-    } else if let Some(obj) = v.as_object() {
-        let uri_str = obj.get("uri").and_then(|u| u.as_str()).map(String::from)
-            .or_else(|| obj.get("textDocument").and_then(|td| td.get("uri")).and_then(|u| u.as_str()).map(String::from));
-        let scope_value = obj.get("scope");
-        (uri_str, scope_value)
-    } else {
-        return Err(tower_lsp::jsonrpc::Error::invalid_params(
-            "sysml/model params must be an object or array",
-        ));
-    };
-
-    let uri = uri_str
-        .as_ref()
-        .ok_or_else(|| tower_lsp::jsonrpc::Error::invalid_params("sysml/model requires 'uri' or 'textDocument.uri'"))?;
-    let uri = Url::parse(uri).map_err(|_| {
-        tower_lsp::jsonrpc::Error::invalid_params("sysml/model: invalid URI")
-    })?;
-    let uri = normalize_file_uri(&uri);
-
-    let scope: Vec<String> = scope_value
-        .and_then(|s| serde_json::from_value(s.clone()).ok())
-        .unwrap_or_default();
-
-    Ok((uri, scope))
-}
-
-#[derive(Debug, Serialize)]
-struct PositionDto {
-    line: u32,
-    character: u32,
-}
-
-#[derive(Debug, Serialize)]
-struct RangeDto {
-    start: PositionDto,
-    end: PositionDto,
-}
-
-#[derive(Debug, Serialize)]
-struct RelationshipDto {
-    #[serde(rename = "type")]
-    rel_type: String,
-    source: String,
-    target: String,
-    name: Option<String>,
-}
-
-/// Graph node for frontend (qualified name as id).
-#[derive(Debug, Serialize)]
-struct GraphNodeDto {
-    id: String,
-    #[serde(rename = "type")]
-    element_type: String,
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "parentId")]
-    parent_id: Option<String>,
-    range: RangeDto,
-    attributes: std::collections::HashMap<String, serde_json::Value>,
-}
-
-/// Graph edge (source/target are node ids).
-#[derive(Debug, Serialize)]
-struct GraphEdgeDto {
-    source: String,
-    target: String,
-    #[serde(rename = "type")]
-    rel_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct SysmlGraphDto {
-    nodes: Vec<GraphNodeDto>,
-    edges: Vec<GraphEdgeDto>,
-}
-
-#[derive(Debug, Serialize)]
-struct SysmlElementDto {
-    #[serde(rename = "type")]
-    element_type: String,
-    name: String,
-    range: RangeDto,
-    children: Vec<SysmlElementDto>,
-    attributes: std::collections::HashMap<String, serde_json::Value>,
-    relationships: Vec<RelationshipDto>,
-    errors: Option<Vec<String>>,
-}
-
-#[derive(Debug, Serialize)]
-struct SysmlModelStatsDto {
-    #[serde(rename = "totalElements")]
-    total_elements: u32,
-    #[serde(rename = "resolvedElements")]
-    resolved_elements: u32,
-    #[serde(rename = "unresolvedElements")]
-    unresolved_elements: u32,
-    #[serde(rename = "parseTimeMs")]
-    parse_time_ms: u32,
-    #[serde(rename = "modelBuildTimeMs")]
-    model_build_time_ms: u32,
-    #[serde(rename = "parseCached")]
-    parse_cached: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SysmlModelResultDto {
-    version: u32,
-    graph: Option<SysmlGraphDto>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    activity_diagrams: Option<Vec<model::ActivityDiagramDto>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    sequence_diagrams: Option<Vec<model::SequenceDiagramDto>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ibd: Option<ibd::IbdDataDto>,
-    stats: Option<SysmlModelStatsDto>,
-}
-
-#[derive(Debug, Serialize)]
-struct SysmlServerStatsDto {
-    uptime: u64,
-    memory: SysmlServerMemoryDto,
-    caches: SysmlServerCachesDto,
-}
-
-#[derive(Debug, Serialize)]
-struct SysmlServerMemoryDto {
-    /// Resident set size in MB (best-effort). Currently 0 when not available.
-    rss: u64,
-}
-
-#[derive(Debug, Serialize)]
-struct SysmlServerCachesDto {
-    documents: usize,
-    #[serde(rename = "symbolTables")]
-    symbol_tables: usize,
-    #[serde(rename = "semanticTokens")]
-    semantic_tokens: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct SysmlClearCacheResultDto {
-    documents: usize,
-    #[serde(rename = "symbolTables")]
-    symbol_tables: usize,
-    #[serde(rename = "semanticTokens")]
-    semantic_tokens: usize,
-}
-
-fn range_to_dto(r: Range) -> RangeDto {
-    RangeDto {
-        start: PositionDto {
-            line: r.start.line,
-            character: r.start.character,
-        },
-        end: PositionDto {
-            line: r.end.line,
-            character: r.end.character,
-        },
-    }
-}
-
-#[allow(dead_code)]
-fn semantic_node_to_dto(
-    node: &semantic_model::SemanticNode,
-    graph: &semantic_model::SemanticGraph,
-) -> SysmlElementDto {
-    let mut relationships = Vec::new();
-    if let Some(v) = node
-        .attributes
-        .get("partType")
-        .or_else(|| node.attributes.get("portType"))
-        .or_else(|| node.attributes.get("actorType"))
-    {
-        if let Some(t) = v.as_str() {
-            relationships.push(RelationshipDto {
-                rel_type: "typing".to_string(),
-                source: node.name.clone(),
-                target: t.to_string(),
-                name: None,
-            });
-        }
-    }
-    if let Some(v) = node.attributes.get("specializes") {
-        if let Some(s) = v.as_str() {
-            relationships.push(RelationshipDto {
-                rel_type: "specializes".to_string(),
-                source: node.name.clone(),
-                target: s.to_string(),
-                name: None,
-            });
-        }
-    }
-    let children = graph
-        .children_of(node)
-        .into_iter()
-        .map(|c| semantic_node_to_dto(c, graph))
-        .collect();
-    SysmlElementDto {
-        element_type: node.element_kind.clone(),
-        name: node.name.clone(),
-        range: range_to_dto(node.range),
-        children,
-        attributes: node.attributes.clone(),
-        relationships,
-        errors: None,
-    }
-}
-
-#[allow(dead_code)] // Kept as fallback; sysml/model now uses semantic graph
-fn model_element_to_dto(el: &language::ModelElement) -> SysmlElementDto {
-    let mut relationships = Vec::new();
-    if let Some(v) = el
-        .attributes
-        .get("partType")
-        .or_else(|| el.attributes.get("portType"))
-        .or_else(|| el.attributes.get("actorType"))
-    {
-        if let Some(t) = v.as_str() {
-            relationships.push(RelationshipDto {
-                rel_type: "typing".to_string(),
-                source: el.name.clone(),
-                target: t.to_string(),
-                name: None,
-            });
-        }
-    }
-    if let Some(v) = el.attributes.get("specializes") {
-        if let Some(s) = v.as_str() {
-            relationships.push(RelationshipDto {
-                rel_type: "specializes".to_string(),
-                source: el.name.clone(),
-                target: s.to_string(),
-                name: None,
-            });
-        }
-    }
-    SysmlElementDto {
-        element_type: el.element_type.clone(),
-        name: el.name.clone(),
-        range: range_to_dto(el.range),
-        children: el.children.iter().map(model_element_to_dto).collect(),
-        attributes: el.attributes.clone(),
-        relationships,
-        errors: None,
-    }
-}
-
-#[allow(dead_code)]
-fn count_elements(elements: &[SysmlElementDto]) -> u32 {
-    fn rec(e: &SysmlElementDto) -> u32 {
-        1 + e.children.iter().map(rec).sum::<u32>()
-    }
-    elements.iter().map(rec).sum()
-}
-
 /// Removes all symbol table entries for `uri`, then appends `new_entries` if provided.
 fn update_symbol_table_for_uri(
     state: &mut ServerState,
@@ -384,43 +68,6 @@ fn remove_symbol_table_entries_for_uri(state: &mut ServerState, uri: &Url) {
     state.symbol_table.retain(|e| e.uri != *uri);
 }
 
-/// Normalize file URIs so that file:///C:/... and file:///c%3A/... (from client) match in the index.
-/// Uses lowercase drive letter and decoded path so both server (from_file_path) and client URIs align.
-fn normalize_file_uri(uri: &Url) -> Url {
-    if uri.scheme() != "file" {
-        return uri.clone();
-    }
-    let path = uri.path();
-    if path.len() >= 3 {
-        let mut chars: Vec<char> = path.chars().collect();
-        if chars[0] == '/' && chars[1].is_ascii_alphabetic() && chars.get(2) == Some(&':') {
-            chars[1] = chars[1].to_lowercase().next().unwrap_or(chars[1]);
-            let new_path: String = chars.into_iter().collect();
-            if let Ok(u) = Url::parse(&format!("file://{}", new_path)) {
-                return u;
-            }
-        }
-    }
-    uri.clone()
-}
-
-/// When parse fails, get diagnostic messages from parse_with_diagnostics for logging.
-fn parse_failure_diagnostics(content: &str, max_errors: usize) -> Vec<String> {
-    let result = sysml_parser::parse_with_diagnostics(content);
-    result
-        .errors
-        .iter()
-        .take(max_errors)
-        .map(|e| {
-            let loc = e
-                .to_lsp_range()
-                .map(|(sl, sc, _, _)| format!("{}:{}", sl, sc))
-                .unwrap_or_else(|| format!("{:?}:{:?}", e.line, e.column));
-            format!("{} {}", loc, e.message)
-        })
-        .collect()
-}
-
 /// Updates the semantic graph for a URI: removes existing nodes, then merges new graph from parsed doc.
 fn update_semantic_graph_for_uri(
     state: &mut ServerState,
@@ -433,66 +80,6 @@ fn update_semantic_graph_for_uri(
         state.semantic_graph.merge(new_graph);
         semantic_model::add_cross_document_edges_for_uri(&mut state.semantic_graph, uri);
     }
-}
-
-/// Returns true if `uri` is under any of the library path roots (path prefix check).
-fn uri_under_any_library(uri: &Url, library_paths: &[Url]) -> bool {
-    let uri_path = match uri.to_file_path() {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-    for lib in library_paths {
-        if let Ok(lib_path) = lib.to_file_path() {
-            if uri_path.starts_with(&lib_path) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Parse library paths from LSP config (initialization_options or didChangeConfiguration settings).
-fn parse_library_paths_from_value(value: Option<&serde_json::Value>) -> Vec<Url> {
-    value
-        .and_then(|opts| opts.get("libraryPaths"))
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| s.as_str())
-                .filter_map(|path_str| {
-                    let path = std::path::PathBuf::from(path_str);
-                    Url::from_file_path(path).ok()
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Builds Markdown for symbol hover: title (kind + name), code block with signature or description, container, optional location.
-fn symbol_hover_markdown(entry: &SymbolEntry, show_location: bool) -> String {
-    let kind = entry
-        .detail
-        .as_deref()
-        .unwrap_or("symbol");
-    let name = &entry.name;
-    let mut md = format!("**{}** `{}`\n\n", kind, name);
-    let code_block = entry
-        .signature
-        .as_deref()
-        .or(entry.description.as_deref())
-        .unwrap_or(name.as_str());
-    md.push_str("```sysml\n");
-    md.push_str(code_block);
-    md.push_str("\n```\n\n");
-    if let Some(ref pkg) = entry.container_name {
-        if pkg != "(top level)" {
-            md.push_str(&format!("*Package:* `{}`\n\n", pkg));
-        }
-    }
-    if show_location {
-        md.push_str(&format!("*Defined in:* {}", entry.uri.path()));
-    }
-    md
 }
 
 #[derive(Debug)]
@@ -512,7 +99,8 @@ impl LanguageServer for Backend {
             .map(|folders| folders.iter().map(|f| f.uri.clone()).collect())
             .or_else(|| params.root_uri.as_ref().map(|u| vec![u.clone()]))
             .unwrap_or_default();
-        let library_paths: Vec<Url> = parse_library_paths_from_value(params.initialization_options.as_ref());
+        let library_paths: Vec<Url> =
+            util::parse_library_paths_from_value(params.initialization_options.as_ref());
         {
             let mut state = self.state.write().await;
             state.workspace_roots = roots;
@@ -606,10 +194,10 @@ impl LanguageServer for Backend {
             let mut st = state.write().await;
             let mut uris_loaded = Vec::new();
             for (uri, content) in entries {
-                let uri_norm = normalize_file_uri(&uri);
+                let uri_norm = util::normalize_file_uri(&uri);
                 let parsed = sysml_parser::parse(&content).ok();
                 if parsed.is_none() {
-                    let errs = parse_failure_diagnostics(&content, 5);
+                    let errs = util::parse_failure_diagnostics(&content, 5);
                     eprintln!(
                         "[sysml-ls] workspace scan: parse failed for {} ({} diagnostics): {:?}",
                         uri_norm.as_str(),
@@ -651,11 +239,11 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri.clone();
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let text = params.text_document.text;
         let parsed = sysml_parser::parse(&text).ok();
         if parsed.is_none() {
-            let errs = parse_failure_diagnostics(&text, 5);
+            let errs = util::parse_failure_diagnostics(&text, 5);
             let msg = if errs.is_empty() {
                 format!(
                     "sysml parse failed for {} (0 diagnostics; parser returned no AST and no error list)",
@@ -689,14 +277,14 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         {
             let mut state = self.state.write().await;
             let should_update = if let Some(entry) = state.index.get_mut(&uri_norm) {
                 for change in params.content_changes {
                     if let Some(range) = change.range {
                         if let Some(new_text) =
-                            apply_incremental_change(&entry.content, &range, &change.text)
+                            util::apply_incremental_change(&entry.content, &range, &change.text)
                         {
                             entry.content = new_text;
                         }
@@ -754,7 +342,7 @@ impl LanguageServer for Backend {
         use tower_lsp::lsp_types::FileChangeType;
         let mut state = self.state.write().await;
         for event in params.changes {
-            let uri_norm = normalize_file_uri(&event.uri);
+            let uri_norm = util::normalize_file_uri(&event.uri);
             if event.typ == FileChangeType::CREATED || event.typ == FileChangeType::CHANGED {
                 if let Ok(path) = event.uri.to_file_path() {
                     if let Ok(content) = tokio::fs::read_to_string(&path).await {
@@ -791,8 +379,8 @@ impl LanguageServer for Backend {
         let new_library_paths = params
             .settings
             .get("sysml-language-server")
-            .map(|v| parse_library_paths_from_value(Some(v)))
-            .unwrap_or_else(|| parse_library_paths_from_value(Some(&params.settings)));
+            .map(|v| util::parse_library_paths_from_value(Some(v)))
+            .unwrap_or_else(|| util::parse_library_paths_from_value(Some(&params.settings)));
         let mut state = self.state.write().await;
         let old_library_paths = std::mem::take(&mut state.library_paths);
         if new_library_paths == old_library_paths {
@@ -802,7 +390,7 @@ impl LanguageServer for Backend {
         let uris_to_remove: Vec<Url> = state
             .index
             .keys()
-            .filter(|uri| uri_under_any_library(uri, &old_library_paths))
+            .filter(|uri| util::uri_under_any_library(uri, &old_library_paths))
             .cloned()
             .collect();
         for uri in &uris_to_remove {
@@ -847,7 +435,7 @@ impl LanguageServer for Backend {
             let mut st = state.write().await;
             let mut uris_loaded = Vec::new();
             for (uri, content) in entries {
-                let uri_norm = normalize_file_uri(&uri);
+                let uri_norm = util::normalize_file_uri(&uri);
                 let parsed = sysml_parser::parse(&content).ok();
                 update_semantic_graph_for_uri(&mut st, &uri_norm, parsed.as_ref());
                 uris_loaded.push(uri_norm.clone());
@@ -869,7 +457,7 @@ impl LanguageServer for Backend {
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri.clone();
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let pos = params.text_document_position_params.position;
         let state = self.state.read().await;
         let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
@@ -922,10 +510,10 @@ impl LanguageServer for Backend {
                     md.push_str(&format!("• `{}` in `{}`\n", kind, container));
                 }
                 md.push_str("\n");
-                md.push_str(&symbol_hover_markdown(entry, entry.uri != uri_norm));
+                md.push_str(&util::symbol_hover_markdown(entry, entry.uri != uri_norm));
                 md
             } else {
-                symbol_hover_markdown(entry, entry.uri != uri_norm)
+                util::symbol_hover_markdown(entry, entry.uri != uri_norm)
             };
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
@@ -941,7 +529,7 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let pos = params.text_document_position.position;
         let state = self.state.read().await;
         let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
@@ -984,7 +572,7 @@ impl LanguageServer for Backend {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri.clone();
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let pos = params.text_document_position_params.position;
         let state = self.state.read().await;
         let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
@@ -1038,7 +626,7 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri.clone();
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let pos = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
         let state = self.state.read().await;
@@ -1086,7 +674,7 @@ impl LanguageServer for Backend {
         params: TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
         let uri = params.text_document.uri;
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let pos = params.position;
         let state = self.state.read().await;
         let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
@@ -1109,7 +697,7 @@ impl LanguageServer for Backend {
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = params.text_document_position.text_document.uri.clone();
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let pos = params.text_document_position.position;
         let new_name = params.new_name;
         let state = self.state.read().await;
@@ -1161,7 +749,7 @@ impl LanguageServer for Backend {
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
         let uri = params.text_document.uri;
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let state = self.state.read().await;
         let entry = match state.index.get(&uri_norm) {
             Some(e) => e,
@@ -1180,7 +768,7 @@ impl LanguageServer for Backend {
         params: FoldingRangeParams,
     ) -> Result<Option<Vec<FoldingRange>>> {
         let uri = params.text_document.uri;
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let state = self.state.read().await;
         let entry = match state.index.get(&uri_norm) {
             Some(e) => e,
@@ -1193,6 +781,7 @@ impl LanguageServer for Backend {
         Ok(Some(collect_folding_ranges(doc)))
     }
 
+    #[allow(deprecated)] // SymbolInformation.deprecated; use tags in future
     async fn symbol(
         &self,
         params: tower_lsp::lsp_types::WorkspaceSymbolParams,
@@ -1223,7 +812,7 @@ impl LanguageServer for Backend {
         params: CodeActionParams,
     ) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri.clone();
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let state = self.state.read().await;
         let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
@@ -1243,7 +832,7 @@ impl LanguageServer for Backend {
         params: DocumentFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
         let uri = params.text_document.uri;
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let state = self.state.read().await;
         let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
             Some(t) => t.to_string(),
@@ -1258,7 +847,7 @@ impl LanguageServer for Backend {
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let state = self.state.read().await;
         let (text, ast_ranges) = match state.index.get(&uri_norm) {
             Some(e) => (
@@ -1282,7 +871,7 @@ impl LanguageServer for Backend {
         params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
         let uri = params.text_document.uri;
-        let uri_norm = normalize_file_uri(&uri);
+        let uri_norm = util::normalize_file_uri(&uri);
         let range = params.range;
         let state = self.state.read().await;
         let (text, ast_ranges) = match state.index.get(&uri_norm) {
@@ -1310,35 +899,9 @@ impl LanguageServer for Backend {
     }
 }
 
-fn empty_model_response(build_start: Instant) -> SysmlModelResultDto {
-    SysmlModelResultDto {
-        version: 0,
-        graph: Some(SysmlGraphDto {
-            nodes: vec![],
-            edges: vec![],
-        }),
-        activity_diagrams: None,
-        sequence_diagrams: None,
-        ibd: None,
-        stats: Some(SysmlModelStatsDto {
-            total_elements: 0,
-            resolved_elements: 0,
-            unresolved_elements: 0,
-            parse_time_ms: 0,
-            model_build_time_ms: build_start.elapsed().as_millis() as u32,
-            parse_cached: true,
-        }),
-    }
-}
-
 impl Backend {
-    async fn sysml_model(&self, params: serde_json::Value) -> Result<SysmlModelResultDto> {
-        let (uri, scope) = parse_sysml_model_params(&params)?;
-        let want_graph = scope.is_empty() || scope.iter().any(|s| s == "graph") || scope.iter().any(|s| s == "elements") || scope.iter().any(|s| s == "relationships");
-        let want_stats = scope.is_empty() || scope.iter().any(|s| s == "stats");
-        let want_activity_diagrams = scope.is_empty() || scope.iter().any(|s| s == "activityDiagrams");
-        let want_sequence_diagrams = scope.is_empty() || scope.iter().any(|s| s == "sequenceDiagrams");
-
+    async fn sysml_model(&self, params: serde_json::Value) -> Result<dto::SysmlModelResultDto> {
+        let (uri, scope) = sysml_model::parse_sysml_model_params(&params)?;
         let build_start = Instant::now();
         let state = self.state.read().await;
         let entry = match state.index.get(&uri) {
@@ -1366,152 +929,27 @@ impl Backend {
                         ),
                     )
                     .await;
-                return Ok(empty_model_response(build_start));
+                return Ok(sysml_model::empty_model_response(build_start));
             }
         };
-
-        let graph = if want_graph {
-            let sg_nodes = state.semantic_graph.nodes_for_uri(&uri);
-            let node_count = sg_nodes.len();
-            let graph_uris = state.semantic_graph.uris_with_nodes();
-            let parsed_ok = entry.parsed.is_some();
-            if !parsed_ok {
-                let errs = parse_failure_diagnostics(&entry.content, 5);
-                self.client
-                    .log_message(
-                        MessageType::WARNING,
-                        format!(
-                            "sysml/model: document in index but parse failed (parsed_ok=false). uri={} parse_errors={}",
-                            uri.as_str(),
-                            errs.join("; "),
-                        ),
-                    )
-                    .await;
-            }
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!(
-                        "sysml/model: req_uri={} index_ok=true parsed_ok={} semantic_nodes={} graph_uris_count={} graph_uris_sample={:?}",
-                        uri.as_str(),
-                        parsed_ok,
-                        node_count,
-                        graph_uris.len(),
-                        graph_uris.iter().take(3).collect::<Vec<_>>(),
-                    ),
-                )
-                .await;
-            let nodes: Vec<GraphNodeDto> = sg_nodes
-                .into_iter()
-                .map(|n| GraphNodeDto {
-                    id: n.id.qualified_name.clone(),
-                    element_type: n.element_kind.clone(),
-                    name: n.name.clone(),
-                    parent_id: n.parent_id.as_ref().map(|p| p.qualified_name.clone()),
-                    range: range_to_dto(n.range),
-                    attributes: n.attributes.clone(),
-                })
-                .collect();
-
-            let mut edges: Vec<GraphEdgeDto> = state
-                .semantic_graph
-                .edges_for_uri_as_strings(&uri)
-                .into_iter()
-                .map(|(src, tgt, kind, name)| GraphEdgeDto {
-                    source: src,
-                    target: tgt,
-                    rel_type: kind.as_str().to_string(),
-                    name,
-                })
-                .collect();
-
-            for n in state.semantic_graph.nodes_for_uri(&uri) {
-                if let Some(ref pid) = n.parent_id {
-                    edges.push(GraphEdgeDto {
-                        source: pid.qualified_name.clone(),
-                        target: n.id.qualified_name.clone(),
-                        rel_type: "contains".to_string(),
-                        name: None,
-                    });
-                }
-            }
-
-            Some(SysmlGraphDto { nodes, edges })
-        } else {
-            None
-        };
-
-        let doc = entry.parsed.as_ref();
-
-        let activity_diagrams = if want_activity_diagrams {
-            Some(
-                doc.map(model::extract_activity_diagrams)
-                    .unwrap_or_default(),
-            )
-        } else {
-            None
-        };
-
-        let sequence_diagrams = if want_sequence_diagrams {
-            Some(
-                doc.map(model::extract_sequence_diagrams)
-                    .unwrap_or_default(),
-            )
-        } else {
-            None
-        };
-
-        let stats = if want_stats {
-            let total = graph.as_ref().map(|g| g.nodes.len() as u32).unwrap_or(0);
-            Some(SysmlModelStatsDto {
-                total_elements: total,
-                resolved_elements: 0,
-                unresolved_elements: 0,
-                parse_time_ms: 0,
-                model_build_time_ms: build_start.elapsed().as_millis() as u32,
-                parse_cached: true,
-            })
-        } else {
-            None
-        };
-
-        let node_count = graph.as_ref().map(|g| g.nodes.len()).unwrap_or(0);
-        let edge_count = graph.as_ref().map(|g| g.edges.len()).unwrap_or(0);
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!(
-                    "sysml/model: uri={} scope={:?} -> graph nodes={} edges={}",
-                    uri.as_str(),
-                    scope,
-                    node_count,
-                    edge_count,
-                ),
-            )
-            .await;
-
-        let ibd = if want_graph && graph.is_some() {
-            Some(ibd::build_ibd_for_uri(&state.semantic_graph, &uri))
-        } else {
-            None
-        };
-
-        Ok(SysmlModelResultDto {
-            version: 0,
-            graph,
-            activity_diagrams,
-            sequence_diagrams,
-            ibd,
-            stats,
-        })
+        Ok(sysml_model::build_sysml_model_response(
+            &entry.content,
+            entry.parsed.as_ref(),
+            &state.semantic_graph,
+            &uri,
+            &scope,
+            build_start,
+            &self.client,
+        )
+        .await)
     }
 
-    async fn sysml_server_stats(&self) -> Result<SysmlServerStatsDto> {
+    async fn sysml_server_stats(&self) -> Result<dto::SysmlServerStatsDto> {
         let state = self.state.read().await;
-        Ok(SysmlServerStatsDto {
+        Ok(dto::SysmlServerStatsDto {
             uptime: self.start_time.elapsed().as_secs(),
-            memory: SysmlServerMemoryDto { rss: 0 },
-            caches: SysmlServerCachesDto {
+            memory: dto::SysmlServerMemoryDto { rss: 0 },
+            caches: dto::SysmlServerCachesDto {
                 documents: state.index.len(),
                 symbol_tables: state.symbol_table.len(),
                 semantic_tokens: 0,
@@ -1519,14 +957,14 @@ impl Backend {
         })
     }
 
-    async fn sysml_clear_cache(&self) -> Result<SysmlClearCacheResultDto> {
+    async fn sysml_clear_cache(&self) -> Result<dto::SysmlClearCacheResultDto> {
         let mut state = self.state.write().await;
         let docs = state.index.len();
         let syms = state.symbol_table.len();
         state.index.clear();
         state.symbol_table.clear();
         state.semantic_graph = semantic_model::SemanticGraph::default();
-        Ok(SysmlClearCacheResultDto {
+        Ok(dto::SysmlClearCacheResultDto {
             documents: docs,
             symbol_tables: syms,
             semantic_tokens: 0,
