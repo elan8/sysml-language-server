@@ -3149,7 +3149,7 @@ let lastPillarStats = {};
         // Apply package filter for views that support it (excluding elk which handles it internally)
         // Index 0 = "All Packages", Index 1+ = specific packages
         if (selectedDiagramIndex > 0 &&
-            (view === 'interconnection-view')) {
+            (view === 'interconnection-view' || view === 'general-view')) {
 
             const elements = baseData?.elements ?? (baseData?.graph ? graphToElementTree(baseData.graph) : []);
             const packagesArray = [];

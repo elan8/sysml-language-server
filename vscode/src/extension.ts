@@ -261,12 +261,11 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   async function loadWorkspaceSysMLFiles(provider: ModelExplorerProvider): Promise<void> {
-    const workspaceFile = vscode.workspace.workspaceFile;
-    if (!workspaceFile) {
-      log("loadWorkspaceSysMLFiles: no workspace file");
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (folders.length === 0) {
+      log("loadWorkspaceSysMLFiles: no workspace folders");
       return;
     }
-    const folders = vscode.workspace.workspaceFolders ?? [];
     const fileUris: vscode.Uri[] = [];
     for (const folder of folders) {
       const sysml = await vscode.workspace.findFiles(
@@ -422,6 +421,61 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!editor) {
         vscode.window.showWarningMessage("No SysML/KerML document is open. Open a .sysml or .kerml file first.");
         return;
+      }
+      // When in workspace mode, pass all workspace file URIs so the diagram shows merged model from all files
+      const isWorkspace = modelExplorerProvider?.isWorkspaceMode() ?? false;
+      const workspaceUris = isWorkspace ? modelExplorerProvider?.getWorkspaceFileUris() : undefined;
+      if (isWorkspace && workspaceUris && workspaceUris.length > 1) {
+        const openDocs: vscode.TextDocument[] = [];
+        let combinedContent = "";
+        const fileNames: string[] = [];
+        for (const uri of workspaceUris) {
+          try {
+            const doc = await vscode.workspace.openTextDocument(uri);
+            openDocs.push(doc);
+            const fileName = uri.fsPath.split(/[/\\]/).pop() ?? "";
+            fileNames.push(fileName);
+            combinedContent += `// === ${fileName} ===\n`;
+            combinedContent += doc.getText();
+            combinedContent += "\n\n";
+          } catch {
+            /* skip */
+          }
+        }
+        if (openDocs.length > 0) {
+          const firstDoc = openDocs[0];
+          const combinedDocumentProxy = {
+            getText: () => combinedContent,
+            uri: firstDoc.uri,
+            languageId: "sysml" as const,
+            version: firstDoc.version,
+            lineCount: combinedContent.split("\n").length,
+            lineAt: (line: number) =>
+              firstDoc.lineAt(Math.min(line, firstDoc.lineCount - 1)),
+            offsetAt: (position: vscode.Position) => firstDoc.offsetAt(position),
+            positionAt: (offset: number) => firstDoc.positionAt(offset),
+            getWordRangeAtPosition: (position: vscode.Position) =>
+              firstDoc.getWordRangeAtPosition(position),
+            validateRange: (range: vscode.Range) => firstDoc.validateRange(range),
+            validatePosition: (position: vscode.Position) =>
+              firstDoc.validatePosition(position),
+            fileName: firstDoc.fileName,
+            isUntitled: false,
+            isDirty: false,
+            isClosed: false,
+            eol: firstDoc.eol,
+            save: () => Promise.resolve(false),
+          } as unknown as vscode.TextDocument;
+          const title = `SysML Visualization - ${fileNames.length} file(s)`;
+          VisualizationPanel.createOrShow(
+            context,
+            combinedDocumentProxy,
+            title,
+            lspModelProvider,
+            workspaceUris
+          );
+          return;
+        }
       }
       VisualizationPanel.createOrShow(context, editor.document, undefined, lspModelProvider);
     })
@@ -823,8 +877,12 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       const doc = VisualizationPanel.currentPanel.getDocument();
+      const workspaceUris =
+        modelExplorerProvider?.isWorkspaceMode() && (modelExplorerProvider?.getWorkspaceFileUris()?.length ?? 0) > 1
+          ? modelExplorerProvider.getWorkspaceFileUris()
+          : undefined;
       VisualizationPanel.currentPanel.dispose();
-      VisualizationPanel.createOrShow(context, doc, undefined, lspModelProvider);
+      VisualizationPanel.createOrShow(context, doc, undefined, lspModelProvider, workspaceUris);
     })
   );
 
@@ -877,15 +935,15 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Workspace mode: when .code-workspace is open, load all SysML/KerML files after delay
-  const workspaceFile = vscode.workspace.workspaceFile;
-  log("Activation complete. Workspace file:", !!workspaceFile);
+  // Workspace mode: when workspace has folders (workspace file or opened folder), load all SysML/KerML files after delay
+  const hasWorkspaceFolders = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+  log("Activation complete. Workspace folders:", hasWorkspaceFolders);
   vscode.commands.executeCommand(
     "setContext",
     "sysml.hasWorkspace",
-    !!workspaceFile
+    hasWorkspaceFolders
   );
-  if (workspaceFile && modelExplorerProvider) {
+  if (hasWorkspaceFolders && modelExplorerProvider) {
     const provider = modelExplorerProvider;
     setTimeout(() => {
       loadWorkspaceSysMLFiles(provider).catch(() => {});
