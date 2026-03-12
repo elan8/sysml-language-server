@@ -124,6 +124,7 @@ impl LanguageServer for Backend {
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 })),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
@@ -667,6 +668,35 @@ impl LanguageServer for Backend {
         }
 
         Ok(Some(locations))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let uri_norm = util::normalize_file_uri(&uri);
+        let pos = params.text_document_position_params.position;
+        let state = self.state.read().await;
+        let text = match state.index.get(&uri_norm).map(|e| e.content.as_str()) {
+            Some(t) => t.to_string(),
+            None => return Ok(None),
+        };
+        let (_, _, _, word) = match word_at_position(&text, pos.line, pos.character) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+        if is_reserved_keyword(&word) {
+            return Ok(None);
+        }
+        let highlights: Vec<DocumentHighlight> = find_reference_ranges(&text, &word)
+            .into_iter()
+            .map(|range| DocumentHighlight {
+                range,
+                kind: Some(DocumentHighlightKind::TEXT),
+            })
+            .collect();
+        Ok(Some(highlights))
     }
 
     async fn prepare_rename(
