@@ -23,6 +23,18 @@ function findPosition(doc: vscode.TextDocument, needle: string, occurrence = 0):
   return doc.positionAt(index);
 }
 
+function findPositionWithinMatch(
+  doc: vscode.TextDocument,
+  needle: string,
+  innerNeedle: string,
+  occurrence = 0
+): vscode.Position {
+  const base = findPosition(doc, needle, occurrence);
+  const innerOffset = needle.indexOf(innerNeedle);
+  assert.ok(innerOffset >= 0, `Could not find "${innerNeedle}" inside "${needle}"`);
+  return base.translate(0, innerOffset);
+}
+
 describe("Extension Test Suite", () => {
   before(async function () {
     this.timeout(30000);
@@ -94,7 +106,11 @@ describe("Extension Test Suite", () => {
     const filePath = getFixturePath(FIXTURE_FILE);
     const doc = await vscode.workspace.openTextDocument(filePath);
     await vscode.window.showTextDocument(doc);
-    const position = findPosition(doc, "PropulsionUnit;", 1);
+    const position = findPositionWithinMatch(
+      doc,
+      "DroneParts::PropulsionUnit",
+      "PropulsionUnit"
+    );
     const locations = await waitFor(
       "definition provider response",
       () =>

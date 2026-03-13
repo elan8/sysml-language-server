@@ -624,6 +624,42 @@ impl LanguageServer for Backend {
             }));
         }
 
+        if let Some(node) = state.semantic_graph.find_node_at_position(&uri_norm, pos) {
+            let target_match = state
+                .semantic_graph
+                .outgoing_typing_or_specializes_targets(node)
+                .into_iter()
+                .find(|target| {
+                    target.name == word
+                        || target
+                            .id
+                            .qualified_name
+                            .ends_with(&format!("::{}", word))
+                });
+
+            let markdown = if let Some(target) = target_match {
+                semantic_model::hover_markdown_for_node(
+                    &state.semantic_graph,
+                    target,
+                    target.id.uri != uri_norm,
+                )
+            } else {
+                semantic_model::hover_markdown_for_node(
+                    &state.semantic_graph,
+                    node,
+                    node.id.uri != uri_norm,
+                )
+            };
+
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: markdown,
+                }),
+                range: Some(range),
+            }));
+        }
+
         // Look up in symbol table: collect all matches (same file first) to handle name collisions.
         let same_file: Vec<_> = state
             .symbol_table

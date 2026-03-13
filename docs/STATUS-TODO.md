@@ -20,6 +20,9 @@ What still keeps this from `1.0`:
 - Large-workspace behavior needs stronger test coverage and clearer product guarantees.
 - Troubleshooting and release-readiness docs are still incomplete.
 - Performance behavior under repeated edits and larger workspaces is not yet well bounded.
+- Hover and symbol-resolution coverage are still incomplete for many valid SysML symbols in real files.
+- Source/diagram synchronization is only one-way in practice today: diagram-to-source works better than source-to-diagram.
+- Diagram support is not yet broad or stable enough: some views remain disabled for release and some expected SysML views are still missing.
 
 ## Done
 
@@ -41,24 +44,37 @@ What still keeps this from `1.0`:
 - [x] Add automated packaging layout verification for staged release assets and VSIX contents.
 - [x] Surface skipped files and invalid roots during workspace and library indexing instead of silently dropping them.
 - [x] Harden visualization restore and update flows against invalid saved URIs and silent refresh failures.
+- [x] Improve hover resolution for typed usages and nested symbols, with regression coverage.
 
 ## In Progress
 
 - [ ] Finish runtime guard audit across remaining production code paths.
 - [ ] Strengthen large-workspace behavior with broader smoke and performance coverage.
 - [ ] Validate packaged extension startup against bundled binaries in a clean install flow.
+- [ ] Expand hover resolution so common SysML symbol kinds consistently return useful hover content.
+- [ ] Improve bidirectional source/diagram synchronization so source selection can focus/highlight the corresponding diagram element.
+- [ ] Bring diagram support to release quality: fix disabled views, clarify missing views, and close the biggest layout/routing gaps.
 
 ## Next
 
 ### Reliability
 
 - [ ] Audit remaining runtime assumptions in server document, model, and visualization flows.
+- [ ] Add regression coverage for hover on real-world symbol varieties (parts, ports, attributes, actions, packages, typed usages).
 
 ### Workspace and Performance
 
 - [x] Add a bounded large-workspace smoke test fixture and CI coverage.
 - [x] Revisit repeated recomputation in `didChange`.
 - [x] Add more explicit indexing progress and partial-result behavior in the explorer UX.
+- [ ] Measure and bound end-to-end latency for hover/definition/model refresh in medium and large workspaces.
+
+### UX and Diagrams
+
+- [ ] Add source-to-diagram reveal/highlight for the active symbol or cursor position.
+- [ ] Audit which SysML view types are expected for `1.0` and classify each as shipped, experimental, or missing.
+- [ ] Re-enable release-blocked diagram views only behind passing regression coverage and acceptable layout quality.
+- [ ] Improve diagram interaction polish: navigation feedback, empty/error states, and clearer unsupported-view messaging.
 
 ### Docs and Release
 
