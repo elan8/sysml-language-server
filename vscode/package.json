@@ -306,6 +306,12 @@
           "default": true,
           "description": "Show a SysML status bar item with error/warning counts for the active SysML/KerML file."
         },
+        "sysml-language-server.workspace.maxFilesPerPattern": {
+          "type": "number",
+          "default": 500,
+          "minimum": 50,
+          "description": "Maximum number of .sysml or .kerml files to discover per workspace folder and file type during workspace indexing. Increase for larger repositories at the cost of slower loading."
+        },
         "sysml-language-server.debug": {
           "type": "boolean",
           "default": false,

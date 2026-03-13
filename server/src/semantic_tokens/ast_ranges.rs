@@ -249,7 +249,7 @@ fn collect_semantic_ranges_interface_def_body_element(
                 out.push((span_to_source_range(s), TYPE_TYPE));
             }
         }
-        IDBE::ConnectStmt(_) => {}
+        IDBE::ConnectStmt(_) | IDBE::Doc(_) => {}
     }
 }
 

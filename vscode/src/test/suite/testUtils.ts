@@ -3,6 +3,20 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
+export function getTestWorkspaceFolder(): vscode.WorkspaceFolder {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert.ok(workspaceFolder, "Workspace folder should be open");
+  return workspaceFolder;
+}
+
+export function getFixtureUri(relativePath: string): vscode.Uri {
+  return vscode.Uri.joinPath(getTestWorkspaceFolder().uri, relativePath);
+}
+
+export function getFixturePath(relativePath: string): string {
+  return getFixtureUri(relativePath).fsPath;
+}
+
 export async function waitFor<T>(
   label: string,
   producer: () => PromiseLike<T | undefined>,
@@ -60,10 +74,11 @@ export async function waitForLanguageServerReady(
   await waitFor(
     "language server ready",
     () =>
-      vscode.commands.executeCommand<vscode.Hover[]>(
-        "vscode.executeHoverProvider",
+      vscode.commands.executeCommand<
+        vscode.DocumentSymbol[] | vscode.SymbolInformation[]
+      >(
+        "vscode.executeDocumentSymbolProvider",
         doc.uri,
-        new vscode.Position(1, 2)
       ),
     (value) => Array.isArray(value) && value.length > 0,
     timeoutMs,

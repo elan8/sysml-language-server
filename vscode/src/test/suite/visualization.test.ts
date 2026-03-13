@@ -1,9 +1,10 @@
 import * as assert from "assert";
-import * as path from "path";
 import * as vscode from "vscode";
 import { VisualizationPanel } from "../../visualization/visualizationPanel";
 import {
     configureServerForTests,
+    getFixturePath,
+    getTestWorkspaceFolder,
     waitFor,
     waitForLanguageServerReady,
 } from "./testUtils";
@@ -17,20 +18,33 @@ describe("Visualization Diagram Views", () => {
     before(async function () {
         this.timeout(30000);
         await configureServerForTests();
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        assert.ok(workspaceFolder, "Workspace folder should be open");
-        const docPath = path.join(workspaceFolder.uri.fsPath, "sample.sysml");
+        getTestWorkspaceFolder();
+        const docPath = getFixturePath("SurveillanceDrone.sysml");
         const doc = await vscode.workspace.openTextDocument(docPath);
         await waitForLanguageServerReady(doc);
+    });
+
+    afterEach(async () => {
+        if (VisualizationPanel.currentPanel) {
+            VisualizationPanel.currentPanel.dispose();
+        }
+        await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    });
+
+    after(async () => {
+        if (VisualizationPanel.currentPanel) {
+            VisualizationPanel.currentPanel.dispose();
+        }
+        await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+        await new Promise((r) => setTimeout(r, 250));
     });
 
     it("exports SVG for all views", async function () {
         this.timeout(60000);
 
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        assert.ok(workspaceFolder, "Workspace folder should be open");
+        const workspaceFolder = getTestWorkspaceFolder();
 
-        const docPath = path.join(workspaceFolder.uri.fsPath, "SurveillanceDrone.sysml");
+        const docPath = getFixturePath("SurveillanceDrone.sysml");
         const doc = await vscode.workspace.openTextDocument(docPath);
         await vscode.window.showTextDocument(doc);
 

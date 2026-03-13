@@ -37,8 +37,19 @@ let client: LanguageClient | undefined;
 let statusItem: vscode.StatusBarItem | undefined;
 let modelExplorerProvider: ModelExplorerProvider | undefined;
 let lspModelProviderForStatus: LspModelProvider | undefined;
-let serverHealthState: "starting" | "ready" | "degraded" | "restarting" | "crashed" = "starting";
+let serverHealthState: "starting" | "ready" | "indexing" | "degraded" | "restarting" | "crashed" = "starting";
 let serverHealthDetail = "";
+let workspaceIndexingCts: vscode.CancellationTokenSource | undefined;
+
+type WorkspaceIndexSummary = {
+  scannedFiles: number;
+  loadedFiles: number;
+  perPatternLimit: number;
+  truncated: boolean;
+  cancelled: boolean;
+};
+
+let lastWorkspaceIndexSummary: WorkspaceIndexSummary | undefined;
 
 function setServerHealth(
   context: vscode.ExtensionContext,
@@ -89,6 +100,16 @@ function isSysmlDoc(doc: vscode.TextDocument | undefined): boolean {
   return doc.languageId === "sysml" || doc.languageId === "kerml";
 }
 
+function getWorkspaceFileQueryLimit(): number {
+  return vscode.workspace
+    .getConfiguration("sysml-language-server")
+    .get<number>("workspace.maxFilesPerPattern", 500);
+}
+
+function setWorkspaceIndexSummary(summary: WorkspaceIndexSummary | undefined): void {
+  lastWorkspaceIndexSummary = summary;
+}
+
 function ensureStatusItem(context: vscode.ExtensionContext): vscode.StatusBarItem {
   if (!statusItem) {
     statusItem = vscode.window.createStatusBarItem(
@@ -129,6 +150,8 @@ function updateStatusBar(context: vscode.ExtensionContext): void {
   const healthText =
     serverHealthState === "starting"
       ? "$(sync~spin) SysML: Starting"
+      : serverHealthState === "indexing"
+        ? "$(sync~spin) SysML: Indexing"
       : serverHealthState === "restarting"
         ? "$(sync~spin) SysML: Restarting"
         : serverHealthState === "degraded"
@@ -144,7 +167,10 @@ function updateStatusBar(context: vscode.ExtensionContext): void {
   const baseTooltip = healthText
     ? `Server state: ${serverHealthState}${serverHealthDetail ? `\n${serverHealthDetail}` : ""}`
     : `${errors} error(s), ${warnings} warning(s)\nClick to open Problems panel.`;
-  item.tooltip = baseTooltip;
+  const workspaceTooltip = lastWorkspaceIndexSummary
+    ? `\n\nWorkspace indexing:\nScanned ${lastWorkspaceIndexSummary.scannedFiles} file(s)\nLoaded ${lastWorkspaceIndexSummary.loadedFiles} file(s)\nLimit ${lastWorkspaceIndexSummary.perPatternLimit} per folder and file type${lastWorkspaceIndexSummary.truncated ? "\nResults truncated" : ""}${lastWorkspaceIndexSummary.cancelled ? "\nLast scan was cancelled" : ""}`
+    : "";
+  item.tooltip = `${baseTooltip}${workspaceTooltip}`;
   item.show();
 
   // Append server health to tooltip (async, best-effort)
@@ -423,32 +449,145 @@ export function activate(context: vscode.ExtensionContext): void {
       log("loadWorkspaceSysMLFiles: no workspace folders");
       return;
     }
-    const fileUris: vscode.Uri[] = [];
-    for (const folder of folders) {
-      const sysml = await vscode.workspace.findFiles(
-        new vscode.RelativePattern(folder, "**/*.sysml"),
-        null,
-        500
-      );
-      const kerml = await vscode.workspace.findFiles(
-        new vscode.RelativePattern(folder, "**/*.kerml"),
-        null,
-        500
-      );
-      fileUris.push(...sysml, ...kerml);
-    }
-    log("loadWorkspaceSysMLFiles: found", fileUris.length, "files");
-    if (fileUris.length > 0) {
-      await provider.loadWorkspaceModel(fileUris);
-      log("loadWorkspaceSysMLFiles: loaded model for", fileUris.length, "files");
-      vscode.commands.executeCommand("setContext", "sysml.hasWorkspace", true);
-      vscode.commands.executeCommand(
-        "setContext",
-        "sysml.workspaceViewMode",
-        provider.getWorkspaceViewMode()
-      );
-      vscode.commands.executeCommand("setContext", "sysml.modelLoaded", true);
-    }
+    workspaceIndexingCts?.cancel();
+    workspaceIndexingCts?.dispose();
+    workspaceIndexingCts = new vscode.CancellationTokenSource();
+    const cancellationToken = workspaceIndexingCts.token;
+    const perPatternLimit = getWorkspaceFileQueryLimit();
+    setServerHealth(
+      context,
+      "indexing",
+      `Scanning workspace for SysML/KerML files (limit ${perPatternLimit} per folder and file type).`
+    );
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "SysML workspace indexing",
+        cancellable: true,
+      },
+      async (progress, token) => {
+        token.onCancellationRequested(() => workspaceIndexingCts?.cancel());
+        const fileUris: vscode.Uri[] = [];
+        let limitHit = false;
+        const totalSteps = Math.max(folders.length * 2, 1);
+
+        for (const [folderIndex, folder] of folders.entries()) {
+          if (cancellationToken.isCancellationRequested) {
+            break;
+          }
+          progress.report({
+            message: `Scanning ${path.basename(folder.uri.fsPath) || folder.name} for .sysml files`,
+            increment: 100 / totalSteps,
+          });
+          const sysml = await vscode.workspace.findFiles(
+            new vscode.RelativePattern(folder, "**/*.sysml"),
+            null,
+            perPatternLimit
+          );
+          if (sysml.length >= perPatternLimit) {
+            limitHit = true;
+          }
+          fileUris.push(...sysml);
+
+          if (cancellationToken.isCancellationRequested) {
+            break;
+          }
+
+          progress.report({
+            message: `Scanning ${path.basename(folder.uri.fsPath) || folder.name} for .kerml files`,
+            increment: 100 / totalSteps,
+          });
+          const kerml = await vscode.workspace.findFiles(
+            new vscode.RelativePattern(folder, "**/*.kerml"),
+            null,
+            perPatternLimit
+          );
+          if (kerml.length >= perPatternLimit) {
+            limitHit = true;
+          }
+          fileUris.push(...kerml);
+
+          if (folderIndex === folders.length - 1) {
+            progress.report({
+              message: "Preparing workspace model",
+            });
+          }
+        }
+
+        const uniqueFiles = [...new Map(fileUris.map((f) => [f.toString(), f])).values()];
+        log("loadWorkspaceSysMLFiles: found", uniqueFiles.length, "unique files");
+
+        if (cancellationToken.isCancellationRequested) {
+          setWorkspaceIndexSummary({
+            scannedFiles: uniqueFiles.length,
+            loadedFiles: 0,
+            perPatternLimit,
+            truncated: limitHit,
+            cancelled: true,
+          });
+          setServerHealth(
+            context,
+            "degraded",
+            `Workspace indexing was cancelled after scanning ${uniqueFiles.length} file(s).`
+          );
+          return;
+        }
+
+        if (uniqueFiles.length > 0) {
+          progress.report({
+            message: `Loading model for ${uniqueFiles.length} file(s)`,
+          });
+          await provider.loadWorkspaceModel(uniqueFiles, cancellationToken);
+          const loadedFiles = provider.getWorkspaceFileUris().length;
+          setWorkspaceIndexSummary({
+            scannedFiles: uniqueFiles.length,
+            loadedFiles,
+            perPatternLimit,
+            truncated: limitHit,
+            cancelled: false,
+          });
+          log("loadWorkspaceSysMLFiles: loaded model for", uniqueFiles.length, "files");
+          vscode.commands.executeCommand("setContext", "sysml.hasWorkspace", true);
+          vscode.commands.executeCommand(
+            "setContext",
+            "sysml.workspaceViewMode",
+            provider.getWorkspaceViewMode()
+          );
+          vscode.commands.executeCommand("setContext", "sysml.modelLoaded", true);
+          if (limitHit) {
+            setServerHealth(
+              context,
+              "degraded",
+              `Workspace indexing is truncated at ${perPatternLimit} files per folder and file type. Scanned ${uniqueFiles.length} file(s).`
+            );
+            void showServerIssue(
+              `SysML workspace indexing hit the configured limit of ${perPatternLimit} files per folder and file type. Results may be incomplete.`,
+              "warning"
+            );
+          } else {
+            setServerHealth(
+              context,
+              "ready",
+              `Workspace indexed ${uniqueFiles.length} SysML/KerML file(s).`
+            );
+          }
+        } else {
+          setWorkspaceIndexSummary({
+            scannedFiles: 0,
+            loadedFiles: 0,
+            perPatternLimit,
+            truncated: false,
+            cancelled: false,
+          });
+          setServerHealth(
+            context,
+            "ready",
+            "No SysML/KerML files were found in the current workspace."
+          );
+        }
+      }
+    );
+    updateStatusBar(context);
   }
 
   context.subscriptions.push(
@@ -1120,5 +1259,8 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): Thenable<void> | undefined {
+  workspaceIndexingCts?.cancel();
+  workspaceIndexingCts?.dispose();
+  workspaceIndexingCts = undefined;
   return client?.stop();
 }

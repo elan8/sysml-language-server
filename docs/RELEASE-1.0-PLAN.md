@@ -157,6 +157,7 @@ Backlog:
 - Reduce full recomputation where possible in `didChange`.
 - Add progress reporting or status updates for workspace scan/index phases.
 - Revisit hardcoded file caps and make them configurable or visible.
+- Ensure partial workspace indexing is clearly surfaced to the user.
 
 Definition of done:
 

@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   files: "out/test/**/*.test.js",
   extensionDevelopmentPath: __dirname,
-  workspaceFolder: path.resolve(__dirname, "testFixture"),
+  workspaceFolder: path.resolve(__dirname, "testFixture", "workspaces", "single-file"),
   version: "stable",
   mocha: {
     timeout: 20000,

@@ -1,21 +1,51 @@
 import * as assert from "assert";
-import * as path from "path";
 import * as vscode from "vscode";
+import { VisualizationPanel } from "../../visualization/visualizationPanel";
 import {
   configureServerForTests,
+  getFixturePath,
+  getTestWorkspaceFolder,
   waitFor,
   waitForLanguageServerReady,
 } from "./testUtils";
+
+const FIXTURE_FILE = "SurveillanceDrone.sysml";
+
+function findPosition(doc: vscode.TextDocument, needle: string, occurrence = 0): vscode.Position {
+  const text = doc.getText();
+  let from = 0;
+  let index = -1;
+  for (let i = 0; i <= occurrence; i += 1) {
+    index = text.indexOf(needle, from);
+    assert.ok(index >= 0, `Could not find "${needle}" in ${doc.fileName}`);
+    from = index + needle.length;
+  }
+  return doc.positionAt(index);
+}
 
 describe("Extension Test Suite", () => {
   before(async function () {
     this.timeout(30000);
     await configureServerForTests();
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    assert.ok(workspaceFolder, "Workspace folder should be open");
-    const filePath = path.join(workspaceFolder.uri.fsPath, "sample.sysml");
+    getTestWorkspaceFolder();
+    const filePath = getFixturePath(FIXTURE_FILE);
     const doc = await vscode.workspace.openTextDocument(filePath);
     await waitForLanguageServerReady(doc);
+  });
+
+  afterEach(async () => {
+    if (VisualizationPanel.currentPanel) {
+      VisualizationPanel.currentPanel.dispose();
+    }
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+  });
+
+  after(async () => {
+    if (VisualizationPanel.currentPanel) {
+      VisualizationPanel.currentPanel.dispose();
+    }
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    await new Promise((r) => setTimeout(r, 250));
   });
 
   it("Extension should be present", () => {
@@ -34,12 +64,10 @@ describe("Extension Test Suite", () => {
   });
 
   it("Hover over keyword returns content", async () => {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    assert.ok(workspaceFolder, "Workspace folder should be open");
-    const filePath = path.join(workspaceFolder.uri.fsPath, "sample.sysml");
+    const filePath = getFixturePath(FIXTURE_FILE);
     const doc = await vscode.workspace.openTextDocument(filePath);
     await vscode.window.showTextDocument(doc);
-    const position = new vscode.Position(1, 2);
+    const position = findPosition(doc, "part def Airframe");
     const hovers = await waitFor(
       "hover provider response",
       () =>
@@ -63,12 +91,10 @@ describe("Extension Test Suite", () => {
   });
 
   it("Go to definition from usage to definition", async () => {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    assert.ok(workspaceFolder, "Workspace folder should be open");
-    const filePath = path.join(workspaceFolder.uri.fsPath, "sample.sysml");
+    const filePath = getFixturePath(FIXTURE_FILE);
     const doc = await vscode.workspace.openTextDocument(filePath);
     await vscode.window.showTextDocument(doc);
-    const position = new vscode.Position(2, 11);
+    const position = findPosition(doc, "PropulsionUnit;", 1);
     const locations = await waitFor(
       "definition provider response",
       () =>
@@ -88,14 +114,15 @@ describe("Extension Test Suite", () => {
 
   it("Server stays usable after invalid intermediate edits", async function () {
     this.timeout(20000);
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    assert.ok(workspaceFolder, "Workspace folder should be open");
-    const filePath = path.join(workspaceFolder.uri.fsPath, "sample.sysml");
+    const filePath = getFixturePath(FIXTURE_FILE);
     const doc = await vscode.workspace.openTextDocument(filePath);
     const editor = await vscode.window.showTextDocument(doc);
 
     const invalidEditApplied = await editor.edit((editBuilder) => {
-      editBuilder.delete(new vscode.Range(1, 12, 1, 13));
+      editBuilder.insert(
+        new vscode.Position(doc.lineCount, 0),
+        "\n}\n"
+      );
     });
     assert.ok(invalidEditApplied, "Expected invalid intermediate edit to apply");
 
@@ -106,7 +133,7 @@ describe("Extension Test Suite", () => {
     );
     assert.ok(diagnostics.length > 0, "Expected diagnostics after invalid intermediate edit");
 
-    const hoverPosition = new vscode.Position(1, 2);
+    const hoverPosition = findPosition(doc, "part def Airframe");
     const hovers = await waitFor(
       "hover after invalid edit",
       () =>
@@ -124,9 +151,7 @@ describe("Extension Test Suite", () => {
 
   it("Server recovers after manual restart", async function () {
     this.timeout(20000);
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    assert.ok(workspaceFolder, "Workspace folder should be open");
-    const filePath = path.join(workspaceFolder.uri.fsPath, "sample.sysml");
+    const filePath = getFixturePath(FIXTURE_FILE);
     const doc = await vscode.workspace.openTextDocument(filePath);
     await vscode.window.showTextDocument(doc);
 
@@ -138,7 +163,7 @@ describe("Extension Test Suite", () => {
         vscode.commands.executeCommand<vscode.Hover[]>(
           "vscode.executeHoverProvider",
           doc.uri,
-          new vscode.Position(1, 2)
+          findPosition(doc, "part def Airframe")
         ),
       (value) => Array.isArray(value) && value.length > 0
     );
