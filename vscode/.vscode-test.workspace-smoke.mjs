@@ -5,7 +5,9 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  files: "out/test/**/*.workspace.test.js",
+  files: [
+    "out/test/suite/workspaceIndexing.workspace.test.js",
+  ],
   extensionDevelopmentPath: __dirname,
   workspaceFolder: path.resolve(__dirname, "testFixture", "workspaces", "large-workspace"),
   version: "stable",

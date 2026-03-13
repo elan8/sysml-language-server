@@ -5,7 +5,11 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  files: "out/test/**/*.test.js",
+  files: [
+    "out/test/suite/extension.test.js",
+    "out/test/suite/visualization.test.js",
+    "out/test/suite/prepareData.test.js",
+  ],
   extensionDevelopmentPath: __dirname,
   workspaceFolder: path.resolve(__dirname, "testFixture", "workspaces", "single-file"),
   version: "stable",
