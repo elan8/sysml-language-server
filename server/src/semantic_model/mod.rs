@@ -76,6 +76,7 @@ impl NodeId {
 }
 
 /// SysML v2 relationship kinds (edges in the graph).
+#[allow(dead_code)] // some relationship kinds are staged for upcoming semantic features
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RelationshipKind {
     Typing,

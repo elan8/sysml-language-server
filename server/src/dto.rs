@@ -5,20 +5,22 @@ use tower_lsp::lsp_types::Range;
 
 use crate::ibd;
 use crate::model;
-use crate::semantic_model;
 
+#[allow(dead_code)] // reserved for legacy/expanded frontend payloads
 #[derive(Debug, Serialize)]
 pub struct PositionDto {
     pub line: u32,
     pub character: u32,
 }
 
+#[allow(dead_code)] // reserved for legacy/expanded frontend payloads
 #[derive(Debug, Serialize)]
 pub struct RangeDto {
     pub start: PositionDto,
     pub end: PositionDto,
 }
 
+#[allow(dead_code)] // reserved for legacy/expanded frontend payloads
 #[derive(Debug, Serialize)]
 pub struct RelationshipDto {
     #[serde(rename = "type")]
@@ -58,6 +60,7 @@ pub struct SysmlGraphDto {
     pub edges: Vec<GraphEdgeDto>,
 }
 
+#[allow(dead_code)] // reserved for legacy/expanded frontend payloads
 #[derive(Debug, Serialize)]
 pub struct SysmlElementDto {
     #[serde(rename = "type")]
@@ -143,4 +146,3 @@ pub fn range_to_dto(r: Range) -> RangeDto {
         },
     }
 }
-

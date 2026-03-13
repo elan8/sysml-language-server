@@ -5,7 +5,6 @@ use tower_lsp::lsp_types::{Position, Range};
 /// Converts an LSP (line, character) position to a byte offset in `text`.
 /// LSP positions are expressed in UTF-16 code units, so this helper only returns offsets that
 /// land on valid UTF-8 boundaries.
-#[allow(dead_code)] // used by tests and for future LSP features (e.g. range resolution)
 pub fn position_to_byte_offset(text: &str, line: u32, character: u32) -> Option<usize> {
     let lines: Vec<&str> = text.split('\n').collect();
     let line_str = *lines.get(line as usize)?;
@@ -108,6 +107,7 @@ pub fn completion_prefix(line_prefix: &str) -> &str {
 }
 
 /// Simple position (for tests and compatibility). 0-based line and character.
+#[allow(dead_code)] // used by tests and reserved for future range helpers
 #[derive(Debug, Clone)]
 pub struct SourcePosition {
     pub line: u32,
@@ -116,6 +116,7 @@ pub struct SourcePosition {
 }
 
 /// Converts AST source position to an LSP Range.
+#[allow(dead_code)] // used by tests and reserved for future range helpers
 pub fn source_position_to_range(pos: &SourcePosition) -> Range {
     Range::new(
         Position::new(pos.line, pos.character),
@@ -124,6 +125,7 @@ pub fn source_position_to_range(pos: &SourcePosition) -> Range {
 }
 
 /// Simple range (for tests and compatibility). 0-based.
+#[allow(dead_code)] // used by tests and reserved for future range helpers
 #[derive(Debug, Clone)]
 pub struct SourceRange {
     pub start_line: u32,
@@ -133,6 +135,7 @@ pub struct SourceRange {
 }
 
 /// Converts AST source range to an LSP Range.
+#[allow(dead_code)] // reserved for future range helpers
 pub fn source_range_to_range(r: &SourceRange) -> Range {
     Range::new(
         Position::new(r.start_line, r.start_character),
@@ -142,6 +145,7 @@ pub fn source_range_to_range(r: &SourceRange) -> Range {
 
 /// Ensures selection_range is contained in full range (LSP requirement).
 /// If selection is outside or partially outside full_range, returns a clamped selection or full_range.
+#[allow(dead_code)] // reserved for future LSP features
 pub(crate) fn selection_contained_in(mut selection: Range, full: Range) -> Range {
     fn pos_lt(a: &Position, b: &Position) -> bool {
         a.line < b.line || (a.line == b.line && a.character < b.character)
