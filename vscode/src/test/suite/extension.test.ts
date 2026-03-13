@@ -1,12 +1,21 @@
 import * as assert from "assert";
 import * as path from "path";
 import * as vscode from "vscode";
-import { configureServerForTests, waitFor } from "./testUtils";
+import {
+  configureServerForTests,
+  waitFor,
+  waitForLanguageServerReady,
+} from "./testUtils";
 
 describe("Extension Test Suite", () => {
   before(async function () {
-    this.timeout(20000);
+    this.timeout(30000);
     await configureServerForTests();
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder, "Workspace folder should be open");
+    const filePath = path.join(workspaceFolder.uri.fsPath, "sample.sysml");
+    const doc = await vscode.workspace.openTextDocument(filePath);
+    await waitForLanguageServerReady(doc);
   });
 
   it("Extension should be present", () => {

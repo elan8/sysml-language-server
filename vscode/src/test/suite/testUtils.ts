@@ -29,7 +29,6 @@ export async function configureServerForTests(): Promise<void> {
     (e) => e.packageJSON?.name === "sysml-language-server"
   );
   assert.ok(extension, "SysML Language Server extension should be installed");
-  await extension.activate();
 
   const binaryName =
     process.platform === "win32"
@@ -50,5 +49,24 @@ export async function configureServerForTests(): Promise<void> {
   await vscode.workspace
     .getConfiguration("sysml-language-server")
     .update("serverPath", serverPath, vscode.ConfigurationTarget.Workspace);
-  await vscode.commands.executeCommand("sysml.restartServer");
+  await extension.activate();
+}
+
+export async function waitForLanguageServerReady(
+  doc: vscode.TextDocument,
+  timeoutMs = 20000
+): Promise<void> {
+  await vscode.window.showTextDocument(doc);
+  await waitFor(
+    "language server ready",
+    () =>
+      vscode.commands.executeCommand<vscode.Hover[]>(
+        "vscode.executeHoverProvider",
+        doc.uri,
+        new vscode.Position(1, 2)
+      ),
+    (value) => Array.isArray(value) && value.length > 0,
+    timeoutMs,
+    300
+  );
 }

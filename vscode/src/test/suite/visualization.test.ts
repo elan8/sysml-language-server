@@ -2,7 +2,11 @@ import * as assert from "assert";
 import * as path from "path";
 import * as vscode from "vscode";
 import { VisualizationPanel } from "../../visualization/visualizationPanel";
-import { configureServerForTests, waitFor } from "./testUtils";
+import {
+    configureServerForTests,
+    waitFor,
+    waitForLanguageServerReady,
+} from "./testUtils";
 
 const VIEW_IDS = [
     "general-view",
@@ -11,8 +15,13 @@ const VIEW_IDS = [
 
 describe("Visualization Diagram Views", () => {
     before(async function () {
-        this.timeout(20000);
+        this.timeout(30000);
         await configureServerForTests();
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        assert.ok(workspaceFolder, "Workspace folder should be open");
+        const docPath = path.join(workspaceFolder.uri.fsPath, "sample.sysml");
+        const doc = await vscode.workspace.openTextDocument(docPath);
+        await waitForLanguageServerReady(doc);
     });
 
     it("exports SVG for all views", async function () {
