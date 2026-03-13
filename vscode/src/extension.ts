@@ -2,9 +2,14 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
+  CloseAction,
+  ErrorAction,
+  ErrorHandler,
   LanguageClient,
   LanguageClientOptions,
+  RevealOutputChannelOn,
   ServerOptions,
+  State,
   TransportKind,
 } from "vscode-languageclient/node";
 import { LspModelProvider } from "./providers/lspModelProvider";
@@ -12,7 +17,7 @@ import {
   ModelExplorerProvider,
   ModelTreeItem,
 } from "./explorer/modelExplorerProvider";
-import { log, logError, showChannel } from "./logger";
+import { getOutputChannel, log, logError, showChannel } from "./logger";
 import {
   decodeSemanticTokens,
   dumpSemanticTokens,
@@ -32,6 +37,35 @@ let client: LanguageClient | undefined;
 let statusItem: vscode.StatusBarItem | undefined;
 let modelExplorerProvider: ModelExplorerProvider | undefined;
 let lspModelProviderForStatus: LspModelProvider | undefined;
+let serverHealthState: "starting" | "ready" | "degraded" | "restarting" | "crashed" = "starting";
+let serverHealthDetail = "";
+
+function setServerHealth(
+  context: vscode.ExtensionContext,
+  state: typeof serverHealthState,
+  detail = ""
+): void {
+  serverHealthState = state;
+  serverHealthDetail = detail;
+  log("Server health:", state, detail);
+  updateStatusBar(context);
+}
+
+async function showServerIssue(
+  message: string,
+  level: "warning" | "error"
+): Promise<void> {
+  const actions = ["Show Output", "Restart Server"];
+  const selection =
+    level === "error"
+      ? await vscode.window.showErrorMessage(message, ...actions)
+      : await vscode.window.showWarningMessage(message, ...actions);
+  if (selection === "Show Output") {
+    showChannel();
+  } else if (selection === "Restart Server") {
+    await vscode.commands.executeCommand("sysml.restartServer");
+  }
+}
 
 function getBundledServerCommand(extensionPath: string): string {
   const platform = process.platform;
@@ -78,22 +112,38 @@ function updateStatusBar(context: vscode.ExtensionContext): void {
 
   const editor = vscode.window.activeTextEditor;
   const doc = editor?.document;
-  if (!doc || !isSysmlDoc(doc)) {
+  const showHealthWithoutDoc = serverHealthState !== "ready";
+  if ((!doc || !isSysmlDoc(doc)) && !showHealthWithoutDoc) {
     statusItem?.hide();
     return;
   }
 
   const item = ensureStatusItem(context);
-  const diags = vscode.languages.getDiagnostics(doc.uri);
+  const diags = doc && isSysmlDoc(doc) ? vscode.languages.getDiagnostics(doc.uri) : [];
   const errors = diags.filter(
     (d) => d.severity === vscode.DiagnosticSeverity.Error
   ).length;
   const warnings = diags.filter(
     (d) => d.severity === vscode.DiagnosticSeverity.Warning
   ).length;
-  const icon = errors > 0 ? "$(error)" : warnings > 0 ? "$(warning)" : "$(check)";
-  item.text = `${icon} SysML: ${errors}E ${warnings}W`;
-  const baseTooltip = `${errors} error(s), ${warnings} warning(s)\nClick to open Problems panel.`;
+  const healthText =
+    serverHealthState === "starting"
+      ? "$(sync~spin) SysML: Starting"
+      : serverHealthState === "restarting"
+        ? "$(sync~spin) SysML: Restarting"
+        : serverHealthState === "degraded"
+          ? "$(warning) SysML: Degraded"
+          : serverHealthState === "crashed"
+            ? "$(error) SysML: Server stopped"
+            : undefined;
+  const diagnosticsText = (() => {
+    const icon = errors > 0 ? "$(error)" : warnings > 0 ? "$(warning)" : "$(check)";
+    return `${icon} SysML: ${errors}E ${warnings}W`;
+  })();
+  item.text = healthText ?? diagnosticsText;
+  const baseTooltip = healthText
+    ? `Server state: ${serverHealthState}${serverHealthDetail ? `\n${serverHealthDetail}` : ""}`
+    : `${errors} error(s), ${warnings} warning(s)\nClick to open Problems panel.`;
   item.tooltip = baseTooltip;
   item.show();
 
@@ -114,6 +164,7 @@ function updateStatusBar(context: vscode.ExtensionContext): void {
 
 export function activate(context: vscode.ExtensionContext): void {
   log("Extension activating");
+  setServerHealth(context, "starting", "Preparing SysML language server.");
 
   const config = vscode.workspace.getConfiguration("sysml-language-server");
   const serverPath = config.get<string>("serverPath") ?? "sysml-language-server";
@@ -144,7 +195,74 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  if (serverPath !== "sysml-language-server" && !fs.existsSync(serverCommand)) {
+    void showServerIssue(
+      `Configured SysML server path does not exist: ${serverCommand}. Startup will likely fail until this is corrected.`,
+      "warning"
+    );
+  }
+  const missingLibraryPaths = libraryPaths.filter((p) => !fs.existsSync(p));
+  if (missingLibraryPaths.length > 0) {
+    void showServerIssue(
+      `Some SysML library paths do not exist and will be ignored: ${missingLibraryPaths.join(", ")}`,
+      "warning"
+    );
+  }
+
   log("Server command:", serverCommand, "libraryPaths:", libraryPaths);
+
+  let restartCount = 0;
+  let manualStopInProgress = false;
+  let crashDialogShown = false;
+
+  const errorHandler: ErrorHandler = {
+    error: async (error, _message, count) => {
+      restartCount = Math.max(restartCount, count ?? 0);
+      const detail = error instanceof Error ? error.message : String(error ?? "unknown error");
+      setServerHealth(context, "degraded", `Connection error: ${detail}`);
+      logError("Language client transport error", error);
+      if ((count ?? 0) >= 3) {
+        await showServerIssue(
+          `The SysML language server is unstable (${count} transport errors). Check the SysML output channel for details.`,
+          "warning"
+        );
+      }
+      return { action: ErrorAction.Continue, handled: true };
+    },
+    closed: async () => {
+      if (manualStopInProgress) {
+        setServerHealth(context, "starting", "Restarting SysML language server.");
+        return { action: CloseAction.DoNotRestart, handled: true };
+      }
+      const shouldRestart = restartCount < 4;
+      if (shouldRestart) {
+        restartCount += 1;
+        setServerHealth(
+          context,
+          "restarting",
+          `Server process exited unexpectedly. Restart attempt ${restartCount} of 4.`
+        );
+        await showServerIssue(
+          `The SysML language server stopped unexpectedly and will be restarted (attempt ${restartCount} of 4).`,
+          "warning"
+        );
+        return { action: CloseAction.Restart, handled: true };
+      }
+      setServerHealth(
+        context,
+        "crashed",
+        "Server process exited repeatedly. Automatic restart has been stopped."
+      );
+      if (!crashDialogShown) {
+        crashDialogShown = true;
+        await showServerIssue(
+          "The SysML language server keeps crashing. Automatic restart has been stopped.",
+          "error"
+        );
+      }
+      return { action: CloseAction.DoNotRestart, handled: true };
+    },
+  };
 
   const serverOptions: ServerOptions = {
     command: serverCommand,
@@ -162,6 +280,22 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     initializationOptions: {
       libraryPaths,
+    },
+    initializationFailedHandler: (error) => {
+      const detail = error instanceof Error ? error.message : String(error ?? "unknown initialization error");
+      setServerHealth(context, "crashed", `Initialization failed: ${detail}`);
+      logError("Language client initialization failed", error);
+      void showServerIssue(
+        `Failed to initialize the SysML language server: ${detail}`,
+        "error"
+      );
+      return false;
+    },
+    errorHandler,
+    outputChannel: getOutputChannel(),
+    revealOutputChannelOn: RevealOutputChannelOn.Error,
+    connectionOptions: {
+      maxRestartCount: 4,
     },
     middleware: {
       provideDocumentSemanticTokens: (document, token, next) => {
@@ -190,13 +324,36 @@ export function activate(context: vscode.ExtensionContext): void {
     clientOptions
   );
 
+  context.subscriptions.push(
+    client.onDidChangeState(({ newState }) => {
+      if (newState === State.Starting) {
+        setServerHealth(context, "starting", "Starting SysML language server.");
+      } else if (newState === State.Running) {
+        restartCount = 0;
+        crashDialogShown = false;
+        setServerHealth(context, "ready", "SysML language server is ready.");
+      } else if (newState === State.Stopped && !manualStopInProgress) {
+        setServerHealth(context, "crashed", "SysML language server is stopped.");
+      }
+    })
+  );
+
   const clientReadyPromise = client.start()
     .then(() => {
+      restartCount = 0;
+      crashDialogShown = false;
+      setServerHealth(context, "ready", "SysML language server is ready.");
       log("Language client ready, refreshing Model Explorer");
       modelExplorerProvider?.refresh();
     })
-    .catch(() => {
-      // Intentionally swallow; tests already handle missing server gracefully.
+    .catch((error) => {
+      const detail = error instanceof Error ? error.message : String(error ?? "unknown startup failure");
+      setServerHealth(context, "crashed", `Startup failed: ${detail}`);
+      logError("Language client failed to start", error);
+      void showServerIssue(
+        `Failed to start the SysML language server: ${detail}`,
+        "error"
+      );
     });
   log("Language client started");
 
@@ -377,10 +534,21 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       try {
+        manualStopInProgress = true;
+        setServerHealth(context, "restarting", "Restarting SysML language server.");
         await client.stop();
-        client.start();
+        manualStopInProgress = false;
+        restartCount = 0;
+        crashDialogShown = false;
+        await client.start();
         vscode.window.showInformationMessage("SysML language server restarted.");
       } catch (e) {
+        manualStopInProgress = false;
+        setServerHealth(
+          context,
+          "crashed",
+          `Restart failed: ${e instanceof Error ? e.message : String(e)}`
+        );
         logError("restartServer failed", e);
         vscode.window.showErrorMessage(`Failed to restart server: ${e}`);
       }

@@ -279,6 +279,8 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         let uri_norm = util::normalize_file_uri(&uri);
+        let version = params.text_document.version;
+        let mut runtime_warnings: Vec<(MessageType, String)> = Vec::new();
         {
             let mut state = self.state.write().await;
             let should_update = if let Some(entry) = state.index.get_mut(&uri_norm) {
@@ -288,14 +290,52 @@ impl LanguageServer for Backend {
                             util::apply_incremental_change(&entry.content, &range, &change.text)
                         {
                             entry.content = new_text;
+                        } else {
+                            runtime_warnings.push((
+                                MessageType::WARNING,
+                                format!(
+                                    "didChange: ignored invalid incremental edit for {} at {}:{}..{}:{} (version {}).",
+                                    uri_norm,
+                                    range.start.line,
+                                    range.start.character,
+                                    range.end.line,
+                                    range.end.character,
+                                    version,
+                                ),
+                            ));
                         }
                     } else {
                         entry.content = change.text;
                     }
                 }
                 entry.parsed = sysml_parser::parse(&entry.content).ok();
+                if entry.parsed.is_none() {
+                    let errs = util::parse_failure_diagnostics(&entry.content, 5);
+                    let msg = if errs.is_empty() {
+                        format!(
+                            "sysml parse failed after didChange for {} (version {}): parser returned no AST and no diagnostics; keeping diagnostics-only degraded mode.",
+                            uri_norm, version
+                        )
+                    } else {
+                        format!(
+                            "sysml parse failed after didChange for {} (version {}, {} error(s)): {}; keeping diagnostics-only degraded mode.",
+                            uri_norm,
+                            version,
+                            errs.len(),
+                            errs.join("; "),
+                        )
+                    };
+                    runtime_warnings.push((MessageType::LOG, msg));
+                }
                 true
             } else {
+                runtime_warnings.push((
+                    MessageType::WARNING,
+                    format!(
+                        "didChange: document {} was not in the server index (version {}). Change was ignored until a full open/watch refresh occurs.",
+                        uri_norm, version
+                    ),
+                ));
                 false
             };
             if should_update {
@@ -326,6 +366,9 @@ impl LanguageServer for Backend {
             .unwrap_or("");
         let text = text.to_string();
         drop(state);
+        for (ty, msg) in runtime_warnings {
+            self.client.log_message(ty, msg).await;
+        }
         self.publish_diagnostics_for_document(uri, &text).await;
     }
 
@@ -616,8 +659,8 @@ impl LanguageServer for Backend {
             .map(|e| Location { uri: e.uri.clone(), range: e.range })
             .collect();
         let locations = if same_file.is_empty() { other_files } else { same_file };
-        if locations.len() == 1 {
-            return Ok(Some(GotoDefinitionResponse::Scalar(locations.into_iter().next().unwrap())));
+        if let [location] = locations.as_slice() {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location.clone())));
         }
         if !locations.is_empty() {
             return Ok(Some(GotoDefinitionResponse::Array(locations)));

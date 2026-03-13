@@ -301,8 +301,15 @@ pub fn build_ibd_for_uri(graph: &SemanticGraph, uri: &Url) -> IbdDataDto {
         .iter()
         .filter(|p| {
             p.container_id.is_none()
-                || graph
-                    .get_node(&NodeId::new(uri, &p.container_id.as_ref().unwrap().replace('.', "::")))
+                || p
+                    .container_id
+                    .as_ref()
+                    .and_then(|container_id| {
+                        graph.get_node(&NodeId::new(
+                            uri,
+                            &container_id.replace('.', "::"),
+                        ))
+                    })
                     .map(|n| !is_part_like(&n.element_kind))
                     .unwrap_or(true)
         })

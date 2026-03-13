@@ -87,7 +87,9 @@ fn add_edge_if_both_exist_opt(
             return false;
         }
     }
-    let tgt_idx = g.node_index_by_id.get(&tgt_id).copied().unwrap();
+    let Some(tgt_idx) = g.node_index_by_id.get(&tgt_id).copied() else {
+        return false;
+    };
     g.graph.add_edge(src_idx, tgt_idx, kind);
     true
 }
