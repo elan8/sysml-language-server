@@ -63,3 +63,6 @@ jobs:
 
       - name: npm test (extension tests)
         run: cd vscode && xvfb-run -a npm test
+
+      - name: npm test (workspace smoke)
+        run: cd vscode && xvfb-run -a npm run test:workspace-smoke

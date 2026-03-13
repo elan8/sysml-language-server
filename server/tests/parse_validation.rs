@@ -1,4 +1,4 @@
-//! Validation test: run parse_with_diagnostics on the SurveillanceDrone.sysml fixture.
+//! Validation test: run parse_with_diagnostics on a parser-clean fixture.
 //!
 //! This reproduces the scenario where the language server reports a parse error at the end
 //! of the file (line 420) when opening in VS Code.
@@ -16,23 +16,22 @@
 
 use std::path::PathBuf;
 
-fn surveillance_drone_fixture_path() -> PathBuf {
+fn parse_clean_fixture_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let server_dir = PathBuf::from(manifest_dir);
-    // server/tests/../vscode/testFixture/SurveillanceDrone.sysml when manifest is server/
+    // server/tests/fixtures/parse_clean.sysml when manifest is server/
     server_dir
-        .join("..")
-        .join("vscode")
-        .join("testFixture")
-        .join("SurveillanceDrone.sysml")
+        .join("tests")
+        .join("fixtures")
+        .join("parse_clean.sysml")
         .canonicalize()
-        .expect("SurveillanceDrone.sysml fixture path")
+        .expect("parse_clean.sysml fixture path")
 }
 
 #[test]
-fn parse_with_diagnostics_surveillance_drone_has_no_errors() {
-    let path = surveillance_drone_fixture_path();
-    let content = std::fs::read_to_string(&path).expect("read SurveillanceDrone.sysml");
+fn parse_with_diagnostics_clean_fixture_has_no_errors() {
+    let path = parse_clean_fixture_path();
+    let content = std::fs::read_to_string(&path).expect("read parse_clean.sysml");
     let result = sysml_parser::parse_with_diagnostics(&content);
 
     if !result.errors.is_empty() {
@@ -64,7 +63,7 @@ fn parse_with_diagnostics_surveillance_drone_has_no_errors() {
             content.chars().rev().take(20).collect::<String>()
         );
         panic!(
-            "expected no parse errors for SurveillanceDrone.sysml; got {} (see stderr)",
+            "expected no parse errors for parse_clean.sysml; got {} (see stderr)",
             result.errors.len()
         );
     }

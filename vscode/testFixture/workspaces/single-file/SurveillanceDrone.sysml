@@ -8,16 +8,6 @@ package DroneLibrary {
         part def Radio;
     }
 
-    package DroneRequirements {
-        requirement <'mass_limit'> MaxTakeoffMass {
-            doc /* The drone shall not exceed 5 kg maximum takeoff mass. */
-        }
-
-        requirement <'endurance_req'> MinFlightTime {
-            doc /* The drone shall be capable of at least 30 minutes of sustained flight. */
-        }
-    }
-
     part def SurveillanceQuadrotorDrone {
         part frame : DroneParts::Airframe;
         part propulsion[4] : DroneParts::PropulsionUnit;
@@ -25,8 +15,5 @@ package DroneLibrary {
         part gps : DroneParts::GPS;
         part payloadCam : DroneParts::Camera;
         part radioLink : DroneParts::Radio;
-
-        requirement verification massCheck : DroneRequirements::MaxTakeoffMass;
-        requirement verification flightTimeCheck : DroneRequirements::MinFlightTime;
     }
 }

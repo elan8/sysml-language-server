@@ -385,37 +385,68 @@ impl LanguageServer for Backend {
     ) {
         use tower_lsp::lsp_types::FileChangeType;
         let mut state = self.state.write().await;
+        let mut runtime_warnings: Vec<String> = Vec::new();
         for event in params.changes {
             let uri_norm = util::normalize_file_uri(&event.uri);
             if event.typ == FileChangeType::CREATED || event.typ == FileChangeType::CHANGED {
-                if let Ok(path) = event.uri.to_file_path() {
-                    if let Ok(content) = tokio::fs::read_to_string(&path).await {
-                        let parsed = sysml_parser::parse(&content).ok();
-                        update_semantic_graph_for_uri(
-                            &mut state,
-                            &uri_norm,
-                            parsed.as_ref(),
-                        );
-                        state.index.insert(
-                            uri_norm.clone(),
-                            IndexEntry { content, parsed },
-                        );
-                        let new_entries = semantic_model::symbol_entries_for_uri(
-                            &state.semantic_graph,
-                            &uri_norm,
-                        );
-                        update_symbol_table_for_uri(
-                            &mut state,
-                            &uri_norm,
-                            Some(&new_entries),
-                        );
-                    }
+                match event.uri.to_file_path() {
+                    Ok(path) => match tokio::fs::read_to_string(&path).await {
+                        Ok(content) => {
+                            let parsed = sysml_parser::parse(&content).ok();
+                            if parsed.is_none() {
+                                let errs = util::parse_failure_diagnostics(&content, 5);
+                                runtime_warnings.push(if errs.is_empty() {
+                                    format!(
+                                        "didChangeWatchedFiles: parse failed for {} after file change, but parser returned no diagnostics.",
+                                        uri_norm
+                                    )
+                                } else {
+                                    format!(
+                                        "didChangeWatchedFiles: parse failed for {} after file change ({} error(s)): {}",
+                                        uri_norm,
+                                        errs.len(),
+                                        errs.join("; "),
+                                    )
+                                });
+                            }
+                            update_semantic_graph_for_uri(
+                                &mut state,
+                                &uri_norm,
+                                parsed.as_ref(),
+                            );
+                            state.index.insert(
+                                uri_norm.clone(),
+                                IndexEntry { content, parsed },
+                            );
+                            let new_entries = semantic_model::symbol_entries_for_uri(
+                                &state.semantic_graph,
+                                &uri_norm,
+                            );
+                            update_symbol_table_for_uri(
+                                &mut state,
+                                &uri_norm,
+                                Some(&new_entries),
+                            );
+                        }
+                        Err(error) => runtime_warnings.push(format!(
+                            "didChangeWatchedFiles: failed to read changed file {}: {}",
+                            uri_norm, error
+                        )),
+                    },
+                    Err(_) => runtime_warnings.push(format!(
+                        "didChangeWatchedFiles: ignored non-file URI {}",
+                        uri_norm
+                    )),
                 }
             } else if event.typ == FileChangeType::DELETED {
                 state.index.remove(&uri_norm);
                 remove_symbol_table_entries_for_uri(&mut state, &uri_norm);
                 state.semantic_graph.remove_nodes_for_uri(&uri_norm);
             }
+        }
+        drop(state);
+        for msg in runtime_warnings {
+            self.client.log_message(MessageType::WARNING, msg).await;
         }
     }
 
@@ -445,6 +476,7 @@ impl LanguageServer for Backend {
         state.library_paths = new_library_paths.clone();
         drop(state);
         let state = Arc::clone(&self.state);
+        let client = self.client.clone();
         tokio::spawn(async move {
             let entries: Vec<(Url, String)> = tokio::task::spawn_blocking(move || {
                 let mut out = Vec::new();
@@ -478,9 +510,26 @@ impl LanguageServer for Backend {
             .unwrap_or_default();
             let mut st = state.write().await;
             let mut uris_loaded = Vec::new();
+            let mut runtime_warnings: Vec<String> = Vec::new();
             for (uri, content) in entries {
                 let uri_norm = util::normalize_file_uri(&uri);
                 let parsed = sysml_parser::parse(&content).ok();
+                if parsed.is_none() {
+                    let errs = util::parse_failure_diagnostics(&content, 5);
+                    runtime_warnings.push(if errs.is_empty() {
+                        format!(
+                            "didChangeConfiguration: parse failed while indexing library file {} with no diagnostics.",
+                            uri_norm
+                        )
+                    } else {
+                        format!(
+                            "didChangeConfiguration: parse failed while indexing library file {} ({} error(s)): {}",
+                            uri_norm,
+                            errs.len(),
+                            errs.join("; "),
+                        )
+                    });
+                }
                 update_semantic_graph_for_uri(&mut st, &uri_norm, parsed.as_ref());
                 uris_loaded.push(uri_norm.clone());
                 st.index.insert(
@@ -495,6 +544,10 @@ impl LanguageServer for Backend {
             }
             for u in &uris_loaded {
                 semantic_model::add_cross_document_edges_for_uri(&mut st.semantic_graph, u);
+            }
+            drop(st);
+            for msg in runtime_warnings {
+                client.log_message(MessageType::WARNING, msg).await;
             }
         });
     }

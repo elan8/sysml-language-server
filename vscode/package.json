@@ -360,6 +360,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "vscode-test",
+    "test:workspace-smoke": "vscode-test --config .vscode-test.workspace-smoke.mjs",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {

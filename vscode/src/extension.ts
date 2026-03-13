@@ -33,11 +33,19 @@ import {
 import { ENABLED_VIEWS } from "./visualization/webview/constants";
 import { getWebviewHtml } from "./visualization/htmlBuilder";
 
+type ServerHealthState =
+  | "starting"
+  | "ready"
+  | "indexing"
+  | "degraded"
+  | "restarting"
+  | "crashed";
+
 let client: LanguageClient | undefined;
 let statusItem: vscode.StatusBarItem | undefined;
 let modelExplorerProvider: ModelExplorerProvider | undefined;
 let lspModelProviderForStatus: LspModelProvider | undefined;
-let serverHealthState: "starting" | "ready" | "indexing" | "degraded" | "restarting" | "crashed" = "starting";
+let serverHealthState: ServerHealthState = "starting";
 let serverHealthDetail = "";
 let workspaceIndexingCts: vscode.CancellationTokenSource | undefined;
 
@@ -51,9 +59,15 @@ type WorkspaceIndexSummary = {
 
 let lastWorkspaceIndexSummary: WorkspaceIndexSummary | undefined;
 
+type DebugExtensionState = {
+  serverHealthState: ServerHealthState;
+  serverHealthDetail: string;
+  workspaceIndexSummary?: WorkspaceIndexSummary;
+};
+
 function setServerHealth(
   context: vscode.ExtensionContext,
-  state: typeof serverHealthState,
+  state: ServerHealthState,
   detail = ""
 ): void {
   serverHealthState = state;
@@ -914,6 +928,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("sysml.showOutput", () => {
       showChannel();
     }),
+
+    vscode.commands.registerCommand("sysml.debug.getExtensionState", (): DebugExtensionState => ({
+      serverHealthState,
+      serverHealthDetail,
+      workspaceIndexSummary: lastWorkspaceIndexSummary,
+    })),
 
     vscode.commands.registerCommand("sysml.debugSemanticTokenAtCursor", async () => {
       const editor = vscode.window.activeTextEditor;

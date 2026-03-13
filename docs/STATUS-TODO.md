@@ -36,7 +36,7 @@ What still keeps this from `1.0`:
 ## In Progress
 
 - [ ] Finish runtime guard audit across remaining production code paths.
-- [ ] Strengthen large-workspace behavior with progress, cancellation, and smoke coverage.
+- [ ] Strengthen large-workspace behavior with progress, cancellation, and broader smoke coverage.
 - [ ] Document troubleshooting, support boundaries, and release expectations.
 
 ## Next
@@ -49,14 +49,14 @@ What still keeps this from `1.0`:
 
 ### Workspace and Performance
 
-- [ ] Add a bounded large-workspace smoke test fixture and CI coverage.
+- [x] Add a bounded large-workspace smoke test fixture and CI coverage.
 - [ ] Revisit repeated recomputation in `didChange`.
 - [ ] Add more explicit indexing progress and partial-result behavior in the explorer UX.
 
 ### Docs and Release
 
-- [ ] Write a concise troubleshooting guide.
-- [ ] Add a `1.0` release checklist.
+- [x] Write a concise troubleshooting guide.
+- [x] Add a `1.0` release checklist.
 - [ ] Document supported workflows and experimental areas clearly.
 - [ ] Verify packaging expectations for bundled binaries and release artifacts.
 
