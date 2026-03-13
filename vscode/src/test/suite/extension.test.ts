@@ -1,4 +1,5 @@
 import * as assert from "assert";
+import * as path from "path";
 import * as vscode from "vscode";
 import { VisualizationPanel } from "../../visualization/visualizationPanel";
 import {
@@ -103,28 +104,28 @@ describe("Extension Test Suite", () => {
   });
 
   it("Go to definition from usage to definition", async () => {
-    const filePath = getFixturePath(FIXTURE_FILE);
-    const doc = await vscode.workspace.openTextDocument(filePath);
-    await vscode.window.showTextDocument(doc);
-    const position = findPositionWithinMatch(
-      doc,
-      "DroneParts::PropulsionUnit",
-      "PropulsionUnit"
-    );
+    const workspaceRoot = getTestWorkspaceFolder().uri.fsPath;
+    const defPath = path.resolve(workspaceRoot, "..", "multi-file", "def.sysml");
+    const usePath = path.resolve(workspaceRoot, "..", "multi-file", "use.sysml");
+    const defDoc = await vscode.workspace.openTextDocument(defPath);
+    await waitForLanguageServerReady(defDoc);
+    const useDoc = await vscode.workspace.openTextDocument(usePath);
+    await vscode.window.showTextDocument(useDoc);
+    await waitForLanguageServerReady(useDoc);
     const locations = await waitFor(
       "definition provider response",
       () =>
         vscode.commands.executeCommand<vscode.Location[]>(
           "vscode.executeDefinitionProvider",
-          doc.uri,
-          position
+          useDoc.uri,
+          findPosition(useDoc, "Widget")
         ),
       (value) => Array.isArray(value) && value.length > 0
     );
     assert.strictEqual(
-      locations[0].uri.fsPath,
-      doc.uri.fsPath,
-      "Definition should be in the same file"
+      path.basename(locations[0].uri.fsPath),
+      "def.sysml",
+      "Definition should resolve to def.sysml"
     );
   });
 

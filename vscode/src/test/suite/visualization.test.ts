@@ -1,4 +1,5 @@
 import * as assert from "assert";
+import * as path from "path";
 import * as vscode from "vscode";
 import { VisualizationPanel } from "../../visualization/visualizationPanel";
 import {
@@ -14,6 +15,16 @@ const VIEW_IDS = [
     "interconnection-view",
 ];
 
+const SINGLE_FILE_FIXTURE = "SurveillanceDrone.sysml";
+function getInterconnectionFixturePath(): string {
+    return path.resolve(
+        getTestWorkspaceFolder().uri.fsPath,
+        "..",
+        "timer",
+        "KitchenTimer.sysml"
+    );
+}
+
 describe("Visualization Diagram Views", () => {
     before(async function () {
         this.timeout(30000);
@@ -22,7 +33,7 @@ describe("Visualization Diagram Views", () => {
             .update("visualization.enableExperimentalViews", true, vscode.ConfigurationTarget.Workspace);
         await configureServerForTests();
         getTestWorkspaceFolder();
-        const docPath = getFixturePath("SurveillanceDrone.sysml");
+        const docPath = getFixturePath(SINGLE_FILE_FIXTURE);
         const doc = await vscode.workspace.openTextDocument(docPath);
         await waitForLanguageServerReady(doc);
     });
@@ -50,20 +61,23 @@ describe("Visualization Diagram Views", () => {
 
         const workspaceFolder = getTestWorkspaceFolder();
 
-        const docPath = getFixturePath("SurveillanceDrone.sysml");
-        const doc = await vscode.workspace.openTextDocument(docPath);
-        await vscode.window.showTextDocument(doc);
-
-        await vscode.commands.executeCommand("sysml.showVisualizer");
-        const panel = await waitFor(
-            "visualization panel",
-            async () => VisualizationPanel.currentPanel,
-            (value) => Boolean(value),
-            20000,
-            300
-        );
+        let panel: VisualizationPanel;
 
         for (const viewId of VIEW_IDS) {
+            const docPath = viewId === "interconnection-view"
+                ? getInterconnectionFixturePath()
+                : getFixturePath(SINGLE_FILE_FIXTURE);
+            const doc = await vscode.workspace.openTextDocument(docPath);
+            await vscode.window.showTextDocument(doc);
+            await waitForLanguageServerReady(doc);
+            await vscode.commands.executeCommand("sysml.showVisualizer");
+            panel = await waitFor(
+                "visualization panel",
+                async () => VisualizationPanel.currentPanel,
+                (value) => Boolean(value),
+                20000,
+                300
+            );
             await vscode.commands.executeCommand("sysml.changeVisualizerView", viewId);
             await new Promise((r) => setTimeout(r, 2000)); // Wait for render
             panel.getWebview()?.postMessage({ command: "exportDiagramForTest" });
@@ -91,8 +105,8 @@ describe("Visualization Diagram Views", () => {
                         "interconnection-view export should include IBD part nodes"
                     );
                     assert.ok(
-                        svgText.includes("propulsion"),
-                        "interconnection-view export should include known internal parts from the fixture"
+                        svgText.includes("battery") || svgText.includes("Battery"),
+                        "interconnection-view export should include known internal parts from the timer fixture"
                     );
                 }
             } catch {
