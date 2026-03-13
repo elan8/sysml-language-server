@@ -284,12 +284,16 @@ impl LanguageServer for Backend {
         {
             let mut state = self.state.write().await;
             let should_update = if let Some(entry) = state.index.get_mut(&uri_norm) {
+                let mut content_changed = false;
                 for change in params.content_changes {
                     if let Some(range) = change.range {
                         if let Some(new_text) =
                             util::apply_incremental_change(&entry.content, &range, &change.text)
                         {
-                            entry.content = new_text;
+                            if new_text != entry.content {
+                                entry.content = new_text;
+                                content_changed = true;
+                            }
                         } else {
                             runtime_warnings.push((
                                 MessageType::WARNING,
@@ -305,29 +309,34 @@ impl LanguageServer for Backend {
                             ));
                         }
                     } else {
-                        entry.content = change.text;
+                        if entry.content != change.text {
+                            entry.content = change.text;
+                            content_changed = true;
+                        }
                     }
                 }
-                entry.parsed = sysml_parser::parse(&entry.content).ok();
-                if entry.parsed.is_none() {
-                    let errs = util::parse_failure_diagnostics(&entry.content, 5);
-                    let msg = if errs.is_empty() {
-                        format!(
-                            "sysml parse failed after didChange for {} (version {}): parser returned no AST and no diagnostics; keeping diagnostics-only degraded mode.",
-                            uri_norm, version
-                        )
-                    } else {
-                        format!(
-                            "sysml parse failed after didChange for {} (version {}, {} error(s)): {}; keeping diagnostics-only degraded mode.",
-                            uri_norm,
-                            version,
-                            errs.len(),
-                            errs.join("; "),
-                        )
-                    };
-                    runtime_warnings.push((MessageType::LOG, msg));
+                if content_changed {
+                    entry.parsed = sysml_parser::parse(&entry.content).ok();
+                    if entry.parsed.is_none() {
+                        let errs = util::parse_failure_diagnostics(&entry.content, 5);
+                        let msg = if errs.is_empty() {
+                            format!(
+                                "sysml parse failed after didChange for {} (version {}): parser returned no AST and no diagnostics; keeping diagnostics-only degraded mode.",
+                                uri_norm, version
+                            )
+                        } else {
+                            format!(
+                                "sysml parse failed after didChange for {} (version {}, {} error(s)): {}; keeping diagnostics-only degraded mode.",
+                                uri_norm,
+                                version,
+                                errs.len(),
+                                errs.join("; "),
+                            )
+                        };
+                        runtime_warnings.push((MessageType::LOG, msg));
+                    }
                 }
-                true
+                content_changed
             } else {
                 runtime_warnings.push((
                     MessageType::WARNING,

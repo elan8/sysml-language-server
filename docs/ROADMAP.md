@@ -71,6 +71,8 @@ The following areas are intentionally not release-gating for `1.0` and remain ex
 - `sequence-view`
 - Additional visualization routing/layout quality beyond `general-view`
 
+See also [SUPPORTED-WORKFLOWS.md](SUPPORTED-WORKFLOWS.md) for the current release-facing support boundaries.
+
 ---
 
 ## Professional Polish

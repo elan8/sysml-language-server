@@ -57,7 +57,7 @@ What still keeps this from `1.0`:
 
 - [x] Write a concise troubleshooting guide.
 - [x] Add a `1.0` release checklist.
-- [ ] Document supported workflows and experimental areas clearly.
+- [x] Document supported workflows and experimental areas clearly.
 - [ ] Verify packaging expectations for bundled binaries and release artifacts.
 
 ## Working Rule Until 1.0
