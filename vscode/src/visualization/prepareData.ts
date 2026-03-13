@@ -94,6 +94,9 @@ export function prepareDataForView(data: any, view: string): any {
 
     const allElements = collectAllElements(elements);
 
+    const normalizeQualifiedPath = (value: string | null | undefined): string =>
+        (value || '').replace(/::/g, '.').trim();
+
     switch (view) {
         case 'general-view':
             return data;
@@ -104,30 +107,47 @@ export function prepareDataForView(data: any, view: string): any {
                 const ibdPorts = Array.isArray(ibd.ports) ? ibd.ports : [];
                 const ibdConnectors = Array.isArray(ibd.connectors) ? ibd.connectors : [];
                 const ibdRootCandidates = Array.isArray(ibd.rootCandidates) ? ibd.rootCandidates : [];
-                const selectedRoot = (data.selectedIbdRoot && typeof data.selectedIbdRoot === 'string')
+                const requestedRoot = (data.selectedIbdRoot && typeof data.selectedIbdRoot === 'string')
                     ? data.selectedIbdRoot
                     : (ibd.defaultRoot ?? ibdRootCandidates[0] ?? null);
-                const rootPart = selectedRoot ? ibdParts.find((p: any) => p.name === selectedRoot) : null;
-                const rootPrefix = rootPart ? (rootPart.qualifiedName || rootPart.name) : (selectedRoot || '');
+                const requestedRootNormalized = normalizeQualifiedPath(requestedRoot);
+                const rootPart = requestedRoot
+                    ? ibdParts.find((p: any) => {
+                        const candidates = [
+                            p.name,
+                            p.id,
+                            p.qualifiedName,
+                            normalizeQualifiedPath(p.qualifiedName),
+                        ].filter(Boolean);
+                        return candidates.some((candidate: any) => normalizeQualifiedPath(String(candidate)) === requestedRootNormalized);
+                    }) ?? null
+                    : null;
+                const selectedRoot = rootPart?.name ?? requestedRoot;
+                const rootPrefix = normalizeQualifiedPath(rootPart ? (rootPart.qualifiedName || rootPart.name) : (selectedRoot || ''));
                 const focusedParts = rootPrefix ? ibdParts.filter((p: any) => {
-                    const q = p.qualifiedName || p.name;
+                    const q = normalizeQualifiedPath(p.qualifiedName || p.name);
                     return q === rootPrefix || (rootPrefix && q.startsWith(rootPrefix + '.'));
                 }) : [];
-                const partIds = new Set(focusedParts.map((p: any) => p.qualifiedName || p.name));
-                const partNames = new Set(focusedParts.map((p: any) => p.name));
+                const partIds = new Set(focusedParts.map((p: any) => normalizeQualifiedPath(p.qualifiedName || p.name)));
+                const partNames = new Set(focusedParts.map((p: any) => normalizeQualifiedPath(p.name)));
                 const focusedPorts = ibdPorts.filter((p: any) =>
-                    partIds.has(p.parentId) || partNames.has(p.parentId)
+                    partIds.has(normalizeQualifiedPath(p.parentId)) || partNames.has(normalizeQualifiedPath(p.parentId))
                 );
+                const endpointBelongsToFocusedParts = (endpointId: string | null | undefined): boolean => {
+                    const normalized = normalizeQualifiedPath(endpointId);
+                    if (!normalized) return false;
+                    return focusedParts.some((p: any) => {
+                        const q = normalizeQualifiedPath(p.qualifiedName || p.name);
+                        const simpleName = normalizeQualifiedPath(p.name);
+                        return normalized === q
+                            || normalized.startsWith(q + '.')
+                            || normalized === simpleName
+                            || normalized.startsWith(simpleName + '.');
+                    });
+                };
                 const focusedConnectors = ibdConnectors.filter((c: any) => {
-                    const srcMatch = focusedParts.some((p: any) => {
-                        const q = p.qualifiedName || p.name;
-                        return c.sourceId === q || c.sourceId.startsWith(q + '.') || c.sourceId === p.name;
-                    });
-                    const tgtMatch = focusedParts.some((p: any) => {
-                        const q = p.qualifiedName || p.name;
-                        return c.targetId === q || c.targetId.startsWith(q + '.') || c.targetId === p.name;
-                    });
-                    return srcMatch && tgtMatch;
+                    return endpointBelongsToFocusedParts(c.sourceId || c.source)
+                        && endpointBelongsToFocusedParts(c.targetId || c.target);
                 });
                 return {
                     ...data,

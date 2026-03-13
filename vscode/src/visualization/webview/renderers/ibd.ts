@@ -34,6 +34,7 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
     const verticalSpacing = 100;    // More vertical space for connector routing
 
     const toDot = (qn: string) => (qn || '').replace(/::/g, '.');
+    const normalizeEndpointId = (value: string | null | undefined) => toDot(value || '').trim();
     const partToElkId = (p: any) => toDot(p.qualifiedName) || p.id || p.name;
 
     // Assign IDs to parts
@@ -128,10 +129,10 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
 
     const findPartForEndpoint = (endpointPath: string): any => {
         if (!endpointPath) return null;
-        const pathDot = endpointPath.indexOf('::') >= 0 ? endpointPath.substring(endpointPath.lastIndexOf('::') + 2) : endpointPath;
+        const pathDot = normalizeEndpointId(endpointPath);
         let best: { part: any; len: number } | null = null;
         for (const part of parts) {
-            const qn = toDot(part.qualifiedName || part.name);
+            const qn = normalizeEndpointId(part.qualifiedName || part.name);
             if (!qn) continue;
             if (pathDot === qn || pathDot.startsWith(qn + '.')) {
                 if (!best || qn.length > best.len) best = { part, len: qn.length };
@@ -603,15 +604,36 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
             });
         });
 
-        const findPortPosition = (partPos: { x: number; y: number; part: any } | null, portName: string | null) => {
-            if (!partPos || !portName) return null;
+        const getPortsForPart = (part: any) => ports.filter((p: any) =>
+            p && (
+                p.parentId === part.name ||
+                p.parentId === part.id ||
+                p.parentId === part.qualifiedName ||
+                normalizeEndpointId(p.parentId) === normalizeEndpointId(part.qualifiedName) ||
+                normalizeEndpointId(p.parentId) === normalizeEndpointId(part.name)
+            )
+        );
+
+        const resolvePortForEndpoint = (part: any, endpointId: string | null): any => {
+            if (!part || !endpointId) return null;
+            const endpoint = normalizeEndpointId(endpointId);
+            const endpointLeaf = endpoint.split('.').pop() || endpoint;
+            const partPorts = getPortsForPart(part);
+            return partPorts.find((p: any) => {
+                const portName = normalizeEndpointId(p.name);
+                const portQualifiedName = normalizeEndpointId(p.qualifiedName || p.id || '');
+                return endpoint === portQualifiedName
+                    || endpoint.endsWith('.' + portName)
+                    || endpointLeaf === portName;
+            }) ?? null;
+        };
+
+        const findPortPosition = (partPos: { x: number; y: number; part: any } | null, endpointId: string | null, oppositeX?: number) => {
+            if (!partPos || !endpointId) return null;
 
             const part = partPos.part;
-            const partPorts = ports.filter((p: any) => p && (p.parentId === part.name || p.parentId === part.id || p.parentId === part.qualifiedName));
-
-            const portNameLower = portName.toLowerCase();
-            const port = partPorts.find((p: any) => p && p.name &&
-                (p.name.toLowerCase() === portNameLower || portName.toLowerCase().includes(p.name.toLowerCase())));
+            const partPorts = getPortsForPart(part);
+            const port = resolvePortForEndpoint(part, endpointId);
 
             if (!port) return null;
 
@@ -641,7 +663,8 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
             } else {
                 const idx = inoutPorts.findIndex((p: any) => p.name === port.name);
                 portY = partPos.y + portStartY + inPorts.length * portSpacing + idx * portSpacing;
-                portX = partPos.x;
+                const centerX = partPos.x + partWidth / 2;
+                portX = typeof oppositeX === 'number' && oppositeX >= centerX ? partPos.x + partWidth : partPos.x;
             }
 
             return { x: portX, y: portY, direction: portDirection, isLeft: portX === partPos.x };
@@ -653,11 +676,11 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
 
             if (!srcPos || !tgtPos) return;
 
-            const srcPortName = connector.sourceId ? connector.sourceId.split('.').pop() : null;
-            const tgtPortName = connector.targetId ? connector.targetId.split('.').pop() : null;
+            const srcEndpointId = connector.sourceId || connector.source || null;
+            const tgtEndpointId = connector.targetId || connector.target || null;
 
-            const srcPortPos = findPortPosition(srcPos, srcPortName);
-            const tgtPortPos = findPortPosition(tgtPos, tgtPortName);
+            const srcPortPos = findPortPosition(srcPos, srcEndpointId, tgtPos.x + partWidth / 2);
+            const tgtPortPos = findPortPosition(tgtPos, tgtEndpointId, srcPos.x + partWidth / 2);
 
             const srcHeight = srcPos.height || 80;
             const tgtHeight = tgtPos.height || 80;

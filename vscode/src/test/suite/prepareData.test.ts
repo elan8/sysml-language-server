@@ -217,6 +217,38 @@ describe("prepareDataForView", () => {
             assert.ok(rootPart, "root part must be Propulsion when selected");
         });
 
+        it("keeps only connectors whose endpoint paths stay inside the selected root", () => {
+            const data = {
+                graph: { nodes: [], edges: [] },
+                ibd: {
+                    ...mockIbdFromBackend,
+                    ports: [
+                        { id: "p1", name: "motorOut", parentId: "SurveillanceDrone.Propulsion.propulsionUnit1" },
+                        { id: "p2", name: "flightIn", parentId: "SurveillanceDrone.SurveillanceQuadrotorDrone.flightControl" },
+                    ],
+                    connectors: [
+                        {
+                            sourceId: "SurveillanceDrone.Propulsion.propulsionUnit1.motorOut",
+                            targetId: "SurveillanceDrone.Propulsion.propulsionUnit1.motorOut",
+                            type: "connection",
+                            name: "internalLoop",
+                        },
+                        {
+                            sourceId: "SurveillanceDrone.Propulsion.propulsionUnit1.motorOut",
+                            targetId: "SurveillanceDrone.SurveillanceQuadrotorDrone.flightControl.flightIn",
+                            type: "connection",
+                            name: "crossRootLink",
+                        },
+                    ],
+                },
+                selectedIbdRoot: "Propulsion",
+            };
+            const result = prepareDataForView(data, "interconnection-view");
+            assert.strictEqual(result.selectedIbdRoot, "Propulsion");
+            assert.strictEqual(result.connectors.length, 1, "only connectors fully inside the focused root should remain");
+            assert.strictEqual(result.connectors[0].name, "internalLoop");
+        });
+
         it("returns empty IBD when no backend ibd (no fallback)", () => {
             const data = { graph: { nodes: [{ id: "a", name: "A", type: "part def" }], edges: [] } };
             const result = prepareDataForView(data, "interconnection-view");

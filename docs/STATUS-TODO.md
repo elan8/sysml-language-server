@@ -49,6 +49,7 @@ What still keeps this from `1.0`:
 - [x] Add a first source-to-diagram synchronization path by highlighting the best matching graph node for the active editor selection.
 - [x] Expose experimental diagram views as an explicit opt-in in the visualizer UI instead of silently hiding them.
 - [x] Improve diagram UX with clearer experimental-view messaging in the visualizer itself.
+- [x] Tighten interconnection-view root scoping so focused connectors and ports stay inside the selected IBD root.
 
 ## In Progress
 
