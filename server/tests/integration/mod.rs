@@ -11,6 +11,7 @@ mod definition;
 mod diagnostics;
 mod harness;
 mod hover;
+mod lifecycle;
 mod model;
 mod references;
 mod rename;
