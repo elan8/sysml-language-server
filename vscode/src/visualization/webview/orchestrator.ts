@@ -225,10 +225,25 @@ import { buildGeneralViewGraph } from './graphBuilders';
     function updateViewStatusBanner(activeView) {
         const banner = document.getElementById('view-status-banner');
         if (!banner) return;
+        if (activeView === 'interconnection-view' && currentData) {
+            const preparedData = prepareDataForView({ ...currentData, selectedIbdRoot }, 'interconnection-view');
+            const partCount = Array.isArray(preparedData?.parts) ? preparedData.parts.length : 0;
+            const portCount = Array.isArray(preparedData?.ports) ? preparedData.ports.length : 0;
+            const connectorCount = Array.isArray(preparedData?.connectors) ? preparedData.connectors.length : 0;
+            const selectedRoot = preparedData?.selectedIbdRoot || selectedIbdRoot || 'the selected block';
+
+            if (partCount > 0 && connectorCount === 0) {
+                banner.className = 'experimental';
+                banner.textContent = `Interconnection View is showing ${partCount} part(s) and ${portCount} port(s) for ${selectedRoot}, but no internal connectors were found for this root. Try another block if you expected connections here.`;
+                banner.style.display = 'block';
+                return;
+            }
+        }
         if (experimentalViews.has(activeView)) {
             const option = VIEW_OPTIONS[activeView];
             banner.className = 'experimental';
             banner.textContent = (option?.label || activeView) + ' is experimental. Layout, routing, or element coverage may still be incomplete.';
+            banner.style.display = 'block';
             return;
         }
         banner.className = '';

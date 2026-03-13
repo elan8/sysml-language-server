@@ -1,3 +1,3 @@
 {
-  "sysml-language-server.serverPath": "C:\\Git\\sysml-language-server\\target\\debug\\sysml-language-server.exe"
+  "sysml-language-server.serverPath": "../../../../target/debug/sysml-language-server"
 }
