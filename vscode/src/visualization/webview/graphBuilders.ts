@@ -23,6 +23,18 @@ function getCategoryForType(typeLower: string): string {
     return 'other';
 }
 
+function normalizeEdgeType(edge: any): string {
+    const type = ((edge?.type || edge?.rel_type || edge?.relType || '') as string).toLowerCase();
+    if (type === 'contains') return 'hierarchy';
+    if (type === 'typing') return 'typing';
+    if (type === 'specializes') return 'specializes';
+    if (type === 'connection' || type === 'connect') return 'connection';
+    if (type === 'bind' || type === 'binding') return 'bind';
+    if (type === 'allocate' || type === 'allocation') return 'allocate';
+    if (type === 'transition') return 'transition';
+    return type || 'relationship';
+}
+
 /**
  * Build synthetic tree edges for General View: root PartDef → parts → typing → PartDef → nested parts.
  */
@@ -164,11 +176,20 @@ export function graphToGeneralViewElements(
     nodes.forEach((n: any) => {
         if (n && n.id) nodeById.set(n.id, n);
     });
-    const rawContainsTypingSpecializes = edges.filter((e: any) => {
-        const t = (e.type || e.rel_type || '').toLowerCase();
-        return t === 'contains' || t === 'typing' || t === 'specializes';
+    const allCandidateNodes = nodes.filter((node: any) => {
+        if (!node) return false;
+        const typeLower = ((node.type || node.element_type || '') as string).toLowerCase().trim();
+        return !isMetadataElement(typeLower);
     });
-    const getEdgeType = (e: any) => ((e.type || e.rel_type || '') as string).toLowerCase();
+    allCandidateNodes.forEach((node: any) => {
+        const category = getCategoryForType(((node.type || node.element_type || '') as string).toLowerCase().trim());
+        typeStats[category] = (typeStats[category] || 0) + 1;
+    });
+
+    const rawContainsTypingSpecializes = edges.filter((e: any) => {
+        const t = normalizeEdgeType(e);
+        return t === 'hierarchy' || t === 'typing' || t === 'specializes';
+    });
     const rawPartEdges = rawContainsTypingSpecializes
         .filter((e: any) => {
             const src = nodeById.get(e.source);
@@ -176,9 +197,7 @@ export function graphToGeneralViewElements(
             return src && tgt && isPartOrPartDef(src) && isPartOrPartDef(tgt);
         })
         .map((e: any) => {
-            const t = getEdgeType(e);
-            const type =
-                t === 'contains' ? 'hierarchy' : t === 'typing' ? 'typing' : t === 'specializes' ? 'specializes' : 'hierarchy';
+            const type = normalizeEdgeType(e);
             return { source: e.source, target: e.target, type };
         });
     const syntheticNodeCount = new Set(syntheticEdges.flatMap((e: any) => [e.source, e.target])).size;
@@ -190,16 +209,24 @@ export function graphToGeneralViewElements(
         edgeEndpointIds.add(e.source);
         edgeEndpointIds.add(e.target);
     });
-    const filteredNodes = nodes.filter((node: any) => {
-        if (!node || isMetadataElement(node.type)) return false;
-        if (!isPartOrPartDef(node)) return false;
-        const typeLower = (node.type || '').toLowerCase().trim();
+    const filteredNodes = allCandidateNodes.filter((node: any) => {
+        const typeLower = ((node.type || node.element_type || '') as string).toLowerCase().trim();
         const category = getCategoryForType(typeLower);
-        const matchesCategory =
-            (category === 'partDefs' || category === 'parts') && ctx.expandedGeneralCategories.has(category);
-        const isEdgeEndpoint = edgeEndpointIds.has(node.id);
-        return matchesCategory || isEdgeEndpoint;
+        return ctx.expandedGeneralCategories.has(category) || (category === 'other' && ctx.expandedGeneralCategories.has('other'));
     });
+    const visibleNodeIds = new Set(filteredNodes.map((node: any) => node.id));
+    const rawVisibleEdges = edges
+        .map((edge: any) => ({
+            source: edge.source,
+            target: edge.target,
+            type: normalizeEdgeType(edge),
+        }))
+        .filter((edge: any) =>
+            visibleNodeIds.has(edge.source) &&
+            visibleNodeIds.has(edge.target) &&
+            edge.type !== 'relationship'
+        );
+
     const categoryOrder = new Map(GENERAL_VIEW_CATEGORIES.map((c, i) => [c.id, i]));
     filteredNodes.sort((a: any, b: any) => {
         const catA = getCategoryForType((a.type || '').toLowerCase());
@@ -212,8 +239,7 @@ export function graphToGeneralViewElements(
     filteredNodes.forEach((node: any, index: number) => {
         const cyId = 'gv-' + slugify(node.id) + '-' + index;
         idToCyId.set(node.id, cyId);
-        const category = getCategoryForType((node.type || '').toLowerCase());
-        typeStats[category] = (typeStats[category] || 0) + 1;
+        const category = getCategoryForType(((node.type || node.element_type || '') as string).toLowerCase());
         const elementWithChildren = idToElement.get(node.id);
         const baseLabel = elementWithChildren
             ? buildEnhancedElementLabel(elementWithChildren)
@@ -254,9 +280,21 @@ export function graphToGeneralViewElements(
     const hierarchyEdgeIds = new Set<string>();
     const typingEdgeIds = new Set<string>();
     const specializesEdgeIds = new Set<string>();
+    const connectionEdgeIds = new Set<string>();
+    const bindEdgeIds = new Set<string>();
+    const allocateEdgeIds = new Set<string>();
+    const transitionEdgeIds = new Set<string>();
     const resolveCyId = (backendId: string) => idToCyId.get(backendId) || null;
     let edgesResolved = 0;
-    edgesToUse.forEach((edge: any) => {
+    const structuralOnlySelection = filteredNodes.every((node: any) => {
+        const category = getCategoryForType(((node.type || node.element_type || '') as string).toLowerCase().trim());
+        return category === 'packages' || category === 'partDefs' || category === 'parts';
+    });
+    const allEdgesToUse = structuralOnlySelection && useSyntheticTree
+        ? [...edgesToUse, ...rawVisibleEdges.filter((edge: any) => edge.type !== 'hierarchy' && edge.type !== 'typing' && edge.type !== 'specializes')]
+        : rawVisibleEdges;
+
+    allEdgesToUse.forEach((edge: any) => {
         const sourceCyId = resolveCyId(edge.source);
         const targetCyId = resolveCyId(edge.target);
         if (
@@ -318,6 +356,70 @@ export function graphToGeneralViewElements(
                     }
                 });
             }
+        } else if (edgeType === 'connection') {
+            const edgeId = 'rel-connection-' + sourceCyId + '-' + targetCyId;
+            if (!connectionEdgeIds.has(edgeId)) {
+                connectionEdgeIds.add(edgeId);
+                cyElements.push({
+                    group: 'edges',
+                    data: {
+                        id: edgeId,
+                        source: sourceCyId,
+                        target: targetCyId,
+                        type: 'relationship',
+                        relType: 'connection',
+                        label: 'connect'
+                    }
+                });
+            }
+        } else if (edgeType === 'bind') {
+            const edgeId = 'rel-bind-' + sourceCyId + '-' + targetCyId;
+            if (!bindEdgeIds.has(edgeId)) {
+                bindEdgeIds.add(edgeId);
+                cyElements.push({
+                    group: 'edges',
+                    data: {
+                        id: edgeId,
+                        source: sourceCyId,
+                        target: targetCyId,
+                        type: 'relationship',
+                        relType: 'bind',
+                        label: 'bind'
+                    }
+                });
+            }
+        } else if (edgeType === 'allocate') {
+            const edgeId = 'rel-allocate-' + sourceCyId + '-' + targetCyId;
+            if (!allocateEdgeIds.has(edgeId)) {
+                allocateEdgeIds.add(edgeId);
+                cyElements.push({
+                    group: 'edges',
+                    data: {
+                        id: edgeId,
+                        source: sourceCyId,
+                        target: targetCyId,
+                        type: 'relationship',
+                        relType: 'allocate',
+                        label: 'allocate'
+                    }
+                });
+            }
+        } else if (edgeType === 'transition') {
+            const edgeId = 'rel-transition-' + sourceCyId + '-' + targetCyId;
+            if (!transitionEdgeIds.has(edgeId)) {
+                transitionEdgeIds.add(edgeId);
+                cyElements.push({
+                    group: 'edges',
+                    data: {
+                        id: edgeId,
+                        source: sourceCyId,
+                        target: targetCyId,
+                        type: 'relationship',
+                        relType: 'transition',
+                        label: 'transition'
+                    }
+                });
+            }
         }
     });
     console.log(
@@ -327,7 +429,7 @@ export function graphToGeneralViewElements(
         'filteredNodes',
         filteredNodes.length,
         'edgesToUse',
-        edgesToUse.length,
+        allEdgesToUse.length,
         'edgesResolved',
         edgesResolved
     );

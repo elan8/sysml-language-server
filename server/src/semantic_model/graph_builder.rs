@@ -200,6 +200,9 @@ fn build_from_package_body_element(
                 attrs.insert("attributeType".to_string(), serde_json::json!(t));
             }
             add_node_and_recurse(g, uri, &qualified, "attribute def", name.clone(), range, attrs, parent_id);
+            if let Some(ref t) = ad_node.typing {
+                add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+            }
         }
         PBE::ActionDef(ad_node) => {
             let name = identification_name(&ad_node.identification);
@@ -273,6 +276,9 @@ fn build_from_part_def_body_element(
                 attrs.insert("attributeType".to_string(), serde_json::json!(t));
             }
             add_node_and_recurse(g, uri, &qualified, "attribute def", name.clone(), range, attrs, Some(parent_id));
+            if let Some(ref t) = n.typing {
+                add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+            }
         }
         PDBE::PortUsage(n) => {
             let name = &n.name;
@@ -283,6 +289,9 @@ fn build_from_part_def_body_element(
                 attrs.insert("portType".to_string(), serde_json::json!(t));
             }
             add_node_and_recurse(g, uri, &qualified, "port", name.clone(), range, attrs, Some(parent_id));
+            if let Some(ref t) = n.type_name {
+                add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+            }
         }
         PDBE::PartUsage(n) => {
             let name = &n.name;
@@ -350,6 +359,9 @@ fn build_from_part_usage_body_element(
                 attrs.insert("portType".to_string(), serde_json::json!(t));
             }
             add_node_and_recurse(g, uri, &qualified, "port", name.clone(), range, attrs, Some(parent_id));
+            if let Some(ref t) = n.type_name {
+                add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+            }
         }
         PUBE::Connect(c) => {
             let from_str = expr_node_to_qualified_string(&c.from);
@@ -403,6 +415,9 @@ fn build_from_port_def_body_element(
                 attrs.insert("portType".to_string(), serde_json::json!(t));
             }
             add_node_and_recurse(g, uri, &qualified, "port", name.clone(), range, attrs, Some(parent_id));
+            if let Some(ref t) = n.type_name {
+                add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+            }
         }
         _ => {}
     }

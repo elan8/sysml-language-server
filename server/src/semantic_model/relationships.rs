@@ -105,7 +105,7 @@ pub(crate) fn add_typing_edge_if_exists(
     type_ref: &str,
     container_prefix: Option<&str>,
 ) {
-    const TYPING_TARGET_KINDS: &[&str] = &["part def", "port def", "interface"];
+    const TYPING_TARGET_KINDS: &[&str] = &["part def", "port def", "interface", "item def", "attribute def"];
     for kind in ["part_def", "port_def"] {
         for tgt in type_ref_candidates_with_kind(container_prefix, type_ref, kind) {
             if add_edge_if_both_exist_opt(
@@ -227,8 +227,10 @@ pub fn add_cross_document_edges_for_uri(g: &mut SemanticGraph, uri: &Url) {
         if let Some(v) = node
             .attributes
             .get("partType")
+            .or_else(|| node.attributes.get("attributeType"))
             .or_else(|| node.attributes.get("portType"))
             .or_else(|| node.attributes.get("actorType"))
+            .or_else(|| node.attributes.get("itemType"))
         {
             if let Some(type_ref) = v.as_str() {
                 work.push((node_id.clone(), type_ref.to_string(), prefix.clone(), RelationshipKind::Typing));
@@ -261,7 +263,7 @@ fn add_typing_edge_cross_document(
     kind: RelationshipKind,
 ) {
     let target_element_kinds: &[&str] = match kind {
-        RelationshipKind::Typing => &["part def", "port def", "interface"],
+        RelationshipKind::Typing => &["part def", "port def", "interface", "item def", "attribute def"],
         RelationshipKind::Specializes => &["part def"],
         _ => &[],
     };

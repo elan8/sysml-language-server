@@ -45,6 +45,8 @@ What still keeps this from `1.0`:
 - [x] Surface skipped files and invalid roots during workspace and library indexing instead of silently dropping them.
 - [x] Harden visualization restore and update flows against invalid saved URIs and silent refresh failures.
 - [x] Improve hover resolution for typed usages and nested symbols, with regression coverage.
+- [x] Extend hover coverage to port and attribute type references with semantic typing resolution.
+- [x] Add a first source-to-diagram synchronization path by highlighting the best matching graph node for the active editor selection.
 
 ## In Progress
 

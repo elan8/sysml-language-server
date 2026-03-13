@@ -542,7 +542,15 @@ import { buildGeneralViewGraph } from './graphBuilders';
         d3.selectAll('.hierarchy-cell').style('opacity', null);
     }
 
-    const expandedGeneralCategories = new Set(['partDefs', 'parts', 'packages']);
+    const expandedGeneralCategories = new Set([
+        'packages',
+        'partDefs',
+        'parts',
+        'portDefs',
+        'ports',
+        'attributeDefs',
+        'attributes',
+    ]);
 
     function renderGeneralChips(typeStats) {
         const container = document.getElementById('general-chips');

@@ -17,6 +17,7 @@ import {
   ModelExplorerProvider,
   ModelTreeItem,
 } from "./explorer/modelExplorerProvider";
+import type { GraphNodeDTO } from "./providers/sysmlModelTypes";
 import { getOutputChannel, log, logError, showChannel } from "./logger";
 import {
   decodeSemanticTokens,
@@ -48,6 +49,7 @@ let lspModelProviderForStatus: LspModelProvider | undefined;
 let serverHealthState: ServerHealthState = "starting";
 let serverHealthDetail = "";
 let workspaceIndexingCts: vscode.CancellationTokenSource | undefined;
+let sourceSelectionSyncTimer: ReturnType<typeof setTimeout> | undefined;
 
 type WorkspaceIndexSummary = {
   scannedFiles: number;
@@ -112,6 +114,37 @@ function getBundledServerCommand(extensionPath: string): string {
 function isSysmlDoc(doc: vscode.TextDocument | undefined): boolean {
   if (!doc) return false;
   return doc.languageId === "sysml" || doc.languageId === "kerml";
+}
+
+function rangeContainsPosition(
+  range: { start: { line: number; character: number }; end: { line: number; character: number } },
+  position: vscode.Position
+): boolean {
+  const afterStart =
+    position.line > range.start.line ||
+    (position.line === range.start.line && position.character >= range.start.character);
+  const beforeEnd =
+    position.line < range.end.line ||
+    (position.line === range.end.line && position.character <= range.end.character);
+  return afterStart && beforeEnd;
+}
+
+function rangeSpanScore(
+  range: { start: { line: number; character: number }; end: { line: number; character: number } }
+): number {
+  return (range.end.line - range.start.line) * 10000 + (range.end.character - range.start.character);
+}
+
+function bestGraphNodeAtPosition(
+  nodes: GraphNodeDTO[] | undefined,
+  position: vscode.Position
+): GraphNodeDTO | undefined {
+  if (!nodes?.length) {
+    return undefined;
+  }
+  return nodes
+    .filter((node) => node.range && rangeContainsPosition(node.range, position))
+    .sort((a, b) => rangeSpanScore(a.range) - rangeSpanScore(b.range))[0];
 }
 
 function getWorkspaceFileQueryLimit(): number {
@@ -446,6 +479,31 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   modelExplorerProvider.setTreeView(treeView);
   context.subscriptions.push(treeView);
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeTextEditorSelection((event) => {
+      const panel = VisualizationPanel.currentPanel;
+      const doc = event.textEditor.document;
+      if (!panel || !isSysmlDoc(doc) || !panel.tracksUri(doc.uri) || panel.isNavigating()) {
+        return;
+      }
+      if (sourceSelectionSyncTimer) {
+        clearTimeout(sourceSelectionSyncTimer);
+      }
+      sourceSelectionSyncTimer = setTimeout(async () => {
+        sourceSelectionSyncTimer = undefined;
+        try {
+          const result = await lspModelProvider.getModel(doc.uri.toString(), ["graph"]);
+          const node = bestGraphNodeAtPosition(result.graph?.nodes, event.selections[0]?.active ?? event.textEditor.selection.active);
+          if (node) {
+            panel.revealSourceSelection(node);
+          }
+        } catch (error) {
+          logError(`Source-to-diagram sync failed for ${doc.uri.toString()}`, error);
+        }
+      }, 150);
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("sysml.refreshModelTree", async () => {

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { LspModelProvider } from '../providers/lspModelProvider';
+import type { GraphNodeDTO } from '../providers/sysmlModelTypes';
 import { createMessageDispatcher } from './messageHandlers';
 import { createUpdateVisualizationFlow } from './updateFlow';
 import { getWebviewHtml } from './htmlBuilder';
@@ -292,6 +293,16 @@ export class VisualizationPanel {
         return this._document;
     }
 
+    public isNavigating(): boolean {
+        return this._isNavigating;
+    }
+
+    public tracksUri(uri: vscode.Uri): boolean {
+        const target = uri.toString();
+        return this._document.uri.toString() === target
+            || this._fileUris.some((fileUri) => fileUri.toString() === target);
+    }
+
     /** Exposes webview for tests (e.g. postMessage exportDiagramForTest). */
     public getWebview(): vscode.Webview {
         return this._panel.webview;
@@ -319,6 +330,22 @@ export class VisualizationPanel {
             command: 'selectPackage',
             packageName: packageName
         });
+    }
+
+    public highlightElementByName(elementName: string, skipCentering: boolean = true): void {
+        this._panel.webview.postMessage({
+            command: 'highlightElement',
+            elementName,
+            skipCentering,
+        });
+    }
+
+    public revealSourceSelection(node: GraphNodeDTO): void {
+        if (node.type === 'package') {
+            this.selectPackage(node.name);
+            return;
+        }
+        this.highlightElementByName(node.name, true);
     }
 
     public notifyFileChanged(uri: vscode.Uri) {
