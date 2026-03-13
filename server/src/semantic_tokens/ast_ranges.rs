@@ -260,6 +260,7 @@ fn collect_semantic_ranges_action_usage_body_element(
     use sysml_parser::ast::ActionUsageBodyElement as AUBE;
     match &node.value {
         AUBE::InOutDecl(n) => out.push((span_to_source_range(&n.span), TYPE_PROPERTY)),
-        AUBE::Bind(_) | AUBE::Flow(_) | AUBE::FirstStmt(_) | AUBE::MergeStmt(_) | AUBE::ActionUsage(_) => {}
+        AUBE::Bind(_) | AUBE::Flow(_) | AUBE::FirstStmt(_) | AUBE::MergeStmt(_) | AUBE::ActionUsage(_)
+        | AUBE::Error(_) => {}
     }
 }
