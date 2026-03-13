@@ -2,37 +2,13 @@
 
 use tower_lsp::lsp_types::{Range, Url};
 
-use crate::language::SymbolEntry;
+use crate::language::{position_to_byte_offset, SymbolEntry};
 
 /// Applies an incremental content change (range + new text) to the document.
-/// LSP uses line/character; we treat character as byte offset within the line (UTF-8).
+/// Uses LSP UTF-16 positions and only slices on validated UTF-8 byte boundaries.
 pub fn apply_incremental_change(text: &str, range: &Range, new_text: &str) -> Option<String> {
-    let lines: Vec<&str> = text.split('\n').collect();
-    let start_line = range.start.line as usize;
-    let start_char = range.start.character as usize;
-    let end_line = range.end.line as usize;
-    let end_char = range.end.character as usize;
-    if start_line >= lines.len() || end_line >= lines.len() {
-        return None;
-    }
-    let mut start_byte = 0usize;
-    for (i, line) in lines.iter().enumerate() {
-        if i < start_line {
-            start_byte += line.len() + 1;
-        } else {
-            start_byte += start_char.min(line.len());
-            break;
-        }
-    }
-    let mut end_byte = 0usize;
-    for (i, line) in lines.iter().enumerate() {
-        if i < end_line {
-            end_byte += line.len() + 1;
-        } else {
-            end_byte += end_char.min(line.len());
-            break;
-        }
-    }
+    let start_byte = position_to_byte_offset(text, range.start.line, range.start.character)?;
+    let end_byte = position_to_byte_offset(text, range.end.line, range.end.character)?;
     if start_byte > text.len() || end_byte > text.len() || start_byte > end_byte {
         return None;
     }
@@ -41,6 +17,35 @@ pub fn apply_incremental_change(text: &str, range: &Range, new_text: &str) -> Op
     out.push_str(new_text);
     out.push_str(&text[end_byte..]);
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_incremental_change;
+    use tower_lsp::lsp_types::{Position, Range};
+
+    #[test]
+    fn apply_incremental_change_handles_ascii_edit() {
+        let text = "package Demo {\n  part def Engine;\n}\n";
+        let range = Range::new(Position::new(1, 17), Position::new(1, 18));
+        let updated = apply_incremental_change(text, &range, "").expect("edit applies");
+        assert_eq!(updated, "package Demo {\n  part def Engine\n}\n");
+    }
+
+    #[test]
+    fn apply_incremental_change_handles_utf16_positions() {
+        let text = "package Demo {\n  // ok 😀 here\n}\n";
+        let range = Range::new(Position::new(1, 5), Position::new(1, 8));
+        let updated = apply_incremental_change(text, &range, "fine ").expect("edit applies");
+        assert_eq!(updated, "package Demo {\n  // fine 😀 here\n}\n");
+    }
+
+    #[test]
+    fn apply_incremental_change_rejects_mid_surrogate_position() {
+        let text = "package Demo {\n  // ok 😀 here\n}\n";
+        let range = Range::new(Position::new(1, 9), Position::new(1, 10));
+        assert!(apply_incremental_change(text, &range, "x").is_none());
+    }
 }
 
 /// Normalize file URIs so that file:///C:/... and file:///c%3A/... (from client) match in the index.

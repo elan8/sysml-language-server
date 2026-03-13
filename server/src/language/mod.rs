@@ -152,6 +152,16 @@ mod tests {
     }
 
     #[test]
+    fn test_position_to_byte_offset_utf16_surrogate_pair() {
+        let text = "a😀b\n";
+        assert_eq!(position_to_byte_offset(text, 0, 0), Some(0));
+        assert_eq!(position_to_byte_offset(text, 0, 1), Some(1));
+        assert_eq!(position_to_byte_offset(text, 0, 2), None);
+        assert_eq!(position_to_byte_offset(text, 0, 3), Some(5));
+        assert_eq!(position_to_byte_offset(text, 0, 4), Some(6));
+    }
+
+    #[test]
     fn test_word_at_position() {
         let text = "  part foo : Bar  ";
         let (line, start, end, word) = word_at_position(text, 0, 5).unwrap();

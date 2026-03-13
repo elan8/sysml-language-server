@@ -2,24 +2,34 @@
 
 use tower_lsp::lsp_types::{Position, Range};
 
-/// Converts (line, character) to byte offset in `text`. LSP uses 0-based line and character
-/// (character is Unicode scalar index; for multi-byte UTF-8, this differs from byte offset).
+/// Converts an LSP (line, character) position to a byte offset in `text`.
+/// LSP positions are expressed in UTF-16 code units, so this helper only returns offsets that
+/// land on valid UTF-8 boundaries.
 #[allow(dead_code)] // used by tests and for future LSP features (e.g. range resolution)
 pub fn position_to_byte_offset(text: &str, line: u32, character: u32) -> Option<usize> {
-    let line_str = text.lines().nth(line as usize)?;
-    let char_off = character as usize;
-    let n_chars = line_str.chars().count();
-    if char_off > n_chars {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let line_str = *lines.get(line as usize)?;
+    let target_utf16 = character;
+    let mut seen_utf16 = 0u32;
+    let mut byte_in_line = line_str.len();
+
+    for (byte_idx, ch) in line_str.char_indices() {
+        if seen_utf16 == target_utf16 {
+            byte_in_line = byte_idx;
+            break;
+        }
+        seen_utf16 += ch.len_utf16() as u32;
+        if seen_utf16 > target_utf16 {
+            return None;
+        }
+    }
+    let line_utf16_len = line_str.encode_utf16().count() as u32;
+    if seen_utf16 != target_utf16 && target_utf16 != line_utf16_len {
         return None;
     }
-    // Use char_indices to convert character index to byte offset (handles multi-byte UTF-8)
-    let byte_in_line = line_str
-        .char_indices()
-        .nth(char_off)
-        .map(|(o, _)| o)
-        .unwrap_or(line_str.len());
-    let line_start = text
-        .lines()
+
+    let line_start = lines
+        .iter()
         .take(line as usize)
         .map(|l| l.len() + 1)
         .sum::<usize>();
