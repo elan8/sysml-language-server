@@ -316,8 +316,31 @@ export function getVisualizerStyles(): string {
         left: 12px;
         z-index: 500;
         display: none;
-        align-items: center;
+        align-items: flex-start;
         gap: 8px;
+    }
+    #pkg-dropdown .selector-stack {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+    #pkg-dropdown .selector-summary {
+        display: none;
+        max-width: 360px;
+        padding: 5px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--vscode-panel-border);
+        background: color-mix(in srgb, var(--vscode-editor-inactiveSelectionBackground) 72%, transparent);
+        color: var(--vscode-descriptionForeground);
+        font-size: 10px;
+        line-height: 1.3;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    #pkg-dropdown .selector-summary.visible {
+        display: block;
     }
     #pkg-dropdown .view-dropdown-menu {
         position: absolute;

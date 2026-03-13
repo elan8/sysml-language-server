@@ -64,6 +64,7 @@ What still keeps this from `1.0`:
 - [ ] Bring diagram support to release quality: fix disabled views, clarify missing views, and close the biggest layout/routing gaps.
 - [ ] Improve interconnection-view readability: clearer ports, clearer connector routing, and more stable layout on real models.
 - [ ] Audit missing or weak diagram semantics such as connector labels/item types, source-to-diagram focus, and view-specific empty/degraded states.
+- [x] Add basic CI-backed export coverage for `interconnection-view` so regressions are caught before release.
 
 ## Next
 

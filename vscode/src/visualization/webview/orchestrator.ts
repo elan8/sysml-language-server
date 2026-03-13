@@ -866,9 +866,24 @@ import { buildGeneralViewGraph } from './graphBuilders';
         const pkgDropdown = document.getElementById('pkg-dropdown');
         const pkgMenu = document.getElementById('pkg-dropdown-menu');
         const pkgLabel = document.getElementById('pkg-dropdown-label');
+        const pkgSummary = document.getElementById('pkg-dropdown-summary');
+
+        const setSelectorSummary = (text) => {
+            if (!pkgSummary) return;
+            if (text) {
+                pkgSummary.textContent = text;
+                pkgSummary.classList.add('visible');
+                pkgSummary.title = text;
+            } else {
+                pkgSummary.textContent = '';
+                pkgSummary.classList.remove('visible');
+                pkgSummary.removeAttribute('title');
+            }
+        };
 
         if (!pkgDropdown || !pkgMenu || !currentData) {
             if (pkgDropdown) pkgDropdown.style.display = 'none';
+            setSelectorSummary('');
             return;
         }
 
@@ -965,8 +980,15 @@ import { buildGeneralViewGraph } from './graphBuilders';
         } else if (activeView === 'interconnection-view') {
             const preparedData = prepareDataForView({ ...currentData, selectedIbdRoot }, 'interconnection-view');
             const candidates = preparedData?.ibdRootCandidates || [];
+            const rootSummaries = preparedData?.ibdRootSummaries || [];
             if (candidates.length > 0) {
-                diagrams = candidates.map(name => ({ name }));
+                diagrams = candidates.map(name => {
+                    const summary = rootSummaries.find(s => s.name === name);
+                    const metrics = summary
+                        ? ` (${summary.partCount} parts, ${summary.connectorCount} connectors)`
+                        : '';
+                    return { name, label: name + metrics };
+                });
                 labelText = 'Block';
                 const preferredRoot = preparedData?.selectedIbdRoot && candidates.indexOf(preparedData.selectedIbdRoot) >= 0
                     ? preparedData.selectedIbdRoot
@@ -995,6 +1017,7 @@ import { buildGeneralViewGraph } from './graphBuilders';
             pkgDropdown.style.display = 'none';
             selectedDiagramIndex = 0;
             selectedDiagramName = diagrams.length === 1 ? diagrams[0].name : null;
+            setSelectorSummary('');
             return;
         }
 
@@ -1006,7 +1029,7 @@ import { buildGeneralViewGraph } from './graphBuilders';
             const matchingIndex = diagrams.findIndex(d => d.name === selectedDiagramName);
             if (matchingIndex >= 0) {
                 selectedDiagramIndex = matchingIndex;
-                if (pkgLabel) pkgLabel.textContent = selectedDiagramName;
+                if (pkgLabel) pkgLabel.textContent = diagrams[matchingIndex]?.label || selectedDiagramName;
             } else {
                 // Diagram no longer exists, reset to first
                 selectedDiagramIndex = 0;
@@ -1017,12 +1040,25 @@ import { buildGeneralViewGraph } from './graphBuilders';
             selectedDiagramName = diagrams[0]?.name || null;
         }
 
+        if (activeView === 'interconnection-view') {
+            const preparedData = prepareDataForView({ ...currentData, selectedIbdRoot }, 'interconnection-view');
+            const rootSummaries = preparedData?.ibdRootSummaries || [];
+            const currentSummary = rootSummaries.find(s => s.name === selectedDiagramName);
+            if (currentSummary) {
+                setSelectorSummary(`${currentSummary.partCount} parts, ${currentSummary.portCount} ports, ${currentSummary.connectorCount} connectors`);
+            } else {
+                setSelectorSummary('');
+            }
+        } else {
+            setSelectorSummary('');
+        }
+
         // Populate dropdown menu
         pkgMenu.innerHTML = '';
         diagrams.forEach((d, idx) => {
             const item = document.createElement('button');
             item.className = 'view-dropdown-item';
-            item.textContent = d.name || 'Diagram ' + (idx + 1);
+            item.textContent = d.label || d.name || 'Diagram ' + (idx + 1);
             if (idx === selectedDiagramIndex) item.classList.add('active');
             item.addEventListener('click', function() {
                 selectedDiagramIndex = idx;
@@ -1032,7 +1068,15 @@ import { buildGeneralViewGraph } from './graphBuilders';
                 pkgMenu.querySelectorAll('.view-dropdown-item').forEach(i => i.classList.remove('active'));
                 item.classList.add('active');
                 // Update label
-                if (pkgLabel) pkgLabel.textContent = d.name;
+                if (pkgLabel) pkgLabel.textContent = d.label || d.name;
+                if (activeView === 'interconnection-view') {
+                    const preparedData = prepareDataForView({ ...currentData, selectedIbdRoot }, 'interconnection-view');
+                    const rootSummaries = preparedData?.ibdRootSummaries || [];
+                    const currentSummary = rootSummaries.find(s => s.name === d.name);
+                    setSelectorSummary(currentSummary
+                        ? `${currentSummary.partCount} parts, ${currentSummary.portCount} ports, ${currentSummary.connectorCount} connectors`
+                        : '');
+                }
                 // Close menu
                 pkgMenu.classList.remove('show');
                 // Re-render

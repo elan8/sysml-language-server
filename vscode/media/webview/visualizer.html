@@ -48,9 +48,12 @@
 
 <div id="visualization-wrapper">
     <div id="pkg-dropdown">
-        <button id="pkg-dropdown-btn" class="view-btn" title="Filter by package or diagram">
-            <span class="codicon codicon-chevron-down"></span> <span id="pkg-dropdown-label">Package</span>
-        </button>
+        <div class="selector-stack">
+            <button id="pkg-dropdown-btn" class="view-btn" title="Filter by package or diagram">
+                <span class="codicon codicon-chevron-down"></span> <span id="pkg-dropdown-label">Package</span>
+            </button>
+            <div id="pkg-dropdown-summary" class="selector-summary"></div>
+        </div>
         <div id="pkg-dropdown-menu" class="view-dropdown-menu"></div>
     </div>
     <div id="visualization"></div>

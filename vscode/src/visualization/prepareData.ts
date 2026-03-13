@@ -107,33 +107,7 @@ export function prepareDataForView(data: any, view: string): any {
                 const ibdPorts = Array.isArray(ibd.ports) ? ibd.ports : [];
                 const ibdConnectors = Array.isArray(ibd.connectors) ? ibd.connectors : [];
                 const ibdRootCandidates = Array.isArray(ibd.rootCandidates) ? ibd.rootCandidates : [];
-                const requestedRoot = (data.selectedIbdRoot && typeof data.selectedIbdRoot === 'string')
-                    ? data.selectedIbdRoot
-                    : (ibd.defaultRoot ?? ibdRootCandidates[0] ?? null);
-                const requestedRootNormalized = normalizeQualifiedPath(requestedRoot);
-                const rootPart = requestedRoot
-                    ? ibdParts.find((p: any) => {
-                        const candidates = [
-                            p.name,
-                            p.id,
-                            p.qualifiedName,
-                            normalizeQualifiedPath(p.qualifiedName),
-                        ].filter(Boolean);
-                        return candidates.some((candidate: any) => normalizeQualifiedPath(String(candidate)) === requestedRootNormalized);
-                    }) ?? null
-                    : null;
-                const selectedRoot = rootPart?.name ?? requestedRoot;
-                const rootPrefix = normalizeQualifiedPath(rootPart ? (rootPart.qualifiedName || rootPart.name) : (selectedRoot || ''));
-                const focusedParts = rootPrefix ? ibdParts.filter((p: any) => {
-                    const q = normalizeQualifiedPath(p.qualifiedName || p.name);
-                    return q === rootPrefix || (rootPrefix && q.startsWith(rootPrefix + '.'));
-                }) : [];
-                const partIds = new Set(focusedParts.map((p: any) => normalizeQualifiedPath(p.qualifiedName || p.name)));
-                const partNames = new Set(focusedParts.map((p: any) => normalizeQualifiedPath(p.name)));
-                const focusedPorts = ibdPorts.filter((p: any) =>
-                    partIds.has(normalizeQualifiedPath(p.parentId)) || partNames.has(normalizeQualifiedPath(p.parentId))
-                );
-                const endpointBelongsToFocusedParts = (endpointId: string | null | undefined): boolean => {
+                const endpointBelongsToFocusedParts = (focusedParts: any[], endpointId: string | null | undefined): boolean => {
                     const normalized = normalizeQualifiedPath(endpointId);
                     if (!normalized) return false;
                     return focusedParts.some((p: any) => {
@@ -145,10 +119,64 @@ export function prepareDataForView(data: any, view: string): any {
                             || normalized.startsWith(simpleName + '.');
                     });
                 };
-                const focusedConnectors = ibdConnectors.filter((c: any) => {
-                    return endpointBelongsToFocusedParts(c.sourceId || c.source)
-                        && endpointBelongsToFocusedParts(c.targetId || c.target);
-                });
+                const resolveRootPart = (requestedRoot: string | null | undefined) => {
+                    const requestedRootNormalized = normalizeQualifiedPath(requestedRoot);
+                    if (!requestedRootNormalized) return null;
+                    return ibdParts.find((p: any) => {
+                        const candidates = [
+                            p.name,
+                            p.id,
+                            p.qualifiedName,
+                            normalizeQualifiedPath(p.qualifiedName),
+                        ].filter(Boolean);
+                        return candidates.some((candidate: any) => normalizeQualifiedPath(String(candidate)) === requestedRootNormalized);
+                    }) ?? null;
+                };
+                const summarizeRoot = (rootName: string) => {
+                    const rootPart = resolveRootPart(rootName);
+                    const selectedRoot = rootPart?.name ?? rootName;
+                    const rootPrefix = normalizeQualifiedPath(rootPart ? (rootPart.qualifiedName || rootPart.name) : selectedRoot);
+                    const focusedParts = rootPrefix ? ibdParts.filter((p: any) => {
+                        const q = normalizeQualifiedPath(p.qualifiedName || p.name);
+                        return q === rootPrefix || q.startsWith(rootPrefix + '.');
+                    }) : [];
+                    const partIds = new Set(focusedParts.map((p: any) => normalizeQualifiedPath(p.qualifiedName || p.name)));
+                    const partNames = new Set(focusedParts.map((p: any) => normalizeQualifiedPath(p.name)));
+                    const focusedPorts = ibdPorts.filter((p: any) =>
+                        partIds.has(normalizeQualifiedPath(p.parentId)) || partNames.has(normalizeQualifiedPath(p.parentId))
+                    );
+                    const focusedConnectors = ibdConnectors.filter((c: any) => {
+                        return endpointBelongsToFocusedParts(focusedParts, c.sourceId || c.source)
+                            && endpointBelongsToFocusedParts(focusedParts, c.targetId || c.target);
+                    });
+                    return {
+                        rootName: selectedRoot,
+                        rootPart,
+                        rootPrefix,
+                        focusedParts,
+                        focusedPorts,
+                        focusedConnectors,
+                        score: focusedConnectors.length * 100 + focusedPorts.length * 10 + focusedParts.length,
+                    };
+                };
+                const rootSummaries = ibdRootCandidates.map((candidate) => summarizeRoot(candidate));
+                const explicitlyRequestedRoot = (data.selectedIbdRoot && typeof data.selectedIbdRoot === 'string')
+                    ? data.selectedIbdRoot
+                    : null;
+                const preferredByName = explicitlyRequestedRoot
+                    ? rootSummaries.find((summary) => summary.rootName === explicitlyRequestedRoot) ?? null
+                    : null;
+                const defaultByName = ibd.defaultRoot
+                    ? rootSummaries.find((summary) => summary.rootName === ibd.defaultRoot) ?? null
+                    : null;
+                const richestRoot = [...rootSummaries].sort((a, b) =>
+                    b.score - a.score || a.rootName.localeCompare(b.rootName)
+                )[0] ?? null;
+                const chosenSummary = preferredByName ?? defaultByName ?? richestRoot ?? null;
+                const focusedParts = chosenSummary?.focusedParts ?? [];
+                const focusedPorts = chosenSummary?.focusedPorts ?? [];
+                const focusedConnectors = chosenSummary?.focusedConnectors ?? [];
+                const selectedRoot = chosenSummary?.rootName ?? null;
                 return {
                     ...data,
                     elements: focusedParts,
@@ -156,6 +184,12 @@ export function prepareDataForView(data: any, view: string): any {
                     ports: focusedPorts,
                     connectors: focusedConnectors,
                     ibdRootCandidates,
+                    ibdRootSummaries: rootSummaries.map((summary) => ({
+                        name: summary.rootName,
+                        partCount: summary.focusedParts.length,
+                        portCount: summary.focusedPorts.length,
+                        connectorCount: summary.focusedConnectors.length,
+                    })),
                     selectedIbdRoot: selectedRoot,
                 };
             }

@@ -11,12 +11,15 @@ import {
 
 const VIEW_IDS = [
     "general-view",
-    // interconnection-view disabled: edge routing overlap/quality issues
+    "interconnection-view",
 ];
 
 describe("Visualization Diagram Views", () => {
     before(async function () {
         this.timeout(30000);
+        await vscode.workspace
+            .getConfiguration("sysml-language-server")
+            .update("visualization.enableExperimentalViews", true, vscode.ConfigurationTarget.Workspace);
         await configureServerForTests();
         getTestWorkspaceFolder();
         const docPath = getFixturePath("SurveillanceDrone.sysml");
@@ -36,6 +39,9 @@ describe("Visualization Diagram Views", () => {
             VisualizationPanel.currentPanel.dispose();
         }
         await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+        await vscode.workspace
+            .getConfiguration("sysml-language-server")
+            .update("visualization.enableExperimentalViews", undefined, vscode.ConfigurationTarget.Workspace);
         await new Promise((r) => setTimeout(r, 250));
     });
 
@@ -70,6 +76,25 @@ describe("Visualization Diagram Views", () => {
             try {
                 const stat = await vscode.workspace.fs.stat(uri);
                 assert.ok(stat.size >= 0, `${viewId}.svg should exist`);
+                const bytes = await vscode.workspace.fs.readFile(uri);
+                const svgText = Buffer.from(bytes).toString("utf8");
+                assert.ok(svgText.includes("<svg"), `${viewId}.svg should contain svg markup`);
+                if (viewId === "general-view") {
+                    assert.ok(
+                        svgText.includes("SurveillanceQuadrotorDrone"),
+                        "general-view export should include the main drone node"
+                    );
+                }
+                if (viewId === "interconnection-view") {
+                    assert.ok(
+                        svgText.includes("ibd-part"),
+                        "interconnection-view export should include IBD part nodes"
+                    );
+                    assert.ok(
+                        svgText.includes("propulsion"),
+                        "interconnection-view export should include known internal parts from the fixture"
+                    );
+                }
             } catch {
                 assert.fail(`${viewId}.svg was not created in test-output/diagrams/`);
             }

@@ -670,6 +670,32 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
     let connectorGroup = g.append('g').attr('class', 'ibd-connectors');
     let usedLabelPositions: { x: number; y: number; width: number; height: number }[] = [];
     let pendingLabels: { x: number; y: number; width: number; height: number; text: string; strokeColor: string; isItemType?: boolean }[] = [];
+    const findAvailableLabelPosition = (
+        anchorX: number,
+        anchorY: number,
+        width: number,
+        height: number
+    ) => {
+        const candidates = [
+            { x: anchorX, y: anchorY },
+            { x: anchorX, y: anchorY - 24 },
+            { x: anchorX, y: anchorY + 24 },
+            { x: anchorX - width * 0.55, y: anchorY },
+            { x: anchorX + width * 0.55, y: anchorY },
+            { x: anchorX - width * 0.45, y: anchorY - 22 },
+            { x: anchorX + width * 0.45, y: anchorY - 22 },
+            { x: anchorX - width * 0.45, y: anchorY + 22 },
+            { x: anchorX + width * 0.45, y: anchorY + 22 },
+        ];
+        for (const candidate of candidates) {
+            const hasOverlap = usedLabelPositions.some((pos) => {
+                return Math.abs(pos.x - candidate.x) < (pos.width + width) / 2 + 10 &&
+                    Math.abs(pos.y - candidate.y) < (pos.height + height) / 2 + 6;
+            });
+            if (!hasOverlap) return candidate;
+        }
+        return candidates[candidates.length - 1];
+    };
 
     function drawIbdConnectors() {
         g.selectAll('.ibd-connectors').remove();
@@ -851,6 +877,7 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
 
             const offsetInfo = connectorOffsets.get(connIdx) || { offset: 0, groupIndex: 0, groupCount: 1 };
             const baseOffset = offsetInfo.offset;
+            const routeSpread = offsetInfo.groupCount > 1 ? 18 + offsetInfo.groupCount * 4 : 0;
 
             let srcX: number, srcY: number, tgtX: number, tgtY: number;
 
@@ -880,7 +907,7 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
 
             let pathD: string;
             let labelX: number, labelY: number;
-            const standoff = 40;
+            const standoff = 40 + routeSpread;
 
             const elkEdge = allElkEdges.find((e: any) => e.id === 'edge-' + connIdx);
             const elkPath = elkEdge?.sections && srcPortPos && tgtPortPos
@@ -1050,25 +1077,9 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
                 const labelWidth = displayLabel.length * 7 + 20;
                 const labelHeight = 20;
 
-                let finalLabelX = labelX;
-                let finalLabelY = labelY;
-                let attempts = 0;
-                const maxAttempts = 8;
-                const offsets = [0, -25, 25, -50, 50, -75, 75, -100];
-
-                while (attempts < maxAttempts) {
-                    const testY = labelY + offsets[attempts];
-                    const hasOverlap = usedLabelPositions.some(pos => {
-                        return Math.abs(pos.x - labelX) < (pos.width + labelWidth) / 2 + 10 &&
-                               Math.abs(pos.y - testY) < (pos.height + labelHeight) / 2 + 5;
-                    });
-
-                    if (!hasOverlap) {
-                        finalLabelY = testY;
-                        break;
-                    }
-                    attempts++;
-                }
+                const positioned = findAvailableLabelPosition(labelX, labelY, labelWidth, labelHeight);
+                const finalLabelX = positioned.x;
+                const finalLabelY = positioned.y;
 
                 usedLabelPositions.push({
                     x: finalLabelX,
@@ -1090,11 +1101,20 @@ export async function renderIbdView(ctx: RenderContext & { elkWorkerUrl?: string
             }
 
             if (visualStyle.isFlow && connector.itemType) {
+                const itemWidth = connector.itemType.length * 7 + 10;
+                const itemHeight = 16;
+                const positioned = findAvailableLabelPosition(labelX, labelY - 28, itemWidth, itemHeight);
+                usedLabelPositions.push({
+                    x: positioned.x,
+                    y: positioned.y,
+                    width: itemWidth,
+                    height: itemHeight
+                });
                 pendingLabels.push({
-                    x: labelX,
-                    y: labelY - 28,
-                    width: connector.itemType.length * 7 + 10,
-                    height: 16,
+                    x: positioned.x,
+                    y: positioned.y,
+                    width: itemWidth,
+                    height: itemHeight,
                     text: '«' + connector.itemType + '»',
                     strokeColor: 'var(--vscode-charts-green)',
                     isItemType: true

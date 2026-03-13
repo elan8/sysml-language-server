@@ -257,5 +257,41 @@ describe("prepareDataForView", () => {
             assert.deepStrictEqual(result.connectors, []);
             assert.strictEqual(result.selectedIbdRoot, null);
         });
+
+        it("prefers the richest root when no explicit root or default root is provided", () => {
+            const data = {
+                graph: { nodes: [], edges: [] },
+                ibd: {
+                    parts: [
+                        { id: "Drone", name: "Drone", qualifiedName: "Demo.Drone", containerId: null, type: "part def", attributes: {} },
+                        { id: "Drone::left", name: "left", qualifiedName: "Demo.Drone.left", containerId: "Demo.Drone", type: "part", attributes: {} },
+                        { id: "Drone::right", name: "right", qualifiedName: "Demo.Drone.right", containerId: "Demo.Drone", type: "part", attributes: {} },
+                        { id: "Power", name: "Power", qualifiedName: "Demo.Power", containerId: null, type: "part def", attributes: {} },
+                        { id: "Power::unit", name: "unit", qualifiedName: "Demo.Power.unit", containerId: "Demo.Power", type: "part", attributes: {} },
+                    ],
+                    ports: [
+                        { id: "p1", name: "leftOut", parentId: "Demo.Drone.left" },
+                        { id: "p2", name: "rightIn", parentId: "Demo.Drone.right" },
+                        { id: "p3", name: "powerOut", parentId: "Demo.Power.unit" },
+                    ],
+                    connectors: [
+                        {
+                            sourceId: "Demo.Drone.left.leftOut",
+                            targetId: "Demo.Drone.right.rightIn",
+                            type: "connection",
+                            name: "internalLink",
+                        },
+                    ],
+                    rootCandidates: ["Power", "Drone"],
+                },
+            };
+            const result = prepareDataForView(data, "interconnection-view");
+            assert.strictEqual(result.selectedIbdRoot, "Drone", "root with richer internal structure should be preferred");
+            assert.ok(Array.isArray(result.ibdRootSummaries), "root summaries should be returned");
+            const droneSummary = result.ibdRootSummaries.find((summary: { name: string }) => summary.name === "Drone");
+            assert.ok(droneSummary, "Drone summary should exist");
+            assert.strictEqual(droneSummary.connectorCount, 1);
+            assert.strictEqual(droneSummary.partCount, 3);
+        });
     });
 });

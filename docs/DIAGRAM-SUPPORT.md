@@ -12,7 +12,7 @@ This document tracks the current visualization support level for the path to `1.
 These views are available only when `sysml-language-server.visualization.enableExperimentalViews` is enabled.
 
 - `interconnection-view`
-  Useful for parts, ports, and connectors, but still needs stronger routing/layout quality before it should be release-enabled by default.
+  Useful for parts, ports, and connectors. It now has basic CI export coverage and improved root selection, port readability, and connector routing, but still needs stronger routing/layout quality on dense real-world models before it should be release-enabled by default.
 - `action-flow-view`
   Useful for behavior experiments, but not yet covered strongly enough for release-gating.
 - `state-transition-view`
