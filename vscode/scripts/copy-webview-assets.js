@@ -60,10 +60,7 @@ function run() {
     const assets = [
         { packageName: 'd3', relativePath: 'dist/d3.min.js', filename: 'd3.min.js', subdir: 'vendor' },
         { packageName: 'elkjs', relativePath: 'lib/elk.bundled.js', filename: 'elk.bundled.js', subdir: 'vendor' },
-        { packageName: 'elkjs', relativePath: 'lib/elk-worker.min.js', filename: 'elkWorker.js', subdir: 'webview' },
-        { packageName: 'cytoscape', relativePath: 'dist/cytoscape.min.js', filename: 'cytoscape.min.js', subdir: 'vendor' },
-        { packageName: 'cytoscape-elk', relativePath: 'dist/cytoscape-elk.js', filename: 'cytoscape-elk.js', subdir: 'vendor' },
-        { packageName: 'cytoscape-svg', relativePath: 'cytoscape-svg.js', filename: 'cytoscape-svg.js', subdir: 'vendor' }
+        { packageName: 'elkjs', relativePath: 'lib/elk-worker.min.js', filename: 'elkWorker.js', subdir: 'webview' }
     ];
 
     assets.forEach(asset => {
