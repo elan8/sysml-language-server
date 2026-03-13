@@ -10,6 +10,7 @@ Before release:
 
 - The extension compiles successfully.
 - Webview assets are built successfully.
+- The staged extension layout passes `npm run verify:package-layout`.
 - The `.vsix` contains the extension code plus bundled server binaries for the supported target platforms.
 - The extension starts correctly with the bundled binary when `sysml-language-server.serverPath` is left at its default value.
 
@@ -38,10 +39,12 @@ Expected release artifacts:
 Before publishing:
 
 1. Build release server binaries for all intended targets.
-2. Package the extension with bundled binaries.
-3. Inspect the produced `.vsix` and confirm the expected server paths are present.
-4. Install the `.vsix` in a clean VS Code environment and verify startup with the default configuration.
-5. Confirm the standalone archives extract to a working server binary.
+2. Stage bundled binaries under `vscode/server/<platform>-x64/`.
+3. Run `npm run verify:package-layout` before packaging.
+4. Package the extension with bundled binaries.
+5. Inspect the produced `.vsix` and confirm the expected server paths are present, or run `node scripts/verify-package-layout.js --vsix <file.vsix>`.
+6. Install the `.vsix` in a clean VS Code environment and verify startup with the default configuration.
+7. Confirm the standalone archives extract to a working server binary.
 
 ## Current Caveat
 

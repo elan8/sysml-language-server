@@ -356,6 +356,7 @@
     "vscode:prepublish": "npm run build:webview-assets && npm run build:webview && npm run compile",
     "build:webview-assets": "node scripts/copy-webview-assets.js",
     "build:webview": "node scripts/build-webview.js",
+    "verify:package-layout": "node scripts/verify-package-layout.js",
     "extract-styles": "node scripts/extract-styles.js",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",

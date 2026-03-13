@@ -1,5 +1,4 @@
 {
-  "sysml-language-server.serverPath": "C:\\Git\\sysml-language-server\\target\\debug\\sysml-language-server.exe",
   "sysml-language-server.workspace.maxFilesPerPattern": 2,
   "sysml-language-server.debug": true
 }

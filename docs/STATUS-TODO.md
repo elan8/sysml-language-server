@@ -38,12 +38,14 @@ What still keeps this from `1.0`:
 - [x] Add VS Code end-to-end coverage for multi-file references and rename flows.
 - [x] Add malformed-range and UTF-16/emoji edit regressions beyond the initial crash fix.
 - [x] Harden explorer/model request paths against cancellations and client-not-running failures.
+- [x] Add automated packaging layout verification for staged release assets and VSIX contents.
+- [x] Surface skipped files and invalid roots during workspace and library indexing instead of silently dropping them.
 
 ## In Progress
 
 - [ ] Finish runtime guard audit across remaining production code paths.
 - [ ] Strengthen large-workspace behavior with broader smoke and performance coverage.
-- [ ] Document release expectations and packaging verification more completely.
+- [ ] Validate packaged extension startup against bundled binaries in a clean install flow.
 
 ## Next
 
@@ -62,7 +64,7 @@ What still keeps this from `1.0`:
 - [x] Write a concise troubleshooting guide.
 - [x] Add a `1.0` release checklist.
 - [x] Document supported workflows and experimental areas clearly.
-- [ ] Verify packaging expectations for bundled binaries and release artifacts.
+- [x] Verify packaging expectations for bundled binaries and release artifacts.
 
 ## Working Rule Until 1.0
 

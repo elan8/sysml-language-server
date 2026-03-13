@@ -124,7 +124,14 @@ jobs:
 
       - name: Install vscode deps and package
         run: |
-          cd vscode && npm ci && npm run build:webview-assets && npm run build:webview && npm run compile && npm run package
+          cd vscode && npm ci && npm run build:webview-assets && npm run build:webview && npm run compile && npm run verify:package-layout && npm run package
+
+      - name: Verify packaged VSIX layout
+        run: |
+          cd vscode
+          VSIX_FILE="$(find . -maxdepth 1 -name '*.vsix' | head -n 1)"
+          test -n "$VSIX_FILE"
+          node scripts/verify-package-layout.js --vsix "$VSIX_FILE"
 
       - name: Upload extension artifact (bundled)
         uses: actions/upload-artifact@v4

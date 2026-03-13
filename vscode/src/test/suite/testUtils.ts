@@ -3,6 +3,11 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
+type DebugExtensionState = {
+  serverHealthState: "starting" | "ready" | "indexing" | "degraded" | "restarting" | "crashed";
+  serverHealthDetail: string;
+};
+
 export function getTestWorkspaceFolder(): vscode.WorkspaceFolder {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   assert.ok(workspaceFolder, "Workspace folder should be open");
@@ -63,7 +68,26 @@ export async function configureServerForTests(): Promise<void> {
   await vscode.workspace
     .getConfiguration("sysml-language-server")
     .update("serverPath", serverPath, vscode.ConfigurationTarget.Workspace);
+  const wasActive = extension.isActive;
   await extension.activate();
+  if (wasActive) {
+    await vscode.commands.executeCommand("sysml.restartServer");
+  }
+
+  await waitFor(
+    "extension server health",
+    () =>
+      vscode.commands.executeCommand<DebugExtensionState>(
+        "sysml.debug.getExtensionState"
+      ),
+    (value) =>
+      Boolean(
+        value &&
+        (value.serverHealthState === "ready" || value.serverHealthState === "degraded")
+      ),
+    20000,
+    300
+  );
 }
 
 export async function waitForLanguageServerReady(
@@ -73,14 +97,31 @@ export async function waitForLanguageServerReady(
   await vscode.window.showTextDocument(doc);
   await waitFor(
     "language server ready",
-    () =>
-      vscode.commands.executeCommand<
-        vscode.DocumentSymbol[] | vscode.SymbolInformation[]
-      >(
-        "vscode.executeDocumentSymbolProvider",
-        doc.uri,
+    async () => {
+      const [symbols, hovers] = await Promise.all([
+        vscode.commands.executeCommand<
+          vscode.DocumentSymbol[] | vscode.SymbolInformation[]
+        >(
+          "vscode.executeDocumentSymbolProvider",
+          doc.uri,
+        ),
+        vscode.commands.executeCommand<vscode.Hover[]>(
+          "vscode.executeHoverProvider",
+          doc.uri,
+          new vscode.Position(0, 0)
+        ),
+      ]);
+      return {
+        symbols,
+        hovers,
+      };
+    },
+    (value) =>
+      Boolean(
+        value &&
+        ((Array.isArray(value.symbols) && value.symbols.length > 0) ||
+          (Array.isArray(value.hovers) && value.hovers.length > 0))
       ),
-    (value) => Array.isArray(value) && value.length > 0,
     timeoutMs,
     300
   );

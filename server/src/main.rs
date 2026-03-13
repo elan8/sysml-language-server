@@ -47,6 +47,56 @@ struct ServerState {
     semantic_graph: semantic_model::SemanticGraph,
 }
 
+#[derive(Debug, Default)]
+struct ScanSummary {
+    roots_scanned: usize,
+    roots_skipped_non_file: usize,
+    candidate_files: usize,
+    files_loaded: usize,
+    read_failures: usize,
+    uri_failures: usize,
+}
+
+fn scan_sysml_files(roots: Vec<Url>) -> (Vec<(Url, String)>, ScanSummary) {
+    let mut out = Vec::new();
+    let mut summary = ScanSummary::default();
+    for root in roots {
+        summary.roots_scanned += 1;
+        let path = match root.to_file_path() {
+            Ok(p) => p,
+            Err(_) => {
+                summary.roots_skipped_non_file += 1;
+                continue;
+            }
+        };
+        for entry in WalkDir::new(path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let ext = entry.path().extension().and_then(|e| e.to_str());
+            if ext != Some("sysml") && ext != Some("kerml") {
+                continue;
+            }
+            summary.candidate_files += 1;
+            match std::fs::read_to_string(entry.path()) {
+                Ok(content) => match Url::from_file_path(entry.path()) {
+                    Ok(uri) => {
+                        summary.files_loaded += 1;
+                        out.push((uri, content));
+                    }
+                    Err(_) => summary.uri_failures += 1,
+                },
+                Err(_) => summary.read_failures += 1,
+            }
+        }
+    }
+    (out, summary)
+}
+
 // -------------------------
 // Custom requests (extension)
 // -------------------------
@@ -161,37 +211,11 @@ impl LanguageServer for Backend {
         if scan_roots.is_empty() {
             return;
         }
+        let client = self.client.clone();
         tokio::spawn(async move {
-            let entries: Vec<(Url, String)> = tokio::task::spawn_blocking(move || {
-                let mut out = Vec::new();
-                for root in scan_roots {
-                    let path = match root.to_file_path() {
-                        Ok(p) => p,
-                        Err(_) => continue,
-                    };
-                    for entry in WalkDir::new(path)
-                        .follow_links(false)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                    {
-                        if !entry.file_type().is_file() {
-                            continue;
-                        }
-                        let ext = entry.path().extension().and_then(|e| e.to_str());
-                        if ext != Some("sysml") && ext != Some("kerml") {
-                            continue;
-                        }
-                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                            if let Ok(uri) = Url::from_file_path(entry.path()) {
-                                out.push((uri, content));
-                            }
-                        }
-                    }
-                }
-                out
-            })
-            .await
-            .unwrap_or_default();
+            let (entries, summary) = tokio::task::spawn_blocking(move || scan_sysml_files(scan_roots))
+                .await
+                .unwrap_or_default();
             let mut st = state.write().await;
             let mut uris_loaded = Vec::new();
             for (uri, content) in entries {
@@ -227,10 +251,31 @@ impl LanguageServer for Backend {
                 semantic_model::add_cross_document_edges_for_uri(&mut st.semantic_graph, u);
             }
             eprintln!(
-                "[sysml-ls] workspace scan complete: {} URIs in index. Sample: {:?}",
+                "[sysml-ls] workspace scan complete: loaded={} candidate_files={} roots={} skipped_non_file_roots={} read_failures={} uri_failures={}. Sample: {:?}",
                 uris_loaded.len(),
+                summary.candidate_files,
+                summary.roots_scanned,
+                summary.roots_skipped_non_file,
+                summary.read_failures,
+                summary.uri_failures,
                 uris_loaded.iter().take(5).map(|u| u.as_str()).collect::<Vec<_>>(),
             );
+            if summary.roots_skipped_non_file > 0 || summary.read_failures > 0 || summary.uri_failures > 0 {
+                client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!(
+                            "workspace scan completed with skips: loaded {} of {} candidate SysML/KerML files across {} root(s); skipped_non_file_roots={}, read_failures={}, uri_failures={}.",
+                            summary.files_loaded,
+                            summary.candidate_files,
+                            summary.roots_scanned,
+                            summary.roots_skipped_non_file,
+                            summary.read_failures,
+                            summary.uri_failures,
+                        ),
+                    )
+                    .await;
+            }
         });
     }
 
@@ -487,36 +532,9 @@ impl LanguageServer for Backend {
         let state = Arc::clone(&self.state);
         let client = self.client.clone();
         tokio::spawn(async move {
-            let entries: Vec<(Url, String)> = tokio::task::spawn_blocking(move || {
-                let mut out = Vec::new();
-                for root in new_library_paths {
-                    let path = match root.to_file_path() {
-                        Ok(p) => p,
-                        Err(_) => continue,
-                    };
-                    for entry in WalkDir::new(path)
-                        .follow_links(false)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                    {
-                        if !entry.file_type().is_file() {
-                            continue;
-                        }
-                        let ext = entry.path().extension().and_then(|e| e.to_str());
-                        if ext != Some("sysml") && ext != Some("kerml") {
-                            continue;
-                        }
-                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                            if let Ok(uri) = Url::from_file_path(entry.path()) {
-                                out.push((uri, content));
-                            }
-                        }
-                    }
-                }
-                out
-            })
-            .await
-            .unwrap_or_default();
+            let (entries, summary) = tokio::task::spawn_blocking(move || scan_sysml_files(new_library_paths))
+                .await
+                .unwrap_or_default();
             let mut st = state.write().await;
             let mut uris_loaded = Vec::new();
             let mut runtime_warnings: Vec<String> = Vec::new();
@@ -555,6 +573,17 @@ impl LanguageServer for Backend {
                 semantic_model::add_cross_document_edges_for_uri(&mut st.semantic_graph, u);
             }
             drop(st);
+            if summary.roots_skipped_non_file > 0 || summary.read_failures > 0 || summary.uri_failures > 0 {
+                runtime_warnings.push(format!(
+                    "didChangeConfiguration: library reindex completed with skips: loaded {} of {} candidate SysML/KerML files across {} root(s); skipped_non_file_roots={}, read_failures={}, uri_failures={}.",
+                    summary.files_loaded,
+                    summary.candidate_files,
+                    summary.roots_scanned,
+                    summary.roots_skipped_non_file,
+                    summary.read_failures,
+                    summary.uri_failures,
+                ));
+            }
             for msg in runtime_warnings {
                 client.log_message(MessageType::WARNING, msg).await;
             }
