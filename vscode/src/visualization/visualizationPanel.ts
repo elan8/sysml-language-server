@@ -8,6 +8,20 @@ import { logError } from '../logger';
 
 export const RESTORE_STATE_KEY = 'sysmlVisualizerRestoreState';
 
+function parseFileUri(value: string, label: string): vscode.Uri | undefined {
+    try {
+        const uri = vscode.Uri.parse(value);
+        if (uri.scheme !== 'file') {
+            logError(`Visualization restore ignored non-file URI for ${label}: ${value}`);
+            return undefined;
+        }
+        return uri;
+    } catch (error) {
+        logError(`Visualization restore failed to parse URI for ${label}: ${value}`, error);
+        return undefined;
+    }
+}
+
 async function createCombinedDocumentProxy(fileUris: vscode.Uri[]): Promise<vscode.TextDocument> {
     const openDocs: vscode.TextDocument[] = [];
     let combinedContent = '';
@@ -232,14 +246,21 @@ export class VisualizationPanel {
         const extensionUri = context.extensionUri;
         let document: vscode.TextDocument;
         let fileUris: vscode.Uri[];
+        const restoredFileUris = savedState.fileUris
+            .map((value, index) => parseFileUri(value, `fileUris[${index}]`))
+            .filter((uri): uri is vscode.Uri => Boolean(uri));
 
-        if (savedState.fileUris.length > 1) {
-            fileUris = savedState.fileUris.map((u) => vscode.Uri.parse(u));
+        if (restoredFileUris.length > 1) {
+            fileUris = restoredFileUris;
             document = await createCombinedDocumentProxy(fileUris);
         } else {
-            document = await vscode.workspace.openTextDocument(vscode.Uri.parse(savedState.documentUri));
-            fileUris = savedState.fileUris.length === 1
-                ? [vscode.Uri.parse(savedState.fileUris[0])]
+            const documentUri = parseFileUri(savedState.documentUri, 'documentUri');
+            if (!documentUri) {
+                throw new Error('Saved visualization state does not contain a valid file document URI.');
+            }
+            document = await vscode.workspace.openTextDocument(documentUri);
+            fileUris = restoredFileUris.length === 1
+                ? [restoredFileUris[0]]
                 : [];
         }
 

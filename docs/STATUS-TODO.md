@@ -40,6 +40,7 @@ What still keeps this from `1.0`:
 - [x] Harden explorer/model request paths against cancellations and client-not-running failures.
 - [x] Add automated packaging layout verification for staged release assets and VSIX contents.
 - [x] Surface skipped files and invalid roots during workspace and library indexing instead of silently dropping them.
+- [x] Harden visualization restore and update flows against invalid saved URIs and silent refresh failures.
 
 ## In Progress
 

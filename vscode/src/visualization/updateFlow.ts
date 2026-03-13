@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { LspModelProvider } from '../providers/lspModelProvider';
 import { fetchModelData, hashContent } from './modelFetcher';
+import { log, logError } from '../logger';
 
 export interface UpdateFlowDeps {
     panel: vscode.WebviewPanel;
@@ -45,8 +46,12 @@ export function createUpdateVisualizationFlow(deps: UpdateFlowDeps): { update: (
             clearPendingPackageName();
             if (msg) {
                 panel.webview.postMessage(msg);
+            } else {
+                log('updateVisualization: no model data available, hiding loading state');
+                panel.webview.postMessage({ command: 'hideLoading' });
             }
-        } catch {
+        } catch (error) {
+            logError('updateVisualization failed', error);
             panel.webview.postMessage({ command: 'hideLoading' });
         }
     }
