@@ -44,20 +44,22 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build server
+      - name: Build server (debug for extension test host)
+        run: cargo build -p sysml-language-server
+
+      - name: Build server (release for packaging parity)
         run: cargo build --release -p sysml-language-server
 
       - name: Add server to PATH
-        run: echo "${{ github.workspace }}/target/release" >> $GITHUB_PATH
+        run: |
+          echo "${{ github.workspace }}/target/debug" >> $GITHUB_PATH
+          echo "${{ github.workspace }}/target/release" >> $GITHUB_PATH
 
       - name: npm ci (vscode)
         run: cd vscode && npm ci
 
-      - name: npm run compile
-        run: cd vscode && npm run compile
-
-      - name: Build webview
-        run: cd vscode && npm run build:webview-assets && npm run build:webview
+      - name: Build extension and webview
+        run: cd vscode && npm run build:webview-assets && npm run build:webview && npm run compile
 
       - name: npm test (extension tests)
         run: cd vscode && xvfb-run -a npm test

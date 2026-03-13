@@ -2,6 +2,7 @@ import * as assert from "assert";
 import * as path from "path";
 import * as vscode from "vscode";
 import { VisualizationPanel } from "../../visualization/visualizationPanel";
+import { configureServerForTests, waitFor } from "./testUtils";
 
 const VIEW_IDS = [
     "general-view",
@@ -9,6 +10,11 @@ const VIEW_IDS = [
 ];
 
 describe("Visualization Diagram Views", () => {
+    before(async function () {
+        this.timeout(20000);
+        await configureServerForTests();
+    });
+
     it("exports SVG for all views", async function () {
         this.timeout(60000);
 
@@ -20,14 +26,13 @@ describe("Visualization Diagram Views", () => {
         await vscode.window.showTextDocument(doc);
 
         await vscode.commands.executeCommand("sysml.showVisualizer");
-        await new Promise((r) => setTimeout(r, 5000)); // LSP parse + webview render
-
-        const panel = VisualizationPanel.currentPanel;
-        if (!panel) {
-            // Skip if visualizer did not open (e.g. no LSP server)
-            this.skip();
-            return;
-        }
+        const panel = await waitFor(
+            "visualization panel",
+            async () => VisualizationPanel.currentPanel,
+            (value) => Boolean(value),
+            20000,
+            300
+        );
 
         for (const viewId of VIEW_IDS) {
             await vscode.commands.executeCommand("sysml.changeVisualizerView", viewId);

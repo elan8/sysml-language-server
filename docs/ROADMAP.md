@@ -62,6 +62,15 @@ A roadmap for evolving the sysml-language-server into a full-fledged professiona
 | perf-1 | **Incremental parsing** — Avoid full re-parse on large workspace edits | Medium |
 | perf-2 | **Progress reporting** — Workspace scan progress notifications | Medium |
 
+## Experimental Areas
+
+The following areas are intentionally not release-gating for `1.0` and remain experimental until their tests are promoted from pending/ignored to required:
+
+- `action-flow-view`
+- `state-transition-view`
+- `sequence-view`
+- Additional visualization routing/layout quality beyond `general-view`
+
 ---
 
 ## Professional Polish

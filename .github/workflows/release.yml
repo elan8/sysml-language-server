@@ -124,7 +124,7 @@ jobs:
 
       - name: Install vscode deps and package
         run: |
-          cd vscode && npm ci && npm run compile && npm run package
+          cd vscode && npm ci && npm run build:webview-assets && npm run build:webview && npm run compile && npm run package
 
       - name: Upload extension artifact (bundled)
         uses: actions/upload-artifact@v4
