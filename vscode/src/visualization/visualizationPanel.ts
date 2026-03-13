@@ -4,10 +4,23 @@ import type { GraphNodeDTO } from '../providers/sysmlModelTypes';
 import { createMessageDispatcher } from './messageHandlers';
 import { createUpdateVisualizationFlow } from './updateFlow';
 import { getWebviewHtml } from './htmlBuilder';
-import { ENABLED_VIEWS } from './webview/constants';
+import { DEFAULT_ENABLED_VIEWS, EXPERIMENTAL_VIEWS } from './webview/constants';
 import { logError } from '../logger';
 
 export const RESTORE_STATE_KEY = 'sysmlVisualizerRestoreState';
+
+function getEnabledVisualizationViewIds(): Set<string> {
+    const enabled = new Set<string>(DEFAULT_ENABLED_VIEWS);
+    const includeExperimentalViews = vscode.workspace
+        .getConfiguration('sysml-language-server')
+        .get<boolean>('visualization.enableExperimentalViews', false);
+    if (includeExperimentalViews) {
+        for (const viewId of EXPERIMENTAL_VIEWS) {
+            enabled.add(viewId);
+        }
+    }
+    return enabled;
+}
 
 function parseFileUri(value: string, label: string): vscode.Uri | undefined {
     try {
@@ -97,7 +110,7 @@ export class VisualizationPanel {
         initialCurrentView?: string,
     ) {
         this._fileUris = fileUris ?? [];
-        if (initialCurrentView && ENABLED_VIEWS.has(initialCurrentView)) {
+        if (initialCurrentView && getEnabledVisualizationViewIds().has(initialCurrentView)) {
             this._currentView = initialCurrentView;
         }
         this._extensionVersion = vscode.extensions.getExtension('Elan8.sysml-language-server')?.packageJSON?.version ?? '0.0.0';
@@ -269,7 +282,7 @@ export class VisualizationPanel {
             panel.title = savedState.title;
         }
 
-        const view = ENABLED_VIEWS.has(savedState.currentView) ? savedState.currentView : 'general-view';
+        const view = getEnabledVisualizationViewIds().has(savedState.currentView) ? savedState.currentView : 'general-view';
         VisualizationPanel.currentPanel = new VisualizationPanel(
             panel,
             extensionUri,

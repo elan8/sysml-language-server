@@ -29,6 +29,8 @@ These workflows are available and useful, but still have known limits that shoul
   Works for practical navigation, but partial indexing and parser recovery can affect completeness.
 - General visualization view
   Usable for inspection and export, but still downstream of parser/model quality.
+- Experimental diagram views via `sysml-language-server.visualization.enableExperimentalViews`
+  Useful for evaluation and iteration, but not yet release-gating for `1.0`.
 
 ## Experimental Areas
 

@@ -17,9 +17,7 @@
             <button id="view-dropdown-btn" class="view-btn" title="Switch between visualization views">
                 <span class="codicon codicon-chevron-down"></span> View
             </button>
-            <div id="view-dropdown-menu" class="view-dropdown-menu">
-                <button class="view-dropdown-item" data-view="general-view"><span class="codicon codicon-symbol-structure icon"></span> General</button>
-            </div>
+            <div id="view-dropdown-menu" class="view-dropdown-menu"></div>
         </div>
         <span style="color: var(--vscode-panel-border);">|</span>
         <button id="reset-btn" class="action-btn" title="Reset zoom"><span class="codicon codicon-sync"></span></button>
@@ -45,6 +43,7 @@
         </div>
     </div>
 </div>
+<div id="view-status-banner"></div>
 
 <div id="visualization-wrapper">
     <div id="pkg-dropdown">
@@ -115,7 +114,7 @@
     </div>
 </div>
 
-<script nonce="{{NONCE}}">window.__VIZ_INIT={elkWorkerUrl:'{{ELK_WORKER_URI}}'};</script>
+<script nonce="{{NONCE}}">window.__VIZ_INIT={elkWorkerUrl:'{{ELK_WORKER_URI}}',enabledViews:{{ENABLED_VIEW_IDS_JSON}},experimentalViews:{{EXPERIMENTAL_VIEW_IDS_JSON}}};</script>
 <script nonce="{{NONCE}}" src="{{VISUALIZER_JS_URI}}"></script>
 </body>
 </html>

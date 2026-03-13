@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { getVisualizerStyles } from './styles';
+import { DEFAULT_ENABLED_VIEWS, EXPERIMENTAL_VIEWS } from './webview/constants';
 
 function getNonce(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -17,6 +18,14 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     let html = fs.readFileSync(templatePath, 'utf8');
 
     const nonce = getNonce();
+    const enabledViews: string[] = [...DEFAULT_ENABLED_VIEWS];
+    const includeExperimentalViews = vscode.workspace
+        .getConfiguration('sysml-language-server')
+        .get<boolean>('visualization.enableExperimentalViews', false);
+    if (includeExperimentalViews) {
+        enabledViews.push(...EXPERIMENTAL_VIEWS);
+    }
+
     const vars: Record<string, string> = {
         NONCE: nonce,
         CSP_SOURCE: webview.cspSource,
@@ -27,6 +36,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
         CODICONS_CSS_URI: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'codicons', 'codicon.css')).toString(),
         STYLES: getVisualizerStyles(),
         EXTENSION_VERSION: extensionVersion ?? '0.0.0',
+        ENABLED_VIEW_IDS_JSON: JSON.stringify(enabledViews),
+        EXPERIMENTAL_VIEW_IDS_JSON: JSON.stringify(EXPERIMENTAL_VIEWS),
     };
 
     for (const [key, value] of Object.entries(vars)) {

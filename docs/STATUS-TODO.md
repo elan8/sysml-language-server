@@ -47,6 +47,8 @@ What still keeps this from `1.0`:
 - [x] Improve hover resolution for typed usages and nested symbols, with regression coverage.
 - [x] Extend hover coverage to port and attribute type references with semantic typing resolution.
 - [x] Add a first source-to-diagram synchronization path by highlighting the best matching graph node for the active editor selection.
+- [x] Expose experimental diagram views as an explicit opt-in in the visualizer UI instead of silently hiding them.
+- [x] Improve diagram UX with clearer experimental-view messaging in the visualizer itself.
 
 ## In Progress
 
@@ -74,9 +76,10 @@ What still keeps this from `1.0`:
 ### UX and Diagrams
 
 - [ ] Add source-to-diagram reveal/highlight for the active symbol or cursor position.
-- [ ] Audit which SysML view types are expected for `1.0` and classify each as shipped, experimental, or missing.
+- [x] Audit which SysML view types are expected for `1.0` and classify each as shipped, experimental, or missing.
 - [ ] Re-enable release-blocked diagram views only behind passing regression coverage and acceptable layout quality.
-- [ ] Improve diagram interaction polish: navigation feedback, empty/error states, and clearer unsupported-view messaging.
+- [ ] Decide which experimental views can graduate from opt-in to release-enabled defaults.
+- [ ] Improve diagram interaction polish: navigation feedback, richer empty/error states, and graduation criteria per view.
 
 ### Docs and Release
 

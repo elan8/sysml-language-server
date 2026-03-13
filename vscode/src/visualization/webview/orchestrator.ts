@@ -65,6 +65,14 @@ import { buildGeneralViewGraph } from './graphBuilders';
 
     // ELK Worker URL (must be set before ELK is instantiated)
     const elkWorkerUrl = (typeof window !== 'undefined' && (window).__VIZ_INIT?.elkWorkerUrl) ?? '';
+    const enabledViews = Array.isArray((typeof window !== 'undefined' && (window).__VIZ_INIT?.enabledViews))
+        ? (window).__VIZ_INIT.enabledViews
+        : ['general-view'];
+    const experimentalViews = new Set(
+        Array.isArray((typeof window !== 'undefined' && (window).__VIZ_INIT?.experimentalViews))
+            ? (window).__VIZ_INIT.experimentalViews
+            : []
+    );
 
     let currentData = null;
     let currentView = 'general-view';  // SysML v2 general-view as default
@@ -185,6 +193,48 @@ import { buildGeneralViewGraph } from './graphBuilders';
 
     // Track last rendered data to avoid unnecessary re-renders
     let lastDataHash = '';
+
+    function populateViewDropdown() {
+        const viewDropdownMenu = document.getElementById('view-dropdown-menu');
+        if (!viewDropdownMenu) return;
+        viewDropdownMenu.innerHTML = '';
+        enabledViews.forEach((viewId) => {
+            const option = VIEW_OPTIONS[viewId];
+            if (!option) return;
+            const item = document.createElement('button');
+            item.className = 'view-dropdown-item';
+            item.setAttribute('data-view', viewId);
+            const experimentalBadge = experimentalViews.has(viewId)
+                ? '<span class="view-badge">Experimental</span>'
+                : '';
+            item.innerHTML =
+                '<span class="codicon codicon-' + option.icon + ' icon"></span>' +
+                '<span class="view-text">' + option.shortLabel + '</span>' +
+                experimentalBadge;
+            item.addEventListener('click', (e) => {
+                const selectedView = e.currentTarget.getAttribute('data-view');
+                viewDropdownMenu.classList.remove('show');
+                if (selectedView) {
+                    changeView(selectedView);
+                }
+            });
+            viewDropdownMenu.appendChild(item);
+        });
+    }
+
+    function updateViewStatusBanner(activeView) {
+        const banner = document.getElementById('view-status-banner');
+        if (!banner) return;
+        if (experimentalViews.has(activeView)) {
+            const option = VIEW_OPTIONS[activeView];
+            banner.className = 'experimental';
+            banner.textContent = (option?.label || activeView) + ' is experimental. Layout, routing, or element coverage may still be incomplete.';
+            return;
+        }
+        banner.className = '';
+        banner.textContent = '';
+        banner.style.display = 'none';
+    }
 
     window.addEventListener('message', event => {
         const message = event.data;
@@ -808,6 +858,7 @@ import { buildGeneralViewGraph } from './graphBuilders';
 
         // Update diagram selector visibility and content based on view
         updateDiagramSelector(activeView);
+        updateViewStatusBanner(activeView);
     }
 
     // Update diagram selector for multi-diagram views
@@ -2135,21 +2186,7 @@ import { buildGeneralViewGraph } from './graphBuilders';
         });
     }
 
-    const dropdownItems = document.querySelectorAll('.view-dropdown-item');
-    dropdownItems.forEach(item => {
-        item.addEventListener('click', (e) => {
-            const selectedView = e.currentTarget.getAttribute('data-view');
-            if (viewDropdownMenu) {
-                viewDropdownMenu.classList.remove('show');
-            }
-            if (selectedView === 'dashboard') {
-                // Open the Model Dashboard panel via VS Code command
-                vscode.postMessage({ command: 'executeCommand', args: ['sysml.showModelDashboard'] });
-            } else if (selectedView) {
-                changeView(selectedView);
-            }
-        });
-    });
+    populateViewDropdown();
 
     // Set initial active view button
     updateActiveViewButton(currentView);

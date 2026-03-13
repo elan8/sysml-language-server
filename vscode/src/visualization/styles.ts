@@ -35,6 +35,23 @@ export function getVisualizerStyles(): string {
         border: 1px solid var(--vscode-panel-border);
         border-radius: 4px;
     }
+    #view-status-banner {
+        display: none;
+        margin-bottom: 8px;
+        padding: 7px 10px;
+        border-radius: 4px;
+        border: 1px solid var(--vscode-panel-border);
+        background: var(--vscode-editor-inactiveSelectionBackground);
+        color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+        line-height: 1.4;
+    }
+    #view-status-banner.experimental {
+        display: block;
+        border-color: var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+        background: var(--vscode-inputValidation-warningBackground, var(--vscode-editor-inactiveSelectionBackground));
+        color: var(--vscode-inputValidation-warningForeground, var(--vscode-editor-foreground));
+    }
     button {
         margin-right: 4px;
         padding: 5px 10px;
@@ -126,6 +143,21 @@ export function getVisualizerStyles(): string {
         width: 14px;
         text-align: center;
         flex-shrink: 0;
+    }
+    .view-dropdown-item .view-text {
+        flex: 1;
+    }
+    .view-dropdown-item .view-badge {
+        flex-shrink: 0;
+        padding: 1px 6px;
+        border-radius: 999px;
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        background: color-mix(in srgb, var(--vscode-badge-background, var(--vscode-button-secondaryBackground)) 82%, transparent);
+        color: var(--vscode-badge-foreground, var(--vscode-foreground));
+        border: 1px solid var(--vscode-panel-border);
     }
     #controls .codicon {
         font-size: 14px;

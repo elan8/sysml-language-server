@@ -10,8 +10,17 @@ export const MAX_SYSML_ZOOM = 5;
 
 export const STRUCTURAL_VIEWS = new Set(['general-view']);
 
-/** Views enabled for the current release. Disabled: interconnection-view (routing quality), action-flow-view, state-transition-view, sequence-view */
-export const ENABLED_VIEWS = new Set(['general-view']);
+export const DEFAULT_ENABLED_VIEWS = ['general-view'] as const;
+
+export const EXPERIMENTAL_VIEWS = [
+    'interconnection-view',
+    'action-flow-view',
+    'state-transition-view',
+    'sequence-view',
+] as const;
+
+/** Default release-enabled views. Experimental views can be enabled from extension settings. */
+export const ENABLED_VIEWS = new Set(DEFAULT_ENABLED_VIEWS);
 
 export const ORIENTATION_LABELS: Record<string, string> = {
     horizontal: 'Horizontal',
@@ -30,10 +39,12 @@ export const STATE_LAYOUT_ICONS: Record<string, string> = {
     force: '⚡',
 };
 
-export const VIEW_OPTIONS: Record<string, { label: string }> = {
-    'general-view': { label: 'General View' },
-    'interconnection-view': { label: 'Interconnection View' },
-    // Disabled for next release: action-flow-view, state-transition-view, sequence-view
+export const VIEW_OPTIONS: Record<string, { label: string; shortLabel: string; icon: string }> = {
+    'general-view': { label: 'General View', shortLabel: 'General', icon: 'symbol-structure' },
+    'interconnection-view': { label: 'Interconnection View', shortLabel: 'Interconnection', icon: 'plug' },
+    'action-flow-view': { label: 'Action Flow View', shortLabel: 'Action Flow', icon: 'git-commit' },
+    'state-transition-view': { label: 'State Transition View', shortLabel: 'State Transition', icon: 'git-compare' },
+    'sequence-view': { label: 'Sequence View', shortLabel: 'Sequence', icon: 'list-ordered' },
 };
 
 /** Documentation: rendering technology per view. All views use D3 + ELK. */

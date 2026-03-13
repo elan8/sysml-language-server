@@ -328,6 +328,11 @@
           "default": "general-view",
           "description": "Default view when opening the SysML Model Visualizer (SysML v2 frameless-view types)."
         },
+        "sysml-language-server.visualization.enableExperimentalViews": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable experimental diagram views in the visualizer UI, such as interconnection, action flow, state transition, and sequence views."
+        },
         "sysml-language-server.visualization.exportScale": {
           "type": "number",
           "default": 2,

@@ -31,7 +31,10 @@ import {
   VisualizationPanel,
   VisualizerRestoreState,
 } from "./visualization/visualizationPanel";
-import { ENABLED_VIEWS } from "./visualization/webview/constants";
+import {
+  DEFAULT_ENABLED_VIEWS,
+  EXPERIMENTAL_VIEWS,
+} from "./visualization/webview/constants";
 import { getWebviewHtml } from "./visualization/htmlBuilder";
 
 type ServerHealthState =
@@ -151,6 +154,30 @@ function getWorkspaceFileQueryLimit(): number {
   return vscode.workspace
     .getConfiguration("sysml-language-server")
     .get<number>("workspace.maxFilesPerPattern", 500);
+}
+
+function getEnabledVisualizationViewIds(): Set<string> {
+  const enabled = new Set<string>(DEFAULT_ENABLED_VIEWS);
+  const includeExperimental = vscode.workspace
+    .getConfiguration("sysml-language-server")
+    .get<boolean>("visualization.enableExperimentalViews", false);
+  if (includeExperimental) {
+    for (const viewId of EXPERIMENTAL_VIEWS) {
+      enabled.add(viewId);
+    }
+  }
+  return enabled;
+}
+
+function getVisualizationViews(): Array<{ id: string; label: string; description: string }> {
+  const enabledViews = getEnabledVisualizationViewIds();
+  return [
+    { id: "general-view", label: "General", description: "General view (SysML v2 general-view)" },
+    { id: "interconnection-view", label: "Interconnection", description: "Experimental: parts, ports, and connections" },
+    { id: "action-flow-view", label: "Action Flow", description: "Experimental: behavior and flow rendering" },
+    { id: "state-transition-view", label: "State Transition", description: "Experimental: state-machine rendering" },
+    { id: "sequence-view", label: "Sequence", description: "Experimental: interaction rendering" },
+  ].filter((v) => enabledViews.has(v.id));
 }
 
 function setWorkspaceIndexSummary(summary: WorkspaceIndexSummary | undefined): void {
@@ -821,12 +848,6 @@ export function activate(context: vscode.ExtensionContext): void {
       modelExplorerProvider?.refresh();
     })
   );
-  const visualizationViews = [
-    { id: "general-view", label: "General", description: "General view (SysML v2 general-view)" },
-    { id: "interconnection-view", label: "Interconnection", description: "Parts, ports, connections (SysML v2 interconnection-view)" },
-    // Disabled for next release: interconnection-view (routing), action-flow-view, state-transition-view, sequence-view
-  ].filter((v) => ENABLED_VIEWS.has(v.id));
-
   context.subscriptions.push(
     vscode.commands.registerCommand("sysml.showVisualizer", async () => {
       if (!client) {
@@ -1241,7 +1262,7 @@ export function activate(context: vscode.ExtensionContext): void {
       let selectedViewId = viewId;
       if (!selectedViewId) {
         const selected = await vscode.window.showQuickPick(
-          visualizationViews.map((v) => ({
+          getVisualizationViews().map((v) => ({
             label: v.label,
             description: v.description,
             viewId: v.id,
@@ -1251,7 +1272,13 @@ export function activate(context: vscode.ExtensionContext): void {
         selectedViewId = selected?.viewId;
       }
       if (selectedViewId) {
-        const view = ENABLED_VIEWS.has(selectedViewId) ? selectedViewId : 'general-view';
+        const enabledViews = getEnabledVisualizationViewIds();
+        const view = enabledViews.has(selectedViewId) ? selectedViewId : 'general-view';
+        if (view !== selectedViewId) {
+          vscode.window.showWarningMessage(
+            "That visualizer view is not currently enabled. Turn on 'SysML > Visualization: Enable Experimental Views' to try experimental diagram types."
+          );
+        }
         VisualizationPanel.currentPanel.changeView(view);
       }
     })
@@ -1260,7 +1287,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("sysml.visualizeFolderWithView", async (uri: vscode.Uri, selectedUris?: vscode.Uri[]) => {
       const selected = await vscode.window.showQuickPick(
-        visualizationViews.map((v) => ({
+        getVisualizationViews().map((v) => ({
           label: v.label,
           description: v.description,
           viewId: v.id,
