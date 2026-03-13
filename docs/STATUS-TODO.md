@@ -50,6 +50,7 @@ What still keeps this from `1.0`:
 - [x] Expose experimental diagram views as an explicit opt-in in the visualizer UI instead of silently hiding them.
 - [x] Improve diagram UX with clearer experimental-view messaging in the visualizer itself.
 - [x] Tighten interconnection-view root scoping so focused connectors and ports stay inside the selected IBD root.
+- [x] Add General View presets so users can start from readable overview modes before fine-tuning categories.
 
 ## In Progress
 

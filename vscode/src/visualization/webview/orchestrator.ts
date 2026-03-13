@@ -592,20 +592,63 @@ import { buildGeneralViewGraph } from './graphBuilders';
         d3.selectAll('.hierarchy-cell').style('opacity', null);
     }
 
-    const expandedGeneralCategories = new Set([
-        'packages',
-        'partDefs',
-        'parts',
-        'portDefs',
-        'ports',
-        'attributeDefs',
-        'attributes',
-    ]);
+    const GENERAL_VIEW_PRESETS = [
+        { id: 'overview', label: 'Overview', categories: ['packages', 'partDefs', 'parts'] },
+        { id: 'structure', label: 'Structure', categories: ['packages', 'partDefs', 'parts', 'portDefs', 'interfaceDefs', 'interfaces', 'items'] },
+        { id: 'definitions', label: 'Definitions', categories: ['packages', 'partDefs', 'portDefs', 'attributeDefs', 'actionDefs', 'stateDefs', 'interfaceDefs', 'reqDefs', 'usecaseDefs', 'allocationDefs', 'constraintDefs', 'enumerations'] },
+        { id: 'behavior', label: 'Behavior', categories: ['packages', 'actionDefs', 'actions', 'stateDefs', 'states'] },
+        { id: 'requirements', label: 'Requirements', categories: ['packages', 'reqDefs', 'requirements', 'usecaseDefs', 'usecases', 'concerns'] },
+    ];
+
+    let activeGeneralPresetId = 'overview';
+    const expandedGeneralCategories = new Set(
+        GENERAL_VIEW_PRESETS.find((preset) => preset.id === activeGeneralPresetId)?.categories ?? ['packages', 'partDefs', 'parts']
+    );
+
+    function syncGeneralPresetSelection() {
+        const matchingPreset = GENERAL_VIEW_PRESETS.find((preset) => {
+            if (preset.categories.length !== expandedGeneralCategories.size) {
+                return false;
+            }
+            return preset.categories.every((category) => expandedGeneralCategories.has(category));
+        });
+        activeGeneralPresetId = matchingPreset?.id || 'custom';
+    }
 
     function renderGeneralChips(typeStats) {
         const container = document.getElementById('general-chips');
         if (!container) return;
         container.innerHTML = '';
+
+        syncGeneralPresetSelection();
+
+        const presetRow = document.createElement('div');
+        presetRow.className = 'general-presets';
+
+        GENERAL_VIEW_PRESETS.forEach((preset) => {
+            const presetButton = document.createElement('button');
+            presetButton.className = 'general-preset-btn' + (activeGeneralPresetId === preset.id ? ' active' : '');
+            presetButton.textContent = preset.label;
+            presetButton.addEventListener('click', () => {
+                expandedGeneralCategories.clear();
+                preset.categories.forEach((category) => expandedGeneralCategories.add(category));
+                activeGeneralPresetId = preset.id;
+                renderGeneralChips(typeStats);
+                renderVisualization('general-view');
+            });
+            presetRow.appendChild(presetButton);
+        });
+
+        const fineTuneLabel = document.createElement('span');
+        fineTuneLabel.className = 'general-filters-label';
+        fineTuneLabel.textContent = activeGeneralPresetId === 'custom'
+            ? 'Fine-tune (Custom)'
+            : 'Fine-tune';
+        presetRow.appendChild(fineTuneLabel);
+        container.appendChild(presetRow);
+
+        const chipRow = document.createElement('div');
+        chipRow.className = 'general-chip-row';
 
         GENERAL_VIEW_CATEGORIES.forEach(cat => {
             const count = typeStats && typeStats[cat.id] ? typeStats[cat.id] : 0;
@@ -632,13 +675,16 @@ import { buildGeneralViewGraph } from './graphBuilders';
                 } else {
                     expandedGeneralCategories.add(cat.id);
                 }
+                syncGeneralPresetSelection();
                 renderGeneralChips(typeStats);
                 // Re-render with filter applied
                 renderVisualization('general-view');
             });
 
-            container.appendChild(chip);
+            chipRow.appendChild(chip);
         });
+
+        container.appendChild(chipRow);
     }
 
     function getCategoryForType(typeLower) {

@@ -7,6 +7,39 @@
 
 declare const d3: any;
 
+function classifyNodeCategory(stereotype: string): 'structure' | 'behavior' | 'requirements' | 'other' {
+    const type = (stereotype || '').toLowerCase();
+    if (
+        type.includes('part') ||
+        type.includes('port') ||
+        type.includes('attribute') ||
+        type.includes('interface') ||
+        type.includes('item') ||
+        type.includes('occurrence')
+    ) {
+        return 'structure';
+    }
+    if (
+        type.includes('action') ||
+        type.includes('state') ||
+        type.includes('calc') ||
+        type.includes('analysis') ||
+        type.includes('enumeration')
+    ) {
+        return 'behavior';
+    }
+    if (
+        type.includes('requirement') ||
+        type.includes('use case') ||
+        type.includes('concern') ||
+        type.includes('viewpoint') ||
+        type.includes('stakeholder')
+    ) {
+        return 'requirements';
+    }
+    return 'other';
+}
+
 /** SysML v2 compartment data. Order: Header, Attributes, Parts, Ports per spec. */
 export interface SysMLNodeCompartments {
     header: { stereotype: string; name: string };
@@ -255,15 +288,34 @@ export function renderSysMLNode(
 
     const strokeColor = options.typeColor || 'var(--vscode-charts-blue)';
     const strokeW = options.isDefinition ? '3px' : '2px';
+    const nodeCategory = classifyNodeCategory(compartments.header.stereotype);
+    const cornerRadius = nodeCategory === 'requirements'
+        ? 16
+        : nodeCategory === 'behavior'
+            ? 12
+            : options.isDefinition
+                ? 4
+                : 8;
+    const bodyFill = 'color-mix(in srgb, ' + strokeColor + ' 7%, var(--vscode-editor-background))';
+    const headerFill = 'color-mix(in srgb, ' + strokeColor + ' 14%, var(--vscode-button-secondaryBackground))';
+    const dividerColor = 'color-mix(in srgb, ' + strokeColor + ' 24%, var(--vscode-panel-border))';
+    const compartmentTitleColor = 'color-mix(in srgb, ' + strokeColor + ' 72%, var(--vscode-descriptionForeground))';
+    const accentPrefix = nodeCategory === 'behavior'
+        ? '[B] '
+        : nodeCategory === 'requirements'
+            ? '[R] '
+            : nodeCategory === 'structure'
+                ? '[S] '
+                : '';
 
     nodeG.append('rect')
         .attr('width', options.width)
         .attr('height', options.height)
-        .attr('rx', options.isDefinition ? 4 : 8)
+        .attr('rx', cornerRadius)
         .attr('class', 'graph-node-background sysml-node-bg')
         .attr('data-original-stroke', strokeColor)
         .attr('data-original-width', strokeW)
-        .style('fill', 'var(--vscode-editor-background)')
+        .style('fill', bodyFill)
         .style('stroke', strokeColor)
         .style('stroke-width', strokeW)
         .style('stroke-dasharray', options.isDefinition ? '6,3' : 'none');
@@ -275,7 +327,7 @@ export function renderSysMLNode(
             .attr('y', 0)
             .attr('width', options.width)
             .attr('height', 5)
-            .attr('rx', 2)
+            .attr('rx', Math.max(2, cornerRadius - 2))
             .style('fill', strokeColor);
 
         nodeG.append('rect')
@@ -283,14 +335,15 @@ export function renderSysMLNode(
             .attr('width', options.width)
             .attr('height', headerH - 5)
             .attr('class', 'sysml-header-compartment')
-            .style('fill', 'var(--vscode-button-secondaryBackground)');
+            .attr('rx', Math.max(2, cornerRadius - 2))
+            .style('fill', headerFill);
 
         const stereo = formatStereo(compartments.header.stereotype) || ('«' + compartments.header.stereotype + '»');
         nodeG.append('text')
             .attr('x', options.width / 2)
             .attr('y', 17)
             .attr('text-anchor', 'middle')
-            .text(stereo)
+            .text(accentPrefix + stereo)
             .style('font-size', '9px')
             .style('fill', strokeColor);
 
@@ -335,7 +388,7 @@ export function renderSysMLNode(
             .attr('x2', options.width - PADDING)
             .attr('y2', compTop)
             .attr('class', 'sysml-compartment-divider')
-            .style('stroke', 'var(--vscode-panel-border)')
+            .style('stroke', dividerColor)
             .style('stroke-width', '1px');
         contentY += 4;
         // Title (bold) on its own line
@@ -345,7 +398,7 @@ export function renderSysMLNode(
             .text(title)
             .style('font-size', '9px')
             .style('font-weight', 'bold')
-            .style('fill', 'var(--vscode-descriptionForeground)');
+            .style('fill', compartmentTitleColor);
         contentY += COMPARTMENT_LABEL_HEIGHT;
         // Content lines
         slice.forEach((line) => {

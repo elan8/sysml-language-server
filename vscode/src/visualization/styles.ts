@@ -35,6 +35,79 @@ export function getVisualizerStyles(): string {
         border: 1px solid var(--vscode-panel-border);
         border-radius: 4px;
     }
+    #general-chips {
+        display: none;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid var(--vscode-panel-border);
+    }
+    .general-presets {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+    .general-chip-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+    .general-preset-btn {
+        margin-right: 0;
+        padding: 5px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--vscode-panel-border);
+        background: var(--vscode-button-secondaryBackground, var(--vscode-input-background));
+        color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+        font-size: 11px;
+        font-weight: 600;
+    }
+    .general-preset-btn.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border-color: var(--vscode-button-background);
+    }
+    .general-filters-label {
+        margin-left: 8px;
+        color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+        font-weight: 500;
+    }
+    .pillar-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-right: 0;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--vscode-panel-border);
+        background: color-mix(in srgb, var(--vscode-editor-background) 88%, transparent);
+        color: var(--vscode-editor-foreground);
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1.2;
+    }
+    .pillar-chip.collapsed {
+        opacity: 0.6;
+        background: transparent;
+    }
+    .pillar-chip .count-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 5px;
+        border-radius: 999px;
+        background: var(--vscode-badge-background, var(--vscode-button-secondaryBackground));
+        color: var(--vscode-badge-foreground, var(--vscode-editor-foreground));
+        font-size: 10px;
+        font-weight: 700;
+    }
     #view-status-banner {
         display: none;
         margin-bottom: 8px;
