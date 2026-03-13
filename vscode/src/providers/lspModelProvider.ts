@@ -10,6 +10,14 @@ import type {
   SysMLModelResult,
 } from "./sysmlModelTypes";
 
+function isCancellationError(error: unknown): boolean {
+  return error instanceof vscode.CancellationError;
+}
+
+function isClientNotRunningError(error: unknown): boolean {
+  return error instanceof Error && /Client is not running/i.test(error.message);
+}
+
 /** Convert GraphNodeDTO to SysMLElementDTO for findElement compatibility. */
 function graphNodeToElementDTO(
   node: GraphNodeDTO,
@@ -113,6 +121,14 @@ export class LspModelProvider {
       );
       return result;
     } catch (e) {
+      if (isCancellationError(e)) {
+        log("getModel cancelled for uri=", trimmed);
+        throw e;
+      }
+      if (isClientNotRunningError(e)) {
+        logError(`getModel failed because the language client is not running for ${trimmed}`, e);
+        throw e;
+      }
       logError("getModel failed", e);
       throw e;
     }
@@ -196,4 +212,3 @@ export class LspModelProvider {
     return undefined;
   }
 }
-

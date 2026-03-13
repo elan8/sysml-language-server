@@ -36,19 +36,20 @@ What still keeps this from `1.0`:
 - [x] Add regression coverage for semantic tokens after edits.
 - [x] Harden multi-file visualization model fetch against partial request failures.
 - [x] Add VS Code end-to-end coverage for multi-file references and rename flows.
+- [x] Add malformed-range and UTF-16/emoji edit regressions beyond the initial crash fix.
+- [x] Harden explorer/model request paths against cancellations and client-not-running failures.
 
 ## In Progress
 
 - [ ] Finish runtime guard audit across remaining production code paths.
-- [ ] Strengthen large-workspace behavior with progress, cancellation, and broader smoke coverage.
-- [ ] Document troubleshooting, support boundaries, and release expectations.
+- [ ] Strengthen large-workspace behavior with broader smoke and performance coverage.
+- [ ] Document release expectations and packaging verification more completely.
 
 ## Next
 
 ### Reliability
 
 - [ ] Audit remaining runtime assumptions in server document, model, and visualization flows.
-- [ ] Add regression tests for additional malformed ranges and Unicode-heavy edit variants.
 
 ### Workspace and Performance
 

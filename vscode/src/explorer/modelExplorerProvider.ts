@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { log } from "../logger";
+import { log, logError } from "../logger";
 import type { LspModelProvider } from "../providers/lspModelProvider";
 import type {
   SysMLElementDTO,
@@ -269,7 +269,11 @@ export class ModelExplorerProvider
           }
         } catch (e) {
           failures += 1;
-          log("loadWorkspaceModel: skip file (failed):", uriStr, e);
+          if (e instanceof vscode.CancellationError || token?.isCancellationRequested) {
+            log("loadWorkspaceModel: cancelled while loading", uriStr);
+            break;
+          }
+          logError(`loadWorkspaceModel: skip file (failed): ${uriStr}`, e);
         }
       }
     } finally {
@@ -306,6 +310,13 @@ export class ModelExplorerProvider
         ? (graphToElementTree(result.graph) as SysMLElementDTO[])
         : [];
       log("loadDocument: done,", this.lastElements.length, "elements");
+    } catch (error) {
+      if (error instanceof vscode.CancellationError || token?.isCancellationRequested) {
+        log("loadDocument: cancelled for", document.uri.toString());
+      } else {
+        logError(`loadDocument failed for ${document.uri.toString()}`, error);
+      }
+      this.lastElements = [];
     } finally {
       this._onDidChangeTreeData.fire();
     }
@@ -381,14 +392,28 @@ export class ModelExplorerProvider
           active &&
           (active.languageId === "sysml" || active.languageId === "kerml")
         ) {
-          const result = await this.modelProvider.getModel(
-            active.uri.toString(),
-            ["graph", "stats"]
-          );
-          this.lastUri = active.uri;
-          this.lastElements = result.graph
-            ? (graphToElementTree(result.graph) as SysMLElementDTO[])
-            : [];
+          try {
+            const result = await this.modelProvider.getModel(
+              active.uri.toString(),
+              ["graph", "stats"]
+            );
+            this.lastUri = active.uri;
+            this.lastElements = result.graph
+              ? (graphToElementTree(result.graph) as SysMLElementDTO[])
+              : [];
+          } catch (error) {
+            logError(`getChildren: failed to load active document model for ${active.uri.toString()}`, error);
+            this.lastUri = active.uri;
+            this.lastElements = [];
+            return [
+              new ExplorerInfoItem(
+                "Model data unavailable",
+                "Open the SysML output for details",
+                `The language server did not return model data for ${active.uri.fsPath}.`,
+                "warning"
+              ),
+            ];
+          }
         } else {
           return [];
         }

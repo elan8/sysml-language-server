@@ -99,22 +99,26 @@ export function prepareDataForView(data: any, view: string): any {
             return data;
         case 'interconnection-view': {
             if (data.ibd && Array.isArray(data.ibd.parts)) {
-                const ibd = data.ibd as { parts: any[]; ports: any[]; connectors: any[]; rootCandidates: string[]; defaultRoot?: string };
+                const ibd = data.ibd as { parts: any[]; ports?: any[]; connectors?: any[]; rootCandidates?: string[]; defaultRoot?: string };
+                const ibdParts = Array.isArray(ibd.parts) ? ibd.parts : [];
+                const ibdPorts = Array.isArray(ibd.ports) ? ibd.ports : [];
+                const ibdConnectors = Array.isArray(ibd.connectors) ? ibd.connectors : [];
+                const ibdRootCandidates = Array.isArray(ibd.rootCandidates) ? ibd.rootCandidates : [];
                 const selectedRoot = (data.selectedIbdRoot && typeof data.selectedIbdRoot === 'string')
                     ? data.selectedIbdRoot
-                    : (ibd.defaultRoot ?? ibd.rootCandidates?.[0] ?? null);
-                const rootPart = selectedRoot ? ibd.parts.find((p: any) => p.name === selectedRoot) : null;
+                    : (ibd.defaultRoot ?? ibdRootCandidates[0] ?? null);
+                const rootPart = selectedRoot ? ibdParts.find((p: any) => p.name === selectedRoot) : null;
                 const rootPrefix = rootPart ? (rootPart.qualifiedName || rootPart.name) : (selectedRoot || '');
-                const focusedParts = rootPrefix ? ibd.parts.filter((p: any) => {
+                const focusedParts = rootPrefix ? ibdParts.filter((p: any) => {
                     const q = p.qualifiedName || p.name;
                     return q === rootPrefix || (rootPrefix && q.startsWith(rootPrefix + '.'));
                 }) : [];
                 const partIds = new Set(focusedParts.map((p: any) => p.qualifiedName || p.name));
                 const partNames = new Set(focusedParts.map((p: any) => p.name));
-                const focusedPorts = ibd.ports.filter((p: any) =>
+                const focusedPorts = ibdPorts.filter((p: any) =>
                     partIds.has(p.parentId) || partNames.has(p.parentId)
                 );
-                const focusedConnectors = ibd.connectors.filter((c: any) => {
+                const focusedConnectors = ibdConnectors.filter((c: any) => {
                     const srcMatch = focusedParts.some((p: any) => {
                         const q = p.qualifiedName || p.name;
                         return c.sourceId === q || c.sourceId.startsWith(q + '.') || c.sourceId === p.name;
@@ -131,7 +135,7 @@ export function prepareDataForView(data: any, view: string): any {
                     parts: focusedParts,
                     ports: focusedPorts,
                     connectors: focusedConnectors,
-                    ibdRootCandidates: ibd.rootCandidates || [],
+                    ibdRootCandidates,
                     selectedIbdRoot: selectedRoot,
                 };
             }

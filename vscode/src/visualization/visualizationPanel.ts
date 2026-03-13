@@ -4,12 +4,14 @@ import { createMessageDispatcher } from './messageHandlers';
 import { createUpdateVisualizationFlow } from './updateFlow';
 import { getWebviewHtml } from './htmlBuilder';
 import { ENABLED_VIEWS } from './webview/constants';
+import { logError } from '../logger';
 
 export const RESTORE_STATE_KEY = 'sysmlVisualizerRestoreState';
 
 async function createCombinedDocumentProxy(fileUris: vscode.Uri[]): Promise<vscode.TextDocument> {
     const openDocs: vscode.TextDocument[] = [];
     let combinedContent = '';
+    let failedCount = 0;
     for (const fileUri of fileUris) {
         try {
             const doc = await vscode.workspace.openTextDocument(fileUri);
@@ -18,12 +20,13 @@ async function createCombinedDocumentProxy(fileUris: vscode.Uri[]): Promise<vsco
             combinedContent += `// === ${fileName} ===\n`;
             combinedContent += doc.getText();
             combinedContent += '\n\n';
-        } catch {
-            // skip
+        } catch (error) {
+            failedCount += 1;
+            logError(`createCombinedDocumentProxy: failed to open ${fileUri.toString()}`, error);
         }
     }
     if (openDocs.length === 0) {
-        throw new Error('No documents could be opened');
+        throw new Error(`No documents could be opened for combined visualization (${failedCount} failed).`);
     }
     const firstDoc = openDocs[0];
     return {

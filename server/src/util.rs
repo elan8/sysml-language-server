@@ -60,6 +60,21 @@ mod tests {
         let range = Range::new(Position::new(99, 0), Position::new(99, 1));
         assert!(apply_incremental_change(text, &range, "x").is_none());
     }
+
+    #[test]
+    fn apply_incremental_change_handles_zero_width_insert_after_emoji() {
+        let text = "package Demo {\n  // ok \u{1F600} here\n}\n";
+        let range = Range::new(Position::new(1, 10), Position::new(1, 10));
+        let updated = apply_incremental_change(text, &range, "still ").expect("insert applies");
+        assert_eq!(updated, "package Demo {\n  // ok \u{1F600}still  here\n}\n");
+    }
+
+    #[test]
+    fn apply_incremental_change_rejects_zero_width_insert_inside_surrogate_pair() {
+        let text = "package Demo {\n  // ok \u{1F600} here\n}\n";
+        let range = Range::new(Position::new(1, 9), Position::new(1, 9));
+        assert!(apply_incremental_change(text, &range, "x").is_none());
+    }
 }
 
 /// Normalize file URIs so that file:///C:/... and file:///c%3A/... (from client) match in the index.
