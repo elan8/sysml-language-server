@@ -32,6 +32,10 @@ What still keeps this from `1.0`:
 - [x] Fix CI webview asset build drift.
 - [x] Introduce workspace fixture subfolders for multiple test workspaces.
 - [x] Surface workspace indexing limits in extension configuration and warnings.
+- [x] Add regression tests for repeated open/edit/close cycles.
+- [x] Add regression coverage for semantic tokens after edits.
+- [x] Harden multi-file visualization model fetch against partial request failures.
+- [x] Add VS Code end-to-end coverage for multi-file references and rename flows.
 
 ## In Progress
 
@@ -44,14 +48,13 @@ What still keeps this from `1.0`:
 ### Reliability
 
 - [ ] Audit remaining runtime assumptions in server document, model, and visualization flows.
-- [ ] Add regression tests for malformed ranges, Unicode-heavy edits, and repeated open/edit/close loops.
-- [ ] Add end-to-end coverage for semantic tokens after edits and multi-file rename/reference flows.
+- [ ] Add regression tests for additional malformed ranges and Unicode-heavy edit variants.
 
 ### Workspace and Performance
 
 - [x] Add a bounded large-workspace smoke test fixture and CI coverage.
-- [ ] Revisit repeated recomputation in `didChange`.
-- [ ] Add more explicit indexing progress and partial-result behavior in the explorer UX.
+- [x] Revisit repeated recomputation in `didChange`.
+- [x] Add more explicit indexing progress and partial-result behavior in the explorer UX.
 
 ### Docs and Release
 

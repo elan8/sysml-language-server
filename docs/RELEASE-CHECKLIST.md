@@ -21,6 +21,7 @@ Use this checklist before publishing a `1.0` release candidate or final release.
 - [ ] `cargo test -p sysml-language-server -- --nocapture` passes.
 - [ ] `npm.cmd run compile` passes.
 - [ ] `npm.cmd test` passes.
+- [ ] `npm.cmd run test:multi-file` passes.
 - [ ] `npm.cmd run test:workspace-smoke` passes.
 - [ ] CI runs Rust tests, extension tests, workspace smoke tests, and packaging checks on supported platforms.
 

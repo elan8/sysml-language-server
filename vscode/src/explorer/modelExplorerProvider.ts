@@ -38,6 +38,23 @@ export class FileTreeItem extends vscode.TreeItem {
   }
 }
 
+export class ExplorerInfoItem extends vscode.TreeItem {
+  readonly itemType = "explorer-info" as const;
+
+  constructor(
+    label: string,
+    description?: string,
+    tooltip?: string,
+    iconId: "info" | "warning" | "sync" = "info"
+  ) {
+    super(label, vscode.TreeItemCollapsibleState.None);
+    this.description = description;
+    this.tooltip = tooltip ?? label;
+    this.iconPath = new vscode.ThemeIcon(iconId);
+    this.contextValue = "sysmlExplorerInfo";
+  }
+}
+
 export class ModelTreeItem extends vscode.TreeItem {
   readonly itemType = "sysml-element" as const;
   readonly elementUri: vscode.Uri;
@@ -88,7 +105,17 @@ export class ModelTreeItem extends vscode.TreeItem {
   }
 }
 
-type ExplorerTreeItem = FileTreeItem | ModelTreeItem;
+type ExplorerTreeItem = ExplorerInfoItem | FileTreeItem | ModelTreeItem;
+
+type WorkspaceLoadStatus = {
+  state: "idle" | "indexing" | "ready" | "degraded";
+  scannedFiles: number;
+  loadedFiles: number;
+  perPatternLimit?: number;
+  truncated: boolean;
+  cancelled: boolean;
+  failures: number;
+};
 
 export class ModelExplorerProvider
   implements vscode.TreeDataProvider<ExplorerTreeItem>
@@ -110,6 +137,14 @@ export class ModelExplorerProvider
   private _workspaceViewMode: "byFile" | "bySemantic" = "bySemantic";
   private treeView?: vscode.TreeView<ExplorerTreeItem>;
   private uriToRootItems = new Map<string, ExplorerTreeItem[]>();
+  private workspaceLoadStatus: WorkspaceLoadStatus = {
+    state: "idle",
+    scannedFiles: 0,
+    loadedFiles: 0,
+    truncated: false,
+    cancelled: false,
+    failures: 0,
+  };
 
   constructor(private readonly modelProvider: LspModelProvider) {}
 
@@ -179,6 +214,22 @@ export class ModelExplorerProvider
     this.workspaceFileData.clear();
     this.workspaceFileUris = [];
     this.uriToRootItems.clear();
+    this.workspaceLoadStatus = {
+      state: "idle",
+      scannedFiles: 0,
+      loadedFiles: 0,
+      truncated: false,
+      cancelled: false,
+      failures: 0,
+    };
+    this._onDidChangeTreeData.fire();
+  }
+
+  setWorkspaceLoadStatus(status: Partial<WorkspaceLoadStatus>): void {
+    this.workspaceLoadStatus = {
+      ...this.workspaceLoadStatus,
+      ...status,
+    };
     this._onDidChangeTreeData.fire();
   }
 
@@ -193,6 +244,7 @@ export class ModelExplorerProvider
     this.lastElements = undefined;
     this.workspaceFileData.clear();
     this.uriToRootItems.clear();
+    let failures = 0;
 
     try {
       for (const uri of fileUris) {
@@ -216,10 +268,19 @@ export class ModelExplorerProvider
             log("loadWorkspaceModel: 0 elements for", uriStr, "(graph nodes:", result.graph?.nodes?.length ?? 0, ")");
           }
         } catch (e) {
+          failures += 1;
           log("loadWorkspaceModel: skip file (failed):", uriStr, e);
         }
       }
     } finally {
+      this.workspaceLoadStatus = {
+        ...this.workspaceLoadStatus,
+        state: token?.isCancellationRequested
+          ? "degraded"
+          : (this.workspaceLoadStatus.truncated || failures > 0 ? "degraded" : "ready"),
+        loadedFiles: this.workspaceFileData.size,
+        failures,
+      };
       log("loadWorkspaceModel: done,", this.workspaceFileData.size, "files loaded");
       this._onDidChangeTreeData.fire();
     }
@@ -292,6 +353,7 @@ export class ModelExplorerProvider
 
   async getChildren(element?: ExplorerTreeItem): Promise<ExplorerTreeItem[]> {
     if (!element) {
+      const infoItems = this.getWorkspaceInfoItems();
       if (this.workspaceMode && this.workspaceFileData.size > 0) {
         if (this._workspaceViewMode === "byFile") {
           const items = Array.from(this.workspaceFileData.entries()).map(
@@ -301,12 +363,16 @@ export class ModelExplorerProvider
           for (const item of items) {
             this.uriToRootItems.set(item.fileUri.toString(), [item]);
           }
-          return items;
+          return [...infoItems, ...items];
         }
         const entries = Array.from(this.workspaceFileData.entries());
         const items = this.mergeNamespaceElements(entries);
         this.buildSemanticUriMapping(items);
-        return items;
+        return [...infoItems, ...items];
+      }
+
+      if (this.workspaceMode && infoItems.length > 0) {
+        return infoItems;
       }
 
       if (!this.lastUri && !this.workspaceMode) {
@@ -348,6 +414,10 @@ export class ModelExplorerProvider
       );
     }
 
+    if (element.itemType === "explorer-info") {
+      return [];
+    }
+
     const children: ExplorerTreeItem[] = [];
     const el = element.element;
     const childElements = el.children ?? [];
@@ -355,6 +425,46 @@ export class ModelExplorerProvider
       children.push(new ModelTreeItem(c, element.elementUri));
     }
     return children;
+  }
+
+  private getWorkspaceInfoItems(): ExplorerInfoItem[] {
+    if (!this.workspaceMode) {
+      return [];
+    }
+    const status = this.workspaceLoadStatus;
+    if (status.state === "idle") {
+      return [];
+    }
+
+    const details = `Scanned ${status.scannedFiles} file(s), loaded ${status.loadedFiles} file(s)${status.failures > 0 ? `, ${status.failures} failed` : ""}${status.perPatternLimit ? `, limit ${status.perPatternLimit} per folder/type` : ""}`;
+    if (status.state === "indexing") {
+      return [
+        new ExplorerInfoItem(
+          "Workspace indexing in progress",
+          `${status.scannedFiles} scanned`,
+          `${details}. Results may still be incomplete.`,
+          "sync"
+        ),
+      ];
+    }
+    if (status.truncated || status.cancelled || status.failures > 0) {
+      return [
+        new ExplorerInfoItem(
+          "Workspace results may be incomplete",
+          `${status.loadedFiles}/${status.scannedFiles} loaded`,
+          `${details}${status.truncated ? ". Discovery limit reached." : ""}${status.cancelled ? ". Indexing was cancelled." : ""}`,
+          "warning"
+        ),
+      ];
+    }
+    return [
+      new ExplorerInfoItem(
+        "Workspace indexed",
+        `${status.loadedFiles} loaded`,
+        details,
+        "info"
+      ),
+    ];
   }
 
   private mergeNamespaceElements(

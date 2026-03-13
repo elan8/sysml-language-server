@@ -473,6 +473,15 @@ export function activate(context: vscode.ExtensionContext): void {
       "indexing",
       `Scanning workspace for SysML/KerML files (limit ${perPatternLimit} per folder and file type).`
     );
+    provider.setWorkspaceLoadStatus({
+      state: "indexing",
+      scannedFiles: 0,
+      loadedFiles: 0,
+      perPatternLimit,
+      truncated: false,
+      cancelled: false,
+      failures: 0,
+    });
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -530,9 +539,26 @@ export function activate(context: vscode.ExtensionContext): void {
 
         const uniqueFiles = [...new Map(fileUris.map((f) => [f.toString(), f])).values()];
         log("loadWorkspaceSysMLFiles: found", uniqueFiles.length, "unique files");
+        provider.setWorkspaceLoadStatus({
+          state: "indexing",
+          scannedFiles: uniqueFiles.length,
+          loadedFiles: 0,
+          perPatternLimit,
+          truncated: limitHit,
+          cancelled: false,
+          failures: 0,
+        });
 
         if (cancellationToken.isCancellationRequested) {
           setWorkspaceIndexSummary({
+            scannedFiles: uniqueFiles.length,
+            loadedFiles: 0,
+            perPatternLimit,
+            truncated: limitHit,
+            cancelled: true,
+          });
+          provider.setWorkspaceLoadStatus({
+            state: "degraded",
             scannedFiles: uniqueFiles.length,
             loadedFiles: 0,
             perPatternLimit,
@@ -554,6 +580,14 @@ export function activate(context: vscode.ExtensionContext): void {
           await provider.loadWorkspaceModel(uniqueFiles, cancellationToken);
           const loadedFiles = provider.getWorkspaceFileUris().length;
           setWorkspaceIndexSummary({
+            scannedFiles: uniqueFiles.length,
+            loadedFiles,
+            perPatternLimit,
+            truncated: limitHit,
+            cancelled: false,
+          });
+          provider.setWorkspaceLoadStatus({
+            state: limitHit ? "degraded" : "ready",
             scannedFiles: uniqueFiles.length,
             loadedFiles,
             perPatternLimit,
@@ -587,6 +621,14 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         } else {
           setWorkspaceIndexSummary({
+            scannedFiles: 0,
+            loadedFiles: 0,
+            perPatternLimit,
+            truncated: false,
+            cancelled: false,
+          });
+          provider.setWorkspaceLoadStatus({
+            state: "ready",
             scannedFiles: 0,
             loadedFiles: 0,
             perPatternLimit,

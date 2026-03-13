@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { LspModelProvider } from '../providers/lspModelProvider';
+import { log, logError } from '../logger';
 import type {
     SysMLGraphDTO,
     GraphNodeDTO,
@@ -92,9 +93,32 @@ export async function fetchModelData(params: FetchModelParams): Promise<UpdateMe
     const scopes: ('graph' | 'sequenceDiagrams' | 'activityDiagrams')[] =
         ['graph', 'sequenceDiagrams', 'activityDiagrams'];
 
-    const results = await Promise.all(
+    const settledResults = await Promise.allSettled(
         urisToQuery.map(uri => lspModelProvider.getModel(uri, scopes)),
     );
+
+    const results = settledResults
+        .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<LspModelProvider["getModel"]>>> => result.status === 'fulfilled')
+        .map((result) => result.value);
+    const failures = settledResults.filter(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+
+    if (failures.length > 0) {
+        for (const failure of failures) {
+            logError('fetchModelData: getModel failed for one of the requested URIs', failure.reason);
+        }
+        log(
+            'fetchModelData: partial model fetch',
+            `${results.length} succeeded`,
+            `${failures.length} failed`,
+        );
+    }
+
+    if (results.length === 0) {
+        log('fetchModelData: no successful model responses, returning null');
+        return null;
+    }
 
     const allGraphs: SysMLGraphDTO[] = [];
     const allSequenceDiagrams: unknown[] = [];
