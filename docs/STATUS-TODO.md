@@ -51,6 +51,8 @@ What still keeps this from `1.0`:
 - [x] Improve diagram UX with clearer experimental-view messaging in the visualizer itself.
 - [x] Tighten interconnection-view root scoping so focused connectors and ports stay inside the selected IBD root.
 - [x] Add General View presets so users can start from readable overview modes before fine-tuning categories.
+- [x] Simplify General View controls to presets only, and render packages as visual containers instead of regular nodes.
+- [x] Extend the semantic graph so General View can include requirements, use cases, actors, concerns, and state-machine nodes.
 
 ## In Progress
 

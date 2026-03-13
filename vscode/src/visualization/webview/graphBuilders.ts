@@ -14,6 +14,13 @@ export interface GeneralViewGraphContext {
     webviewLog?: (level: 'info' | 'warn' | 'error', ...args: any[]) => void;
 }
 
+export interface GeneralViewPackageGroup {
+    id: string;
+    label: string;
+    nodeIds: string[];
+    depth: number;
+}
+
 function getCategoryForType(typeLower: string): string {
     for (const cat of GENERAL_VIEW_CATEGORIES) {
         if (cat.keywords.some((kw) => typeLower.includes(kw))) {
@@ -148,9 +155,9 @@ export function buildSyntheticTreeEdgesForGeneralView(nodes: any[], edges: any[]
 export function graphToGeneralViewElements(
     graph: any,
     ctx: GeneralViewGraphContext
-): { elements: any[]; typeStats: Record<string, number> } {
+): { elements: any[]; typeStats: Record<string, number>; packageGroups: GeneralViewPackageGroup[] } {
     if (!graph || (!graph.nodes?.length && !graph.edges?.length)) {
-        return { elements: [], typeStats: {} };
+        return { elements: [], typeStats: {}, packageGroups: [] };
     }
     const nodes = graph.nodes || [];
     const edges = graph.edges || [];
@@ -159,11 +166,19 @@ export function graphToGeneralViewElements(
     const idToCyId = new Map<string, string>();
     const elementTree = graphToElementTree(graph);
     const idToElement = new Map<string, any>();
-    function indexByKey(els: any[]) {
+    const idToPackagePath = new Map<string, string[]>();
+    function indexByKey(els: any[], packagePath: string[] = []) {
         if (!els || !Array.isArray(els)) return;
         els.forEach((el: any) => {
+            const typeLower = ((el?.type || '') as string).toLowerCase();
+            const nextPackagePath = typeLower.includes('package')
+                ? [...packagePath, el.name || 'Package']
+                : packagePath;
             if (el && el.id) idToElement.set(el.id, el);
-            if (el && el.children) indexByKey(el.children);
+            if (el && el.id && nextPackagePath.length > 0 && !typeLower.includes('package')) {
+                idToPackagePath.set(el.id, nextPackagePath);
+            }
+            if (el && el.children) indexByKey(el.children, nextPackagePath);
         });
     }
     indexByKey(elementTree);
@@ -212,6 +227,7 @@ export function graphToGeneralViewElements(
     const filteredNodes = allCandidateNodes.filter((node: any) => {
         const typeLower = ((node.type || node.element_type || '') as string).toLowerCase().trim();
         const category = getCategoryForType(typeLower);
+        if (category === 'packages') return false;
         return ctx.expandedGeneralCategories.has(category) || (category === 'other' && ctx.expandedGeneralCategories.has('other'));
     });
     const visibleNodeIds = new Set(filteredNodes.map((node: any) => node.id));
@@ -271,11 +287,30 @@ export function graphToGeneralViewElements(
                 color: borderColor,
                 isDefinition,
                 category,
+                packagePath: idToPackagePath.get(node.id) || [],
                 metadata,
                 element: elementWithChildren || null
             }
         });
     });
+    const packageGroupsMap = new Map<string, GeneralViewPackageGroup>();
+    cyElements
+        .filter((el: any) => el.group === 'nodes' && Array.isArray(el.data.packagePath) && el.data.packagePath.length > 0)
+        .forEach((el: any) => {
+            const path = el.data.packagePath as string[];
+            path.forEach((_segment, index) => {
+                const slice = path.slice(0, index + 1);
+                const groupId = slice.join(' / ');
+                const existing = packageGroupsMap.get(groupId) || {
+                    id: groupId,
+                    label: slice[slice.length - 1],
+                    nodeIds: [],
+                    depth: slice.length,
+                };
+                existing.nodeIds.push(el.data.id);
+                packageGroupsMap.set(groupId, existing);
+            });
+        });
     const validNodeIds = new Set(cyElements.filter((el: any) => el.group === 'nodes').map((el: any) => el.data.id));
     const hierarchyEdgeIds = new Set<string>();
     const typingEdgeIds = new Set<string>();
@@ -433,7 +468,11 @@ export function graphToGeneralViewElements(
         'edgesResolved',
         edgesResolved
     );
-    return { elements: cyElements, typeStats };
+    return {
+        elements: cyElements,
+        typeStats,
+        packageGroups: [...packageGroupsMap.values()].filter((group) => group.nodeIds.length > 0),
+    };
 }
 
 /**
@@ -443,13 +482,13 @@ export function buildGeneralViewGraph(
     dataOrElements: any,
     _relationships: any[],
     ctx: GeneralViewGraphContext
-): { elements: any[]; typeStats: Record<string, number> } {
+): { elements: any[]; typeStats: Record<string, number>; packageGroups: GeneralViewPackageGroup[] } {
     const graph = dataOrElements?.graph;
     if (!graph || (!graph.nodes?.length && !graph.edges?.length)) {
         if (!graph && ctx.webviewLog) {
             ctx.webviewLog('info', '[GV] No graph in data; General View requires graph from LSP');
         }
-        return { elements: [], typeStats: {} };
+        return { elements: [], typeStats: {}, packageGroups: [] };
     }
     const containsCount = (graph.edges || []).filter(
         (e: any) => (e.type || e.rel_type || '').toLowerCase() === 'contains'

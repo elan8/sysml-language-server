@@ -593,11 +593,11 @@ import { buildGeneralViewGraph } from './graphBuilders';
     }
 
     const GENERAL_VIEW_PRESETS = [
-        { id: 'overview', label: 'Overview', categories: ['packages', 'partDefs', 'parts'] },
-        { id: 'structure', label: 'Structure', categories: ['packages', 'partDefs', 'parts', 'portDefs', 'interfaceDefs', 'interfaces', 'items'] },
-        { id: 'definitions', label: 'Definitions', categories: ['packages', 'partDefs', 'portDefs', 'attributeDefs', 'actionDefs', 'stateDefs', 'interfaceDefs', 'reqDefs', 'usecaseDefs', 'allocationDefs', 'constraintDefs', 'enumerations'] },
-        { id: 'behavior', label: 'Behavior', categories: ['packages', 'actionDefs', 'actions', 'stateDefs', 'states'] },
-        { id: 'requirements', label: 'Requirements', categories: ['packages', 'reqDefs', 'requirements', 'usecaseDefs', 'usecases', 'concerns'] },
+        { id: 'overview', label: 'Overview', categories: ['partDefs', 'parts', 'reqDefs', 'requirements', 'stateDefs', 'states', 'usecaseDefs', 'usecases', 'interfaceDefs', 'interfaces', 'items', 'concerns'] },
+        { id: 'structure', label: 'Structure', categories: ['partDefs', 'parts', 'portDefs', 'interfaceDefs', 'interfaces', 'items', 'occurrences', 'constraintDefs', 'constraints', 'allocations', 'allocationDefs'] },
+        { id: 'definitions', label: 'Definitions', categories: ['partDefs', 'portDefs', 'attributeDefs', 'actionDefs', 'stateDefs', 'interfaceDefs', 'reqDefs', 'usecaseDefs', 'allocationDefs', 'constraintDefs', 'enumerations'] },
+        { id: 'behavior', label: 'Behavior', categories: ['actionDefs', 'actions', 'stateDefs', 'states', 'usecaseDefs', 'usecases'] },
+        { id: 'requirements', label: 'Requirements', categories: ['reqDefs', 'requirements', 'usecaseDefs', 'usecases', 'concerns', 'constraints', 'constraintDefs'] },
     ];
 
     let activeGeneralPresetId = 'overview';
@@ -638,53 +638,7 @@ import { buildGeneralViewGraph } from './graphBuilders';
             });
             presetRow.appendChild(presetButton);
         });
-
-        const fineTuneLabel = document.createElement('span');
-        fineTuneLabel.className = 'general-filters-label';
-        fineTuneLabel.textContent = activeGeneralPresetId === 'custom'
-            ? 'Fine-tune (Custom)'
-            : 'Fine-tune';
-        presetRow.appendChild(fineTuneLabel);
         container.appendChild(presetRow);
-
-        const chipRow = document.createElement('div');
-        chipRow.className = 'general-chip-row';
-
-        GENERAL_VIEW_CATEGORIES.forEach(cat => {
-            const count = typeStats && typeStats[cat.id] ? typeStats[cat.id] : 0;
-            if (count === 0 && cat.id !== 'other') return; // Skip empty categories except 'other'
-
-            const chip = document.createElement('button');
-            chip.className = 'pillar-chip' + (expandedGeneralCategories.has(cat.id) ? '' : ' collapsed');
-            chip.style.borderColor = cat.color;
-            chip.style.color = cat.color;
-            chip.dataset.category = cat.id;
-
-            const label = document.createElement('span');
-            label.textContent = cat.label;
-            chip.appendChild(label);
-
-            const badge = document.createElement('span');
-            badge.className = 'count-badge';
-            badge.textContent = count;
-            chip.appendChild(badge);
-
-            chip.addEventListener('click', () => {
-                if (expandedGeneralCategories.has(cat.id)) {
-                    expandedGeneralCategories.delete(cat.id);
-                } else {
-                    expandedGeneralCategories.add(cat.id);
-                }
-                syncGeneralPresetSelection();
-                renderGeneralChips(typeStats);
-                // Re-render with filter applied
-                renderVisualization('general-view');
-            });
-
-            chipRow.appendChild(chip);
-        });
-
-        container.appendChild(chipRow);
     }
 
     function getCategoryForType(typeLower) {

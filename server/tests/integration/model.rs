@@ -217,6 +217,118 @@ fn lsp_sysml_model_state_transition_view() {
     let _ = child.kill();
 }
 
+#[test]
+fn lsp_sysml_model_graph_includes_requirement_usecase_and_state_nodes() {
+    let mut child = spawn_server();
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = child.stdout.take().expect("stdout");
+
+    let uri = "file:///rich_model_test.sysml";
+    let content = r#"
+        package P {
+            requirement def EnduranceReq;
+            use case def PatrolMission {
+                actor operator : HumanOperator;
+            }
+            state def DroneMode {
+                state idle;
+                state active;
+                transition activate first idle then active;
+            }
+        }
+    "#;
+
+    let init_id = next_id();
+    let init_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": init_id,
+        "method": "initialize",
+        "params": {
+            "processId": null,
+            "rootUri": null,
+            "capabilities": {},
+            "clientInfo": { "name": "test", "version": "0.1.0" }
+        }
+    });
+    send_message(&mut stdin, &init_req.to_string());
+    let _ = read_message(&mut stdout).expect("init response");
+
+    let initialized = serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} });
+    send_message(&mut stdin, &initialized.to_string());
+
+    let did_open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": { "uri": uri, "languageId": "sysml", "version": 1, "text": content }
+        }
+    });
+    send_message(&mut stdin, &did_open.to_string());
+    std::thread::sleep(std::time::Duration::from_millis(120));
+
+    let model_id = next_id();
+    let model_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": model_id,
+        "method": "sysml/model",
+        "params": {
+            "textDocument": { "uri": uri },
+            "scope": ["graph"]
+        }
+    });
+    send_message(&mut stdin, &model_req.to_string());
+    let model_resp = read_response(&mut stdout, model_id).expect("sysml/model response");
+    let model_json: serde_json::Value =
+        serde_json::from_str(&model_resp).expect("parse sysml/model response");
+    let graph = &model_json["result"]["graph"];
+    let nodes = graph["nodes"].as_array().expect("graph should have nodes array");
+    let edges = graph["edges"].as_array().expect("graph should have edges array");
+
+    let has_requirement = nodes.iter().any(|n| {
+        n["type"].as_str() == Some("requirement def")
+            && n["name"].as_str() == Some("EnduranceReq")
+    });
+    assert!(has_requirement, "graph should include requirement def EnduranceReq");
+
+    let has_use_case = nodes.iter().any(|n| {
+        n["type"].as_str() == Some("use case def")
+            && n["name"].as_str() == Some("PatrolMission")
+    });
+    assert!(has_use_case, "graph should include use case def PatrolMission");
+
+    let has_actor = nodes.iter().any(|n| {
+        n["type"].as_str() == Some("actor")
+            && n["name"].as_str() == Some("operator")
+    });
+    assert!(has_actor, "graph should include actor usage operator");
+
+    let has_state_def = nodes.iter().any(|n| {
+        n["type"].as_str() == Some("state def")
+            && n["name"].as_str() == Some("DroneMode")
+    });
+    assert!(has_state_def, "graph should include state def DroneMode");
+
+    let state_names: Vec<_> = nodes
+        .iter()
+        .filter(|n| n["type"].as_str() == Some("state"))
+        .filter_map(|n| n["name"].as_str())
+        .collect();
+    assert!(
+        state_names.contains(&"idle") && state_names.contains(&"active"),
+        "graph should include state usages idle and active, got {:?}",
+        state_names
+    );
+
+    let has_transition = edges.iter().any(|e| {
+        e["type"].as_str() == Some("transition")
+            && e["source"].as_str().is_some_and(|s| s.ends_with("::idle"))
+            && e["target"].as_str().is_some_and(|t| t.ends_with("::active"))
+    });
+    assert!(has_transition, "graph should include transition edge idle -> active");
+
+    let _ = child.kill();
+}
+
 /// sysml/model with scope ["sequenceDiagrams"] returns diagrams with correct action def names.
 /// Regression test for action def name parsing (was "(anonymous)" due to Pest silent terminals).
 #[test]

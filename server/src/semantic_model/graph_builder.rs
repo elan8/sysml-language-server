@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use sysml_parser::ast::{
     PackageBodyElement, PackageBody, PartDefBody, PartDefBodyElement, PartUsageBody,
     PartUsageBodyElement, PortDefBody, PortDefBodyElement, InterfaceDefBody,
+    RequirementDefBody, UseCaseDefBody, StateDefBody, StateDefBodyElement,
 };
 use sysml_parser::RootNamespace;
 use tower_lsp::lsp_types::{Position, Range, Url};
@@ -216,6 +217,119 @@ fn build_from_package_body_element(
             let range = span_to_range(&au_node.span);
             add_node_and_recurse(g, uri, &qualified, "action", name.clone(), range, HashMap::new(), parent_id);
         }
+        PBE::RequirementDef(rd_node) => {
+            let name = identification_name(&rd_node.identification);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "requirement def");
+            let range = span_to_range(&rd_node.span);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "requirement def",
+                name.clone(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+            if let RequirementDefBody::Brace { .. } = &rd_node.body {
+                // Body currently carries constraints/docs/subjects, but no additional graph nodes yet.
+            }
+        }
+        PBE::RequirementUsage(ru_node) => {
+            let name = &ru_node.name;
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "requirement");
+            let range = span_to_range(&ru_node.span);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = ru_node.type_name {
+                attrs.insert("requirementType".to_string(), serde_json::json!(t));
+            }
+            add_node_and_recurse(g, uri, &qualified, "requirement", name.clone(), range, attrs, parent_id);
+            if let Some(ref t) = ru_node.type_name {
+                add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+            }
+        }
+        PBE::ConcernUsage(cu_node) => {
+            let name = &cu_node.name;
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "concern");
+            let range = span_to_range(&cu_node.span);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = cu_node.type_name {
+                attrs.insert("concernType".to_string(), serde_json::json!(t));
+            }
+            add_node_and_recurse(g, uri, &qualified, "concern", name.clone(), range, attrs, parent_id);
+            if let Some(ref t) = cu_node.type_name {
+                add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+            }
+        }
+        PBE::UseCaseDef(ucd_node) => {
+            let name = identification_name(&ucd_node.identification);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "use case def");
+            let range = span_to_range(&ucd_node.span);
+            add_node_and_recurse(
+                g,
+                uri,
+                &qualified,
+                "use case def",
+                name.clone(),
+                range,
+                HashMap::new(),
+                parent_id,
+            );
+            let node_id = NodeId::new(uri, &qualified);
+            if let UseCaseDefBody::Brace { elements } = &ucd_node.body {
+                build_from_use_case_body(elements, uri, Some(&qualified), &node_id, g);
+            }
+        }
+        PBE::UseCaseUsage(ucu_node) => {
+            let name = &ucu_node.name;
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "use case");
+            let range = span_to_range(&ucu_node.span);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = ucu_node.type_name {
+                attrs.insert("useCaseType".to_string(), serde_json::json!(t));
+            }
+            add_node_and_recurse(g, uri, &qualified, "use case", name.clone(), range, attrs, parent_id);
+            let node_id = NodeId::new(uri, &qualified);
+            if let Some(ref t) = ucu_node.type_name {
+                add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+            }
+            if let UseCaseDefBody::Brace { elements } = &ucu_node.body {
+                build_from_use_case_body(elements, uri, Some(&qualified), &node_id, g);
+            }
+        }
+        PBE::Actor(actor_node) => {
+            let name = identification_name(&actor_node.identification);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "actor def");
+            let range = span_to_range(&actor_node.span);
+            add_node_and_recurse(g, uri, &qualified, "actor def", name, range, HashMap::new(), parent_id);
+        }
+        PBE::StateDef(sd_node) => {
+            let name = identification_name(&sd_node.identification);
+            let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "state def");
+            let range = span_to_range(&sd_node.span);
+            add_node_and_recurse(g, uri, &qualified, "state def", name.clone(), range, HashMap::new(), parent_id);
+            let node_id = NodeId::new(uri, &qualified);
+            if let StateDefBody::Brace { elements } = &sd_node.body {
+                build_from_state_body(elements, uri, Some(&qualified), &node_id, g);
+            }
+        }
+        PBE::StateUsage(su_node) => {
+            let name = &su_node.name;
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "state");
+            let range = span_to_range(&su_node.span);
+            let mut attrs = HashMap::new();
+            if let Some(ref t) = su_node.type_name {
+                attrs.insert("stateType".to_string(), serde_json::json!(t));
+            }
+            add_node_and_recurse(g, uri, &qualified, "state", name.clone(), range, attrs, parent_id);
+            let node_id = NodeId::new(uri, &qualified);
+            if let Some(ref t) = su_node.type_name {
+                add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+            }
+            if let StateDefBody::Brace { elements } = &su_node.body {
+                build_from_state_body(elements, uri, Some(&qualified), &node_id, g);
+            }
+        }
         PBE::ViewDef(vd_node) => {
             let name = identification_name(&vd_node.identification);
             let qualified = qualified_name_for_node(g, uri, container_prefix, &name, "view def");
@@ -394,6 +508,73 @@ fn expr_node_to_qualified_string(n: &sysml_parser::Node<sysml_parser::Expression
         Expression::FeatureRef(s) => s.clone(),
         Expression::MemberAccess(box_base, member) => format!("{}::{}", expr_node_to_qualified_string(box_base), member),
         _ => "".to_string(),
+    }
+}
+
+fn build_from_use_case_body(
+    elements: &[sysml_parser::Node<sysml_parser::ast::UseCaseDefBodyElement>],
+    uri: &Url,
+    container_prefix: Option<&str>,
+    parent_id: &NodeId,
+    g: &mut SemanticGraph,
+) {
+    use sysml_parser::ast::UseCaseDefBodyElement as UCBE;
+    for node in elements {
+        if let UCBE::ActorUsage(actor_node) = &node.value {
+            let name = &actor_node.name;
+            let qualified = qualified_name_for_node(g, uri, container_prefix, name, "actor");
+            let range = span_to_range(&actor_node.span);
+            let mut attrs = HashMap::new();
+            attrs.insert("actorType".to_string(), serde_json::json!(&actor_node.type_name));
+            add_node_and_recurse(g, uri, &qualified, "actor", name.clone(), range, attrs, Some(parent_id));
+            add_typing_edge_if_exists(g, uri, &qualified, &actor_node.type_name, container_prefix);
+        }
+    }
+}
+
+fn build_from_state_body(
+    elements: &[sysml_parser::Node<StateDefBodyElement>],
+    uri: &Url,
+    container_prefix: Option<&str>,
+    parent_id: &NodeId,
+    g: &mut SemanticGraph,
+) {
+    use sysml_parser::ast::StateDefBodyElement as SDBE;
+    for node in elements {
+        match &node.value {
+            SDBE::StateUsage(state_node) => {
+                let name = &state_node.name;
+                let qualified = qualified_name_for_node(g, uri, container_prefix, name, "state");
+                let range = span_to_range(&state_node.span);
+                let mut attrs = HashMap::new();
+                if let Some(ref t) = state_node.type_name {
+                    attrs.insert("stateType".to_string(), serde_json::json!(t));
+                }
+                add_node_and_recurse(g, uri, &qualified, "state", name.clone(), range, attrs, Some(parent_id));
+                let state_id = NodeId::new(uri, &qualified);
+                if let Some(ref t) = state_node.type_name {
+                    add_typing_edge_if_exists(g, uri, &qualified, t, container_prefix);
+                }
+                if let StateDefBody::Brace { elements } = &state_node.body {
+                    build_from_state_body(elements, uri, Some(&qualified), &state_id, g);
+                }
+            }
+            SDBE::Transition(transition_node) => {
+                if let Some(src_expr) = &transition_node.source {
+                    let src_rel = expr_node_to_qualified_string(src_expr);
+                    let tgt_rel = expr_node_to_qualified_string(&transition_node.target);
+                    if !src_rel.is_empty() && !tgt_rel.is_empty() {
+                        let (src, tgt) = if let Some(prefix) = container_prefix {
+                            (format!("{}::{}", prefix, src_rel), format!("{}::{}", prefix, tgt_rel))
+                        } else {
+                            (src_rel, tgt_rel)
+                        };
+                        add_edge_if_both_exist(g, uri, &src, &tgt, RelationshipKind::Transition);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 

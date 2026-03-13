@@ -34,7 +34,7 @@ const GENERAL_VIEW_NODE_CONFIG: SysMLNodeConfig = {
 };
 
 export interface GeneralViewContext extends RenderContext {
-    buildGeneralViewGraph: (data: any) => { elements: any[]; typeStats: Record<string, number> };
+    buildGeneralViewGraph: (data: any) => { elements: any[]; typeStats: Record<string, number>; packageGroups: Array<{ id: string; label: string; nodeIds: string[]; depth: number }> };
     renderGeneralChips: (typeStats: Record<string, number>) => void;
     elkWorkerUrl: string;
 }
@@ -121,7 +121,7 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
     const { width, height, svg, g, postMessage, renderPlaceholder, clearVisualHighlights } = ctx;
 
     const result = ctx.buildGeneralViewGraph(data);
-    const { elements, typeStats } = result;
+    const { elements, typeStats, packageGroups } = result;
 
     ctx.renderGeneralChips(typeStats);
 
@@ -130,7 +130,7 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
 
     if (cyNodes.length === 0) {
         renderPlaceholder(width, height, 'General View',
-            'No matching elements to display.\\n\\nTry enabling more categories using the filter chips above.',
+            'No matching elements to display.\\n\\nTry another General View preset above.',
             data);
         return;
     }
@@ -316,6 +316,42 @@ export async function renderGeneralViewD3(ctx: GeneralViewContext, data: any): P
 
     const edgeGroup = g.append('g').attr('class', 'general-edges');
     const nodeGroup = g.append('g').attr('class', 'general-nodes');
+    const packageGroup = g.append('g').attr('class', 'general-packages');
+
+    packageGroups
+        .sort((a, b) => a.depth - b.depth)
+        .forEach((group) => {
+            const memberPositions = group.nodeIds
+                .map((nodeId) => nodePositions.get(nodeId))
+                .filter(Boolean) as Array<{ x: number; y: number; width: number; height: number }>;
+            if (memberPositions.length === 0) return;
+            const paddingX = 28;
+            const paddingTop = 36;
+            const paddingBottom = 22;
+            const minX = Math.min(...memberPositions.map((pos) => pos.x)) - paddingX;
+            const minY = Math.min(...memberPositions.map((pos) => pos.y)) - paddingTop;
+            const maxX = Math.max(...memberPositions.map((pos) => pos.x + pos.width)) + paddingX;
+            const maxY = Math.max(...memberPositions.map((pos) => pos.y + pos.height)) + paddingBottom;
+            const tone = group.depth === 1 ? 0.08 : 0.05;
+            packageGroup.append('rect')
+                .attr('x', minX)
+                .attr('y', minY)
+                .attr('width', maxX - minX)
+                .attr('height', maxY - minY)
+                .attr('rx', 18)
+                .style('fill', 'color-mix(in srgb, var(--vscode-editor-inactiveSelectionBackground) ' + Math.round(tone * 100) + '%, transparent)')
+                .style('stroke', 'var(--vscode-panel-border)')
+                .style('stroke-width', group.depth === 1 ? '1.5px' : '1px')
+                .style('stroke-dasharray', group.depth === 1 ? 'none' : '6,4')
+                .style('opacity', 0.9);
+            packageGroup.append('text')
+                .attr('x', minX + 14)
+                .attr('y', minY + 21)
+                .text(group.label)
+                .style('font-size', '11px')
+                .style('font-weight', '700')
+                .style('fill', 'var(--vscode-descriptionForeground)');
+        });
 
     const laidOutEdges = laidOut?.edges ?? [];
     // For typing edges to same target, assign offsets to reduce overlap
