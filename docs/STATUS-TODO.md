@@ -62,6 +62,8 @@ What still keeps this from `1.0`:
 - [ ] Expand hover resolution so common SysML symbol kinds consistently return useful hover content.
 - [ ] Improve bidirectional source/diagram synchronization so source selection can focus/highlight the corresponding diagram element.
 - [ ] Bring diagram support to release quality: fix disabled views, clarify missing views, and close the biggest layout/routing gaps.
+- [ ] Improve interconnection-view readability: clearer ports, clearer connector routing, and more stable layout on real models.
+- [ ] Audit missing or weak diagram semantics such as connector labels/item types, source-to-diagram focus, and view-specific empty/degraded states.
 
 ## Next
 
@@ -84,6 +86,8 @@ What still keeps this from `1.0`:
 - [ ] Re-enable release-blocked diagram views only behind passing regression coverage and acceptable layout quality.
 - [ ] Decide which experimental views can graduate from opt-in to release-enabled defaults.
 - [ ] Improve diagram interaction polish: navigation feedback, richer empty/error states, and graduation criteria per view.
+- [ ] Improve interconnection-view port readability, routing separation, and label clarity enough to use it as a default-quality view.
+- [ ] Verify that expected SysML element kinds appear in General and diagram views, including requirements, use cases, states, and other missing semantic nodes.
 
 ### Docs and Release
 
